@@ -1,0 +1,3 @@
+# Dependências para desenvolver: as do programa + os testes (python -m pytest).
+-r requirements.txt
+pytest==8.4.2

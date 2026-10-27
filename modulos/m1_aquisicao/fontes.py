@@ -373,7 +373,7 @@ class FonteSpinnaker(FonteImagem):
         """
         import PySpin  # só aqui: o resto do projeto não depende do Spinnaker SDK
 
-        raise NotImplementedError("FonteSpinnaker ainda não implementada (ver teste_camara.py).")
+        raise NotImplementedError("FonteSpinnaker ainda não implementada (ver ferramentas/testar_camara.py).")
 
     def ler(self) -> Captura | None:
         """Adquire a imagem seguinte da câmara.

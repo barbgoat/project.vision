@@ -118,7 +118,7 @@ DISPARO_SENSOR_INVERTIDO: Final = False  # True se o sensor/botão dá 0 V quand
 DISPARO_SENSOR_FILTRO_US: Final = 100.0  # ignora impulsos do sensor mais curtos do que isto (ruído, ressaltos)
 DISPARO_RAJADA_IMAGENS: Final = 5  # [MEDIR] imagens por ativação, no modo "rajada"
 # [MEDIR] atraso entre o sensor e a 1.ª imagem da rajada, para o saco ficar centrado a
-# meio da rajada (ver README, "Disparo"). Com DISPARO_MODO "foto" e a câmara, é o
+# meio da rajada (ver docs/disparo.md). Com DISPARO_MODO "foto" e a câmara, é o
 # atraso da única imagem.
 DISPARO_RAJADA_ATRASO_US: Final = 0.0
 # Botão (modo "foto" com a câmara): um botão mecânico "salta" durante alguns ms ao

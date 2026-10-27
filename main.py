@@ -1,10 +1,10 @@
 r"""MESTRE, programa principal: capta cada saco que passa, inspeciona-o e regista o resultado.
 
 Exemplos (na raiz do projeto, com o .venv ativo):
-    python main.py --fonte pasta --pasta dataset --mostrar          (fotos: cada foto é um saco)
+    python main.py --pasta dataset\telemovel --config configuracoes\telemovel.json   (fotos: cada foto é um saco)
     python main.py --fonte video --video "D:\Vídeos\linha.mp4" --disparo virtual
     python main.py --fonte spinnaker --disparo sensor --guardar nok
-    python main.py --fonte pasta --pasta dataset --depurar nok      (painel de cada saco NOK)
+    python main.py --pasta dataset\telemovel --config configuracoes\telemovel.json --depurar nok
 
 Ciclo:
     M1 Aquisição (thread própria): fonte → disparo → passagens (uma por saco)
@@ -41,8 +41,8 @@ def construir_parser() -> argparse.ArgumentParser:
         help="origem das imagens (omissão: %(default)s)",
     )
     parser.add_argument(
-        "--pasta", type=Path, default=RAIZ / "dataset",
-        help="pasta com as imagens, para --fonte pasta; inclui subpastas (omissão: dataset/)",
+        "--pasta", type=Path,
+        help="pasta com as imagens, para --fonte pasta; inclui subpastas (p.ex. dataset\\telemovel)",
     )
     parser.add_argument("--video", type=Path, help="ficheiro de vídeo, para --fonte video")
     parser.add_argument("--indice", type=int, default=0, help="índice da webcam, para --fonte webcam (omissão: 0)")
@@ -127,6 +127,10 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("Com --fonte %s e o disparo 'foto', CADA IMAGEM conta como um saco; "
                     "para separar os sacos use --disparo virtual.", args.fonte)
 
+    if args.fonte == "pasta" and args.pasta is None:
+        log.error("Indica a pasta das imagens (e a configuração da montagem), p.ex.:\n"
+                  "    python main.py --pasta dataset\\telemovel --config configuracoes\\telemovel.json")
+        return 2
     try:
         fonte = criar_fonte(args.fonte, cfg, pasta=args.pasta, video=args.video,
                             indice=args.indice, numero_serie=args.serie)

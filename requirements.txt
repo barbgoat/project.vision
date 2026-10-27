@@ -3,5 +3,7 @@ numpy==2.5.4
 opencv-python==5.0.0.93
 
 # O PySpin (câmara FLIR) não está no PyPI: instala-se a partir da wheel do
-# Spinnaker SDK 4.4 que acompanha o projeto:
-#   pip install "spinnaker_python-4.4.0.246-cp312-cp312-win_amd64\spinnaker_python-4.4.0.246-cp312-cp312-win_amd64.whl"
+# Spinnaker SDK 4.4 (pasta instaladores/, que não vai para o git):
+#   pip install "instaladores\spinnaker_python-4.4.0.246-cp312-cp312-win_amd64\spinnaker_python-4.4.0.246-cp312-cp312-win_amd64.whl"
+#
+# Para desenvolver (testes): pip install -r requirements-dev.txt

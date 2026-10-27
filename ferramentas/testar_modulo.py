@@ -1,9 +1,9 @@
 r"""Corre UM módulo numa imagem (ou numa pasta) e mostra o relatório completo.
 
-    python -m ferramentas.testar_modulo localizacao dataset\ok\saco_001.jpg
-    python -m ferramentas.testar_modulo relevo dataset\rugas
-    python -m ferramentas.testar_modulo dimensoes dataset --config config_telemovel.json
-    python -m ferramentas.testar_modulo localizacao dataset\ok --guardar resultados\verificacao_m2
+    python -m ferramentas.testar_modulo localizacao dataset\telemovel\ok\saco_001.jpg --config configuracoes\telemovel.json
+    python -m ferramentas.testar_modulo relevo dataset\telemovel\rugas --config configuracoes\telemovel.json
+    python -m ferramentas.testar_modulo dimensoes dataset\telemovel --config configuracoes\telemovel.json
+    python -m ferramentas.testar_modulo localizacao dataset\telemovel\ok --config configuracoes\telemovel.json --guardar resultados\verificacao_m2
 
 Corre sempre o M2 Localização (os outros precisam do Saco) e depois só o
 módulo pedido, mesmo que esteja desligado no config. Mostra o estado, o tempo,

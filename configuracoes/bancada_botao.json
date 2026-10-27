@@ -1,0 +1,12 @@
+{
+  "disparo": {
+    "modo": "foto"
+  },
+  "aquisicao": {
+    "exposicao_us": 5000.0
+  },
+  "saida": {
+    "guardar_imagens": "todas",
+    "depurar": "nok"
+  }
+}

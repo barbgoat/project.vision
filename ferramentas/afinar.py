@@ -1,6 +1,6 @@
 r"""Afinar os parâmetros de UM módulo numa imagem, com barras deslizantes do OpenCV.
 
-    python -m ferramentas.afinar relevo dataset\rugas\saco_007.png
+    python -m ferramentas.afinar relevo dataset\telemovel\rugas\saco_007.png
     python -m ferramentas.afinar localizacao "D:\Ensaios de iluminação\saco 3.png" --saida config_afinada.json
 
 Mexer numa barra volta a correr o M2 e o módulo escolhido e mostra a imagem

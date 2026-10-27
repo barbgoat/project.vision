@@ -1,3 +1,13 @@
+"""Teste rápido da câmara, sem o resto do programa: liga-se, tira uma imagem e grava-a.
+
+    python ferramentas\\testar_camara.py
+
+Mostra a versão do Spinnaker e quantas câmaras encontra, e grava frame.png na
+pasta atual. A imagem sai em bruto (Bayer, por isso parece cinzenta com um
+padrão fino): a conversão para cores fica a cargo da FonteSpinnaker
+(modulos/m1_aquisicao/fontes.py), que vai substituir este teste.
+"""
+
 import PySpin
 import cv2
 

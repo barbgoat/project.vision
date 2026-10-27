@@ -1,0 +1,11 @@
+{
+  "geral": {
+    "px_por_mm": 12.4
+  },
+  "cor": {
+    "ativo": false
+  },
+  "disparo": {
+    "modo": "foto"
+  }
+}

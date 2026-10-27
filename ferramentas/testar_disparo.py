@@ -1,7 +1,7 @@
 r"""Testa SÓ o disparo (M1): que passagens (sacos) encontra numa sequência de imagens.
 
     python -m ferramentas.testar_disparo --video "D:\Vídeos\linha.mp4"
-    python -m ferramentas.testar_disparo --pasta dataset\sequencia --disparo virtual --guardar resultados\disparo
+    python -m ferramentas.testar_disparo --pasta dataset\blackfly\sequencia --disparo virtual --guardar resultados\disparo
 
 Para cada passagem mostra: número, instante de início, duração, nº de
 imagens, as candidatas (com a distância do saco ao centro) e os avisos. Com

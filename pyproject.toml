@@ -1,0 +1,6 @@
+# Só a configuração das ferramentas; o projeto não é instalado como pacote.
+
+[tool.pytest.ini_options]
+testpaths = ["testes"]
+pythonpath = ["."]
+addopts = "-ra"

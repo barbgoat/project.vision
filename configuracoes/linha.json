@@ -1,0 +1,9 @@
+{
+  "disparo": {
+    "modo": "virtual"
+  },
+  "saida": {
+    "guardar_imagens": "nok",
+    "depurar": "nenhuma"
+  }
+}
