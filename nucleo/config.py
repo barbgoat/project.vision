@@ -8,6 +8,10 @@ Cada módulo só lê a sua secção (e a geral): mudar um valor da cor nunca mex
 no relevo. Cada parâmetro tem um define com o mesmo nome em maiúsculas
 (localizacao.comprimento_min_mm ↔ LOCALIZACAO_COMPRIMENTO_MIN_MM).
 
+A configuração é só de leitura (frozen), como o Saco: todos os escravos recebem
+a mesma e nenhum a pode alterar para os outros. Para mudar um valor cria-se
+outra com dataclasses.replace(), que volta a validar tudo.
+
 O config.json, se existir, só tem os valores que diferem dos defines, p.ex.
 
     {"geral": {"px_por_mm": 12.4}}
@@ -63,7 +67,7 @@ def _opcao(secao: object, nome: str, tipo: object) -> tuple[bool, str]:
 
 # --- Secções (os comentários de cada valor estão em nucleo/defines.py) ------------------
 
-@dataclass
+@dataclass(frozen=True)
 class ConfigGeral:
     """Parâmetros comuns a todos os módulos."""
 
@@ -81,7 +85,7 @@ class ConfigGeral:
         ])
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConfigCamara:
     """Características fixas da câmara (Blackfly S GigE 5 MP); só mudam se mudar a câmara."""
 
@@ -106,7 +110,7 @@ class ConfigCamara:
         ])
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConfigLente:
     """Lente (Basler C23-0828-16M): fixa, exceto a distância ao tapete e a abertura."""
 
@@ -129,7 +133,7 @@ class ConfigLente:
         return sensor_mm * (self.distancia_mm - self.focal_mm) / self.focal_mm
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConfigAquisicao:
     """M1 Aquisição: parâmetros da câmara Blackfly S."""
 
@@ -143,7 +147,7 @@ class ConfigAquisicao:
         ])
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConfigDisparo:
     """M1 Aquisição, disparo (trigger): quando começa e acaba a passagem de cada saco."""
 
@@ -197,7 +201,7 @@ class ConfigDisparo:
         ])
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConfigLocalizacao:
     """M2 Localização: separar o saco do fundo, medi-lo e normalizá-lo."""
 
@@ -239,7 +243,7 @@ class ConfigLocalizacao:
         ])
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConfigDimensoes:
     """M3 Dimensões: tamanho e forma face ao nominal."""
 
@@ -262,7 +266,7 @@ class ConfigDimensoes:
         ])
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConfigCor:
     """M4 Cor: cor média do saco face à referência."""
 
@@ -279,7 +283,7 @@ class ConfigCor:
         ])
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConfigRelevo:
     """M5 Relevo: riscos, dobras, rugas e amassos (cristas na imagem)."""
 
@@ -325,7 +329,7 @@ class ConfigRelevo:
         ])
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConfigManchas:
     """M6 Manchas: zonas mais claras ou mais escuras do que a vizinhança."""
 
@@ -348,7 +352,7 @@ class ConfigManchas:
         ])
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConfigSaida:
     """M7 Saída: imagens anotadas e registos CSV."""
 
@@ -372,7 +376,7 @@ class ConfigSaida:
 
 # --- Configuração completa --------------------------------------------------------------
 
-@dataclass
+@dataclass(frozen=True)
 class Config:
     """Todas as secções. O nome de cada secção é o nome do módulo que a usa."""
 

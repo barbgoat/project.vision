@@ -12,13 +12,12 @@ import pytest
 
 import mestre as m
 from modulos.m2_localizacao import Localizador
-from nucleo.config import Config
 from nucleo.contrato import Estado, SemSaco
 from nucleo.imagens import guardar_imagem
-from testes.apoio import CORES, alfa_retangulo, cena_saco, com_acentos, diferenca_angulo, fundo
+from testes.apoio import CORES, alfa_retangulo, cena_saco, com_acentos, config_teste, diferenca_angulo, fundo
 
 PPM = 5.0
-CFG = Config.de_dict({"geral": {"px_por_mm": PPM}})
+CFG = config_teste(geral={"px_por_mm": PPM})
 
 
 @pytest.fixture
@@ -161,7 +160,7 @@ def test_mestre_sem_saco_com_motivo(rng):
 
 def test_tempo_numa_imagem_da_blackfly(rng):
     """5 MP, ~8 px/mm: tem de caber bem dentro dos 500 ms por saco (limite largo: a máquina pode estar ocupada)."""
-    cfg = Config.de_dict({"geral": {"px_por_mm": 8.0}})
+    cfg = config_teste(geral={"px_por_mm": 8.0})
     localizador = Localizador(cfg)
     img, _ = cena_saco(rng, cor=CORES["azul"], ppm=8.0, tamanho=(2048, 2448), angulo=28)
     tempos = []

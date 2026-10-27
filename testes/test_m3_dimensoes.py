@@ -6,11 +6,10 @@ import numpy as np
 import pytest
 
 import mestre as m
-from nucleo.config import Config
 from nucleo.contrato import Estado, TipoDefeito
-from testes.apoio import CORES, FORMAS, cena_forma
+from testes.apoio import CORES, FORMAS, cena_forma, config_teste
 
-CFG = Config.de_dict({"geral": {"px_por_mm": 5.0}})
+CFG = config_teste(geral={"px_por_mm": 5.0})
 
 
 @pytest.fixture(scope="module")

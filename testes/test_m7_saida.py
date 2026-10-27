@@ -12,13 +12,12 @@ import mestre as m
 from modulos.m7_saida import Depuracao, Saida, desenhar, nome_curto
 from modulos.m7_saida import depuracao as modulo_depuracao
 from nucleo import defines as D
-from nucleo.config import Config
 from nucleo.contrato import Captura, Defeito, Escravo, Estado, Relatorio, TipoDefeito
 from nucleo.imagens import ler_imagem
-from testes.apoio import FORMAS, cena_forma, com_acentos, ler_csv
+from testes.apoio import FORMAS, cena_forma, com_acentos, config_teste, ler_csv
 
 PPM = 5.0
-CFG = Config.de_dict({"geral": {"px_por_mm": PPM}})
+CFG = config_teste(geral={"px_por_mm": PPM})
 
 
 class ComDefeitos(Escravo):
@@ -100,7 +99,7 @@ def test_depuracao_pasta_do_saco(resultado, tmp_path):
     assert len(modulos["dimensoes"]["defeitos"]) == 2
     assert "limiar_delta_e" in modulos["localizacao"]["medidas"]
     assert "Traceback" in modulos["cor"]["traceback"] and "IndexError" in modulos["cor"]["traceback"]
-    assert dados["configuracao_alterada"] == [f"geral.px_por_mm = 5.0 (define GERAL_PX_POR_MM = {D.GERAL_PX_POR_MM})"]
+    assert dados["configuracao_alterada"] == CFG.descrever_alteracoes()
     assert dados["saco_medido"]["comprimento_mm"] > 149
 
 

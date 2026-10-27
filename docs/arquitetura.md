@@ -22,7 +22,7 @@ OK, NOK, ERRO ou SEM_SACO.
 
 - Um módulo que rebenta fica em ERRO, com o **ficheiro e a linha**; os outros continuam.
 - Um saco com ERRO é rejeitado (`GERAL_EM_CASO_DE_ERRO = "rejeitar"`).
-- O `Saco` é só de leitura: um módulo não estraga o trabalho dos outros.
+- O `Saco` e a configuração são só de leitura: um módulo não estraga o trabalho dos outros.
 - `POR_IMPLEMENTAR` não conta para a decisão, mas um saco que **nenhum** módulo inspecionou nunca é aprovado.
 
 ## Regras
@@ -31,6 +31,8 @@ OK, NOK, ERRO ou SEM_SACO.
 2. Cada módulo é uma pasta; o Mestre chama o `escravo.py` e cada etapa tem o seu ficheiro.
 3. **Nenhum número no código**: tudo o que pode variar está em `nucleo/defines.py`, em mm.
 4. Cada defeito tem um só dono (linhas: M5; áreas: M6).
+5. Os testes não dependem dos valores `[MEDIR]`: usam `config_teste()` (`testes/apoio.py`),
+   que os fixa em `MONTAGEM`. Um `[MEDIR]` novo nos defines entra também em `MONTAGEM`.
 
 ## Configuração
 

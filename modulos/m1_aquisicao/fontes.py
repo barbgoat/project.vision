@@ -37,13 +37,17 @@ class FonteImagem(ABC):
     """Base de todas as fontes de imagem.
 
     Uma fonte abre o dispositivo no construtor e liberta-o em fechar(). É
-    iterável (a iteração termina quando ler() devolve None) e é um gestor de
-    contexto, o que garante que fechar() é chamado mesmo que haja uma exceção.
+    iterável (a iteração termina quando ler() devolve None ou depois de
+    parar()) e é um gestor de contexto, o que garante que fechar() é chamado
+    mesmo que haja uma exceção.
     """
 
     # True nas fontes ao vivo (câmaras): as imagens chegam ao ritmo da linha e
     # não se pode esperar por elas; False nas gravadas (pasta, vídeo).
     ao_vivo: ClassVar[bool] = False
+    # Posto a True por parar(), noutra thread. Uma fonte que espera por imagens
+    # (câmara com trigger, sem nenhum saco a passar) verifica-o entre esperas.
+    parada: bool = False
 
     @abstractmethod
     def ler(self) -> Captura | None:
@@ -59,8 +63,17 @@ class FonteImagem(ABC):
     def fechar(self) -> None:
         """Liberta os recursos da fonte. Tem de poder ser chamado mais de uma vez."""
 
+    def parar(self) -> None:
+        """Pede à fonte que termine; pode ser chamado de outra thread.
+
+        Um ler() à espera de uma imagem que não vem tem de ver self.parada
+        entre esperas e devolver None; senão a thread de aquisição nunca
+        termina e fechar() nunca chega a ser chamado.
+        """
+        self.parada = True
+
     def __iter__(self) -> Iterator[Captura]:
-        while (captura := self.ler()) is not None:
+        while not self.parada and (captura := self.ler()) is not None:
             yield captura
 
     def __enter__(self) -> Self:
@@ -385,7 +398,8 @@ class FonteSpinnaker(FonteImagem):
             1. img = câmara.GetNextImage(timeout_ms); se img.IsIncomplete(),
                img.Release() e tentar de novo. Um timeout é normal nos modos
                com trigger (ninguém carregou no botão, não passou nenhum saco):
-               tentar outra vez, sem erro.
+               tentar outra vez, sem erro, a não ser que self.parada (o
+               programa está a terminar): então devolver None.
             2. bgr = processador.Convert(img, PySpin.PixelFormat_BGR8).GetNDArray().copy()
                (copy: o array aponta para memória gerida pelo SDK).
             3. Sensor:

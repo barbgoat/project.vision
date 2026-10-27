@@ -20,6 +20,7 @@ import logging
 import sys
 from collections import Counter
 from pathlib import Path
+from time import perf_counter
 
 import cv2
 
@@ -73,19 +74,23 @@ def construir_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def resumo_linha(resultado: Resultado, orcamento_ms: float) -> str:
+def resumo_linha(resultado: Resultado, ciclo_ms: float, orcamento_ms: float) -> str:
     """Uma linha por saco na consola, p.ex.
-    "saco 12 (8 imagens, 1 analisada): NOK 183 ms | localizacao=OK relevo=NOK(2) | 2 risco"."""
+    "saco 12 (8 imagens, 1 analisada): NOK 183 ms (+25 ms saída) | localizacao=OK relevo=NOK(2) | 2 risco".
+
+    ciclo_ms: inspeção + registo (M7); é este o tempo que tem de caber no orçamento.
+    """
     passagem = resultado.passagem
     if passagem is not None and passagem.modo != "foto":
         nome = f"saco {passagem.numero} ({passagem.num_imagens} imagens, {resultado.imagens_analisadas} analisada(s))"
     else:
         nome = Path(resultado.captura.origem).name if resultado.captura else "?"
     modulos = " ".join(f"{r.modulo}={r.resumo}" for r in resultado.relatorios)
-    linha = f"{nome}: {resultado.estado} {resultado.tempo_ms:.0f} ms | {modulos}"
+    saida_ms = ciclo_ms - resultado.tempo_ms
+    linha = f"{nome}: {resultado.estado} {resultado.tempo_ms:.0f} ms (+{saida_ms:.0f} ms saída) | {modulos}"
     if resultado.defeitos:
         linha += " | " + ", ".join(f"{n} {tipo}" for tipo, n in sorted(resultado.contagem_tipos.items()))
-    if resultado.tempo_ms > orcamento_ms:
+    if ciclo_ms > orcamento_ms:
         linha += f" | (!) acima dos {orcamento_ms:.0f} ms"
     if passagem is not None and passagem.aviso:
         linha += f" | disparo: {passagem.aviso}"
@@ -146,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     aquisicao = AquisicaoEmParalelo(fonte, criar_disparo(cfg), cfg.disparo.fila_max)
     depurar = args.depurar or cfg.saida.depurar
     pasta_resultados = None
+    codigo = 0
     try:
         with aquisicao, Saida(cfg, args.saida, mestre.nomes, depurar=depurar) as saida:
             pasta_resultados = saida.pasta
@@ -153,12 +159,15 @@ def main(argv: list[str] | None = None) -> int:
             if saida.depuracao is not None:
                 log.info("Depuração ligada (%s): as imagens de cada etapa gastam tempo e disco.", depurar)
             for passagem in aquisicao:
+                inicio = perf_counter()
                 # Os módulos só produzem as imagens das etapas se forem precisas para a depuração.
                 resultado = mestre.inspecionar_passagem(passagem, guardar_intermedios=saida.depuracao is not None)
                 saida.registar(resultado)
+                # O registo (CSV, imagens, depuração) também gasta tempo do saco seguinte.
+                ciclo_ms = (perf_counter() - inicio) * 1000
                 estados[resultado.estado] += 1
-                tempos.append(resultado.tempo_ms)
-                print(resumo_linha(resultado, cfg.geral.orcamento_ms))
+                tempos.append(ciclo_ms)
+                print(resumo_linha(resultado, ciclo_ms, cfg.geral.orcamento_ms))
                 if args.mostrar:
                     imagem = saida.anotar(resultado)
                     if imagem is not None and not mostrar(imagem, fonte.ao_vivo):
@@ -168,6 +177,10 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as erro:  # p.ex. disparo "sensor" com uma fonte sem sensor
         log.error("%s", erro)
         return 2
+    except RuntimeError as erro:  # p.ex. a câmara desligou-se a meio: mostrar o que já foi feito
+        log.error("M1 aquisicao parou: %s", erro)
+        log.debug("Traceback completo:", exc_info=erro)
+        codigo = 1
     finally:
         if args.mostrar:
             cv2.destroyAllWindows()
@@ -177,11 +190,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Imagens recebidas: {aquisicao.imagens}; passagens descartadas por atraso da análise: "
           f"{aquisicao.descartadas}")
     if tempos:
-        print(f"Tempo por saco: médio {sum(tempos) / len(tempos):.0f} ms, máximo {max(tempos):.0f} ms "
-              f"(orçamento {cfg.geral.orcamento_ms:.0f} ms)")
+        print(f"Tempo por saco (inspeção + saída): médio {sum(tempos) / len(tempos):.0f} ms, "
+              f"máximo {max(tempos):.0f} ms (orçamento {cfg.geral.orcamento_ms:.0f} ms)")
     if pasta_resultados is not None and (pasta_resultados / "depuracao").exists():
         print(f"Depuração (um painel.jpg por saco): {pasta_resultados / 'depuracao'}")
-    return 0
+    return codigo
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import ast
 import dataclasses
 import json
 import py_compile
+import re
 
 import numpy as np
 import pytest
@@ -16,7 +17,7 @@ from nucleo import config
 from nucleo import defines as D
 from nucleo.config import RAIZ, Config, carregar_configuracao, nome_define
 from nucleo.contrato import Defeito, Escravo, Estado, Relatorio, Saco, TipoDefeito
-from testes.apoio import com_acentos
+from testes.apoio import MONTAGEM, com_acentos, config_teste
 
 PERFIS = sorted((RAIZ / "configuracoes").glob("*.json"))
 MONTAGENS = sorted(p for p in (RAIZ / "dataset").iterdir() if p.is_dir())
@@ -71,6 +72,22 @@ def test_cada_parametro_tem_o_seu_define_com_o_mesmo_valor():
     assert not sem_define
     assert not diferentes
     assert not sorted(defines_secao - nomes_param), "defines de secção sem parâmetro"
+
+
+def test_valores_medir_fixados_nos_testes():
+    """Os [MEDIR] vão mudar com a montagem real: os testes fixam-nos todos em MONTAGEM (testes/apoio.py)."""
+    medir, pendente = set(), False
+    for linha in (RAIZ / "nucleo" / "defines.py").read_text(encoding="utf-8").splitlines():
+        pendente = pendente or linha.startswith("# [MEDIR]")  # [MEDIR] no comentário por cima do define
+        if define := re.match(r"([A-Z0-9_]+): Final", linha):
+            if pendente or "[MEDIR]" in linha:
+                medir.add(define[1])
+            pendente = False
+        elif not linha.startswith("#"):
+            pendente = False
+    fixados = {nome_define(secao, nome) for secao, valores in MONTAGEM.items() for nome in valores}
+    assert medir, "nenhum [MEDIR] encontrado em defines.py"
+    assert not sorted(medir - fixados), "acrescentar estes valores a MONTAGEM em testes/apoio.py"
 
 
 def test_sem_config_json_valem_so_os_defines(tmp_path, monkeypatch):
@@ -193,7 +210,7 @@ def test_ordem_e_escolha_dos_modulos():
 
 
 def test_imagem_sem_saco_da_sem_saco_com_motivo():
-    r = m.Mestre(Config()).inspecionar(IMG.copy())
+    r = m.Mestre(config_teste()).inspecionar(IMG.copy())
     loc = r.relatorio("localizacao")
     assert r.estado is Estado.SEM_SACO and loc.estado is Estado.SEM_SACO and r.saco is None
     assert any(t in loc.mensagem for t in ("fora dos limites", "nada difere", "borda"))
@@ -249,6 +266,14 @@ class MudaOSaco(Escravo):
         return Relatorio.concluir(self.nome, [])
 
 
+class MudaAConfig(Escravo):
+    nome, pergunta = "manchas", "?"
+
+    def analisar(self, saco, guardar_intermedios=False):
+        self.cfg.geral.px_por_mm = 1.0  # proibido: os outros escravos usam a mesma configuração
+        return Relatorio.concluir(self.nome, [])
+
+
 class FalhaOContrato(Escravo):
     nome, pergunta = "manchas", "?"
 
@@ -257,8 +282,7 @@ class FalhaOContrato(Escravo):
 
 
 def mestre_com(*classes, politica="rejeitar"):
-    cfg = Config()
-    cfg = dataclasses.replace(cfg, geral=dataclasses.replace(cfg.geral, em_caso_de_erro=politica))
+    cfg = config_teste(geral={"em_caso_de_erro": politica})
     mestre = m.Mestre(cfg, apenas=[])
     mestre.escravos = [k(cfg) for k in classes]
     return mestre
@@ -292,7 +316,7 @@ def test_politica_ignorar_e_nok_prevalece(saco_falso):
 
 
 @pytest.mark.parametrize("classe, texto", [(EscreveNaImagem, "read-only"), (MudaOSaco, "FrozenInstanceError"),
-                                           (FalhaOContrato, "contrato")])
+                                           (MudaAConfig, "FrozenInstanceError"), (FalhaOContrato, "contrato")])
 def test_violacoes_do_contrato_ficam_no_modulo(saco_falso, classe, texto):
     r = mestre_com(classe).inspecionar(IMG.copy())
     assert r.relatorio("manchas").estado is Estado.ERRO and texto in r.relatorio("manchas").mensagem
@@ -316,7 +340,7 @@ def test_sem_saco_nao_chama_mais_ninguem(monkeypatch):
 
 
 def test_escravos_reais_m3_decide_enquanto_m4_m6_por_implementar(saco_falso):
-    r = m.Mestre(Config()).inspecionar(IMG.copy())
+    r = m.Mestre(config_teste()).inspecionar(IMG.copy())
     estados = {x.modulo: x.estado for x in r.relatorios}
     assert estados["dimensoes"] in (Estado.OK, Estado.NOK)
     assert all(estados[k] is Estado.POR_IMPLEMENTAR for k in ("cor", "relevo", "manchas"))

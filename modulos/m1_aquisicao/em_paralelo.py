@@ -60,9 +60,12 @@ class AquisicaoEmParalelo:
 
     def __exit__(self, *excecao: object) -> None:
         self._parar.set()
+        self.fonte.parar()  # uma câmara à espera de um saco que não vem sai da espera
         with self._condicao:
             self._condicao.notify_all()
         self._thread.join(timeout=5)
+        if self._thread.is_alive():
+            log.warning("A fonte %s não terminou em 5 s: pode não ter sido libertada.", type(self.fonte).__name__)
 
     def __iter__(self) -> Iterator[Passagem]:
         while True:

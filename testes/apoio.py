@@ -1,7 +1,12 @@
-"""Apoio aos testes: cenas sintéticas (fundo, sacos, tapete a andar) e correr os comandos do projeto.
+"""Apoio aos testes: configuração dos testes, cenas sintéticas (fundo, sacos, tapete a andar)
+e correr os comandos do projeto.
 
 Medidas em mm; imagens BGR uint8, com as bordas desenhadas a 4× e reduzidas
 (anti-aliasing), como numa câmara real.
+
+Regra: um teste nunca depende de um valor [MEDIR] dos defines (esses mudam
+quando se medir a montagem e o produto reais). Usa config_teste() ou, para um
+JSON, montagem(), que fixam esses valores em MONTAGEM.
 """
 
 from __future__ import annotations
@@ -12,11 +17,12 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
 
-from nucleo.config import RAIZ
+from nucleo.config import RAIZ, Config
 from nucleo.contrato import Captura
 
 
@@ -49,9 +55,37 @@ def com_acentos(tmp_path: Path) -> Path:
     return pasta
 
 
-# --- Cenas sintéticas ---------------------------------------------------------------------
+# --- Montagem e produto dos testes --------------------------------------------------------
 
 COMPRIMENTO, LARGURA = 150.0, 55.0  # saco nominal (mm)
+
+# Os valores [MEDIR] de nucleo/defines.py, fixados para os testes: os sacos sintéticos
+# têm COMPRIMENTO × LARGURA, a linha sintética anda na horizontal, etc. Um [MEDIR]
+# novo nos defines tem de ser acrescentado aqui.
+MONTAGEM: dict[str, dict[str, Any]] = {
+    "geral": {"px_por_mm": 5.0, "velocidade_mm_s": 500.0, "orcamento_ms": 500.0},
+    "lente": {"abertura_f": 4.0, "distancia_mm": 300.0},
+    "aquisicao": {"exposicao_us": 120.0},
+    "disparo": {"rajada_imagens": 5, "rajada_atraso_us": 0.0, "virtual_direcao": "horizontal"},
+    "localizacao": {"margem_extremidades_mm": 5.0},
+    "dimensoes": {"comprimento_nominal_mm": COMPRIMENTO, "largura_nominal_mm": LARGURA,
+                  "tolerancia_comprimento_mm": 3.0, "tolerancia_largura_mm": 3.0},
+    "cor": {"referencia_lab": [70.0, 0.0, 0.0]},
+}
+
+
+def montagem(**secoes: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """MONTAGEM com os valores dados por cima, p.ex. montagem(geral={"px_por_mm": 2.0}); para um JSON."""
+    return {s: {**MONTAGEM.get(s, {}), **secoes.get(s, {})} for s in MONTAGEM | secoes}
+
+
+def config_teste(**secoes: dict[str, Any]) -> Config:
+    """A configuração dos testes: os defines, com os valores [MEDIR] de MONTAGEM e os dados por cima."""
+    return Config.de_dict(montagem(**secoes))
+
+
+# --- Cenas sintéticas ---------------------------------------------------------------------
+
 FUNDO_BGR = (110, 115, 105)  # tapete cinzento
 
 # Sacos opacos de várias cores (BGR)

@@ -39,7 +39,10 @@ GERAL_PX_POR_MM: Final = 8.0  # [MEDIR]
 # parado não é usada. Ver as fases de ensaio em modulos/m1_aquisicao/__init__.py.
 GERAL_VELOCIDADE_MM_S: Final = 500.0  # [MEDIR] (só com o tapete a andar)
 GERAL_EM_CASO_DE_ERRO: Final = "rejeitar"  # se um módulo der ERRO: "rejeitar" o saco | "ignorar" o módulo
-GERAL_ORCAMENTO_MS: Final = 500.0  # tempo máximo por saco (2 sacos/s)
+# Tempo entre sacos = 1000 / sacos por segundo da linha (2 sacos/s → 500 ms). A inspeção e
+# o registo de cada saco têm de caber aqui, em média; senão a fila do M1 enche e passam
+# sacos sem inspeção (ERRO). Para ter folga, apontar para ~70 % deste valor.
+GERAL_ORCAMENTO_MS: Final = 500.0  # [MEDIR] confirmar o ritmo real da linha
 
 # =============================================================================
 # CÂMARA: FLIR Blackfly S BFS-PGE-50S5C-C (PoE GigE, cor, Sony IMX264) — fixas

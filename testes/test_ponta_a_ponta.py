@@ -11,7 +11,7 @@ import pytest
 
 from nucleo.config import RAIZ
 from nucleo.imagens import guardar_imagem
-from testes.apoio import CORES, FORMAS, Linha, cena_forma, correr, execucao, ler_csv
+from testes.apoio import CORES, FORMAS, Linha, cena_forma, correr, execucao, ler_csv, montagem
 
 PPM = 5.0
 
@@ -51,7 +51,7 @@ def fotos(tmp_path_factory):
     for nome, poligono in FORMAS.items():
         guardar_imagem(pasta / "fotos" / f"{nome}.png", cena_forma(rng, poligono, angulo=-15, cor=CORES["azul"]))
     guardar_imagem(pasta / "fotos" / "vazio.png", cena_forma(rng, [(0, 0), (0.1, 0), (0.1, 0.1)]))
-    (pasta / "montagem.json").write_text(json.dumps({"geral": {"px_por_mm": PPM}}), encoding="utf-8")
+    (pasta / "montagem.json").write_text(json.dumps(montagem(geral={"px_por_mm": PPM})), encoding="utf-8")
     return pasta
 
 
@@ -123,8 +123,8 @@ def video(tmp_path_factory):
     (pasta / "v.mp4").rename(caminho)
     for k in range(3):
         guardar_imagem(pasta / "sequencia" / f"seq_{k}.png", imagens[k])
-    (pasta / "montagem.json").write_text(json.dumps({"geral": {"px_por_mm": Linha.PPM}, "disparo": {"fps": Linha.FPS}}),
-                                         encoding="utf-8")
+    valores = montagem(geral={"px_por_mm": Linha.PPM}, disparo={"fps": Linha.FPS})
+    (pasta / "montagem.json").write_text(json.dumps(valores), encoding="utf-8")
     return caminho, pasta / "montagem.json"
 
 

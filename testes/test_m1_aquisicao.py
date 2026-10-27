@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import math
 import time
 
@@ -10,18 +11,18 @@ import cv2
 import numpy as np
 import pytest
 
+import main as programa
 import mestre as m
 from modulos.m1_aquisicao import AquisicaoEmParalelo, FonteVideo, criar_disparo, criar_fonte
 from modulos.m1_aquisicao.disparo import DisparoFoto, DisparoSensor, DisparoVirtual
 from modulos.m1_aquisicao.fontes import FonteImagem
-from nucleo.config import Config
 from nucleo.contrato import Captura, Estado, Passagem
 from nucleo.imagens import guardar_imagem, ler_imagem
-from testes.apoio import COMPRIMENTO, LARGURA, Linha, com_acentos
+from testes.apoio import COMPRIMENTO, LARGURA, Linha, com_acentos, config_teste, montagem
 
 PPM, FPS, VEL = Linha.PPM, Linha.FPS, Linha.VELOCIDADE
-CFG_VIRTUAL = Config.de_dict({"geral": {"px_por_mm": PPM}, "disparo": {"modo": "virtual", "fps": FPS}})
-CFG_SENSOR = Config.de_dict({"geral": {"px_por_mm": PPM}, "disparo": {"modo": "sensor", "fps": FPS}})
+CFG_VIRTUAL = config_teste(geral={"px_por_mm": PPM}, disparo={"modo": "virtual", "fps": FPS})
+CFG_SENSOR = config_teste(geral={"px_por_mm": PPM}, disparo={"modo": "sensor", "fps": FPS})
 
 
 @pytest.fixture(scope="module")
@@ -58,7 +59,7 @@ def test_fonte_pasta_le_subpastas_e_salta_imagens_corrompidas(tmp_path):
     guardar_imagem(pasta / "ok" / "saco ã 1.png", IMAGEM)
     guardar_imagem(pasta / "rugas" / "saco é 2.png", IMAGEM)
     (pasta / "rugas" / "corrompida.jpg").write_bytes(b"xx")
-    with criar_fonte("pasta", Config(), pasta=pasta) as fonte:
+    with criar_fonte("pasta", config_teste(), pasta=pasta) as fonte:
         n, capturas = len(fonte), list(fonte)
     assert n == 3 and len(capturas) == 2
     assert all(np.array_equal(c.imagem, IMAGEM) for c in capturas)
@@ -82,7 +83,7 @@ def test_fonte_video_com_acentos(tmp_path):
 @pytest.mark.parametrize("tipo", ["webcam", "spinnaker"])
 def test_fontes_por_implementar(tipo):
     with pytest.raises(NotImplementedError):
-        criar_fonte(tipo, Config())
+        criar_fonte(tipo, config_teste())
 
 
 # --- Barreira virtual ---------------------------------------------------------------------
@@ -165,20 +166,20 @@ def test_botao_com_saltos_conta_uma_vez():
     # Dois toques no botão (t = 0 s e t = 2 s), cada um com saltos nos primeiros 15 ms.
     instantes = [0.000, 0.004, 0.009, 0.015, 2.000, 2.003, 2.011]
     capturas = [Captura(IMG, f"cam#{i}", 100 + t, sensor=True) for i, t in enumerate(instantes)]
-    disparo = DisparoFoto(Config())
+    disparo = DisparoFoto(config_teste())
     assert [p.candidatas[0].origem for p in disparo.passagens(capturas)] == ["cam#0", "cam#4"]
     assert disparo.ignoradas == 5
 
 
 def test_fotos_de_uma_pasta_nunca_sao_ignoradas():
     fotos = [Captura(IMG, f"foto{i}.jpg", 100 + i * 0.001) for i in range(5)]
-    disparo = DisparoFoto(Config())
+    disparo = DisparoFoto(config_teste())
     assert len(list(disparo.passagens(fotos))) == 5 and disparo.ignoradas == 0
 
 
 def test_dois_toques_afastados_contam_os_dois():
     toques = [Captura(IMG, "a", 100.0, sensor=True), Captura(IMG, "b", 100.5, sensor=True)]
-    assert len(list(DisparoFoto(Config()).passagens(toques))) == 2
+    assert len(list(DisparoFoto(config_teste()).passagens(toques))) == 2
 
 
 # --- Mestre: uma decisão por saco ---------------------------------------------------------
@@ -242,7 +243,7 @@ def test_paralelo_analise_a_tempo_nao_perde_nada(gravacao):
 
 
 def test_paralelo_analise_lenta_descarta_mas_regista(gravacao):
-    cfg = Config.de_dict({"geral": {"px_por_mm": PPM}, "disparo": {"modo": "virtual", "fps": FPS, "fila_max": 1}})
+    cfg = config_teste(geral={"px_por_mm": PPM}, disparo={"modo": "virtual", "fps": FPS, "fila_max": 1})
     recebidas, descartadas = _receber(CamaraSimulada(gravacao[0]), cfg, 0.9)  # 0,9 s por saco, para 2 sacos/s
     assert len(recebidas) == 6, "nunca se perde um saco em silêncio"
     assert descartadas > 0 and any(p.descartada for p in recebidas)
@@ -251,3 +252,40 @@ def test_paralelo_analise_lenta_descarta_mas_regista(gravacao):
 def test_paralelo_erro_na_thread_chega_ao_programa(gravacao):
     with pytest.raises(RuntimeError, match="câmara desligada"):
         _receber(CamaraSimulada(gravacao[0], avaria_em=20), CFG_VIRTUAL, 0)
+
+
+class CamaraSemSacos(FonteImagem):
+    """Câmara com trigger sem nenhum saco a passar: ler() fica à espera, em ciclos de timeout."""
+
+    ao_vivo = True
+
+    def __init__(self):
+        self.fechada = False
+
+    def ler(self):
+        while not self.parada:
+            time.sleep(0.05)  # GetNextImage(timeout) sem imagem: tentar outra vez
+        return None
+
+    def fechar(self):
+        self.fechada = True
+
+
+def test_paralelo_sair_sem_sacos_a_passar_liberta_a_camara():
+    fonte = CamaraSemSacos()
+    inicio = time.perf_counter()
+    with AquisicaoEmParalelo(fonte, criar_disparo(CFG_VIRTUAL), 1):
+        time.sleep(0.2)  # o operador sai (q) sem nenhum saco ter passado
+    assert fonte.fechada and time.perf_counter() - inicio < 2
+
+
+def test_main_camara_que_desliga_a_meio_mostra_o_resumo(gravacao, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(programa, "criar_fonte", lambda *a, **k: CamaraSimulada(gravacao[0], avaria_em=60))
+    perfil = tmp_path / "montagem.json"
+    perfil.write_text(json.dumps(montagem(geral={"px_por_mm": PPM}, disparo={"fps": FPS})), encoding="utf-8")
+    codigo = programa.main(["--fonte", "webcam", "--disparo", "virtual", "--config", str(perfil),
+                            "--saida", str(tmp_path / "resultados")])
+    consola = capsys.readouterr().out
+    assert codigo == 1, "a câmara falhou: não pode acabar como se estivesse tudo bem"
+    assert "saco 1 (" in consola and "ms saída)" in consola, "uma linha por saco, com o tempo do registo"
+    assert "Sacos inspecionados:" in consola, "o resumo do que já foi feito aparece na mesma"
