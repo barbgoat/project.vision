@@ -11,8 +11,7 @@ import pytest
 
 from nucleo.config import RAIZ
 from nucleo.imagens import guardar_imagem
-from testes.comandos import correr, execucao, ler_csv
-from testes.sinteticos import CORES, FORMAS, Linha, cena_forma
+from testes.apoio import CORES, FORMAS, Linha, cena_forma, correr, execucao, ler_csv
 
 PPM = 5.0
 

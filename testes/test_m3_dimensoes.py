@@ -8,7 +8,7 @@ import pytest
 import mestre as m
 from nucleo.config import Config
 from nucleo.contrato import Estado, TipoDefeito
-from testes.sinteticos import CORES, FORMAS, cena_forma
+from testes.apoio import CORES, FORMAS, cena_forma
 
 CFG = Config.de_dict({"geral": {"px_por_mm": 5.0}})
 

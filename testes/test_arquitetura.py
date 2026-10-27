@@ -16,6 +16,7 @@ from nucleo import config
 from nucleo import defines as D
 from nucleo.config import RAIZ, Config, carregar_configuracao, nome_define
 from nucleo.contrato import Defeito, Escravo, Estado, Relatorio, Saco, TipoDefeito
+from testes.apoio import com_acentos
 
 PERFIS = sorted((RAIZ / "configuracoes").glob("*.json"))
 MONTAGENS = sorted(p for p in (RAIZ / "dataset").iterdir() if p.is_dir())
@@ -124,13 +125,14 @@ def test_validacao_cruzada_camara():
         Config.de_dict({"aquisicao": {"exposicao_us": 1e6 / D.DISPARO_FPS + 1000}})
 
 
-def test_guardar_e_carregar_com_acentos(pasta_com_acentos):
-    caminho = pasta_com_acentos / "configuração ç.json"
+def test_guardar_e_carregar_com_acentos(tmp_path):
+    pasta = com_acentos(tmp_path)
+    caminho = pasta / "configuração ç.json"
     caminho.write_text(json.dumps({"manchas": {"ativo": False}}), encoding="utf-8-sig")
     assert Config.carregar(caminho).manchas.ativo is False
 
     c = Config.de_dict({"geral": {"px_por_mm": 12.4}, "cor": {"ativo": False}})
-    caminho = pasta_com_acentos / "telemóvel.json"
+    caminho = pasta / "telemóvel.json"
     c.guardar(caminho)
     assert json.loads(caminho.read_text(encoding="utf-8")) == {"geral": {"px_por_mm": 12.4}, "cor": {"ativo": False}}
     assert Config.carregar(caminho) == c
@@ -138,8 +140,8 @@ def test_guardar_e_carregar_com_acentos(pasta_com_acentos):
         f"geral.px_por_mm = 12.4 (define GERAL_PX_POR_MM = {D.GERAL_PX_POR_MM})",
         "cor.ativo = False (define COR_ATIVO = True)",
     ]
-    c.guardar(pasta_com_acentos / "completo.json", completo=True)
-    completo = json.loads((pasta_com_acentos / "completo.json").read_text(encoding="utf-8"))
+    c.guardar(pasta / "completo.json", completo=True)
+    completo = json.loads((pasta / "completo.json").read_text(encoding="utf-8"))
     assert len(completo["relevo"]) == len(dataclasses.fields(Config().relevo))
 
 

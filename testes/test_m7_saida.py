@@ -15,8 +15,7 @@ from nucleo import defines as D
 from nucleo.config import Config
 from nucleo.contrato import Captura, Defeito, Escravo, Estado, Relatorio, TipoDefeito
 from nucleo.imagens import ler_imagem
-from testes.comandos import ler_csv
-from testes.sinteticos import FORMAS, cena_forma
+from testes.apoio import FORMAS, cena_forma, com_acentos, ler_csv
 
 PPM = 5.0
 CFG = Config.de_dict({"geral": {"px_por_mm": PPM}})
@@ -52,8 +51,9 @@ def resultado(imagem):
     return r
 
 
-def test_registo_csv(resultado, pasta_com_acentos):
-    with Saida(CFG, pasta_com_acentos, ["localizacao", "dimensoes", "relevo", "cor"]) as saida:
+def test_registo_csv(resultado, tmp_path):
+    pasta = com_acentos(tmp_path)
+    with Saida(CFG, pasta, ["localizacao", "dimensoes", "relevo", "cor"]) as saida:
         caminho = saida.registar(resultado)
     assert (saida.pasta / "registo.csv").read_bytes().startswith(b"\xef\xbb\xbf"), "BOM, para o Excel"
     (linha,) = ler_csv(saida.pasta / "registo.csv")

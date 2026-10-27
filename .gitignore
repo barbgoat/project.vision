@@ -1,23 +1,12 @@
-# --- Ambiente Python (recria-se com: python -m venv .venv + pip install -r requirements-dev.txt)
+# Python
 .venv/
 __pycache__/
-*.pyc
 .pytest_cache/
 
-# --- Resultados das execuções (grandes; geram-se de novo)
+# Gerado ou grande: resultados, instaladores da FLIR, imagens do dataset (usar Git LFS para as guardar)
 resultados/*
 !resultados/.gitkeep
-
-# --- Instaladores de terceiros (grandes; descarregam-se do site da FLIR)
 instaladores/
-spinnaker_python-*/
-
-# --- Configuração local desta máquina (os perfis partilhados estão em configuracoes/)
-/config.json
-
-# --- Imagens do dataset: podem chegar a vários GB, por isso ficam fora do git.
-# A estrutura de pastas (.gitkeep), as anotações (.json) e os README ficam.
-# Para guardar as imagens no repositório, usar o Git LFS ou apagar estas linhas.
 dataset/**/*.jpg
 dataset/**/*.jpeg
 dataset/**/*.png
@@ -26,6 +15,7 @@ dataset/**/*.tif
 dataset/**/*.tiff
 dataset/**/*.mp4
 dataset/**/*.mov
-
-# --- Imagens soltas tiradas pelos testes da câmara
 frame.png
+
+# Ajustes desta máquina
+/config.json

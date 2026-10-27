@@ -1,17 +1,55 @@
-"""Cenas sintéticas para os testes: fundo, sacos e uma linha com o tapete a andar.
+"""Apoio aos testes: cenas sintéticas (fundo, sacos, tapete a andar) e correr os comandos do projeto.
 
-Todas as medidas em mm; as imagens são BGR uint8. As bordas dos sacos são
-desenhadas a 4× e reduzidas (anti-aliasing), como numa câmara real.
+Medidas em mm; imagens BGR uint8, com as bordas desenhadas a 4× e reduzidas
+(anti-aliasing), como numa câmara real.
 """
 
 from __future__ import annotations
 
+import csv
 import math
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import cv2
 import numpy as np
 
+from nucleo.config import RAIZ
 from nucleo.contrato import Captura
+
+
+# --- Comandos e ficheiros -----------------------------------------------------------------
+
+def correr(*argumentos: str | Path) -> subprocess.CompletedProcess:
+    """Corre um comando do projeto (p.ex. "main.py", "--help") com o Python deste ambiente, na raiz."""
+    return subprocess.run(
+        [sys.executable, *map(str, argumentos)], cwd=RAIZ, capture_output=True, text=True, encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"}, timeout=300,
+    )
+
+
+def ler_csv(caminho: Path) -> list[dict[str, str]]:
+    """Linhas de um CSV do M7 (separador ';', utf-8 com BOM)."""
+    return list(csv.DictReader(caminho.read_text(encoding="utf-8-sig").splitlines(), delimiter=";"))
+
+
+def execucao(pasta_saida: Path) -> Path:
+    """A pasta <saida>/<data_hora>/ criada por uma execução do main.py."""
+    pastas = [p for p in pasta_saida.iterdir() if p.is_dir()]
+    assert len(pastas) == 1, pastas
+    return pastas[0]
+
+
+def com_acentos(tmp_path: Path) -> Path:
+    """Subpasta de tmp_path com espaços e acentos no nome (como as pastas do utilizador)."""
+    pasta = tmp_path / "Ensaios de iluminação ç"
+    pasta.mkdir(exist_ok=True)
+    return pasta
+
+
+# --- Cenas sintéticas ---------------------------------------------------------------------
 
 COMPRIMENTO, LARGURA = 150.0, 55.0  # saco nominal (mm)
 FUNDO_BGR = (110, 115, 105)  # tapete cinzento

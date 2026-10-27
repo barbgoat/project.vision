@@ -15,7 +15,7 @@ from modulos.m2_localizacao import Localizador
 from nucleo.config import Config
 from nucleo.contrato import Estado, SemSaco
 from nucleo.imagens import guardar_imagem
-from testes.sinteticos import CORES, alfa_retangulo, cena_saco, diferenca_angulo, fundo
+from testes.apoio import CORES, alfa_retangulo, cena_saco, com_acentos, diferenca_angulo, fundo
 
 PPM = 5.0
 CFG = Config.de_dict({"geral": {"px_por_mm": PPM}})
@@ -98,18 +98,20 @@ def _com_referencia(caminho):
     return dataclasses.replace(CFG, localizacao=dataclasses.replace(CFG.localizacao, fundo_referencia=str(caminho)))
 
 
-def test_fundo_com_textura_com_foto_de_referencia(fundo_com_textura, pasta_com_acentos):
+def test_fundo_com_textura_com_foto_de_referencia(fundo_com_textura, tmp_path):
+    pasta = com_acentos(tmp_path)
     img, foto_vazia = fundo_com_textura
-    guardar_imagem(pasta_com_acentos / "fundo vazio ç.png", foto_vazia)
-    saco = Localizador(_com_referencia(pasta_com_acentos / "fundo vazio ç.png")).localizar(img)
+    guardar_imagem(pasta / "fundo vazio ç.png", foto_vazia)
+    saco = Localizador(_com_referencia(pasta / "fundo vazio ç.png")).localizar(img)
     assert abs(saco.comprimento_mm - 150) < 1.5 and abs(saco.largura_mm - 55) < 1.5
 
 
-def test_referencia_de_outro_tamanho_da_erro(fundo_com_textura, pasta_com_acentos):
+def test_referencia_de_outro_tamanho_da_erro(fundo_com_textura, tmp_path):
+    pasta = com_acentos(tmp_path)
     img, foto_vazia = fundo_com_textura
-    guardar_imagem(pasta_com_acentos / "fundo.png", foto_vazia)
+    guardar_imagem(pasta / "fundo.png", foto_vazia)
     with pytest.raises(ValueError, match="mesma câmara"):
-        Localizador(_com_referencia(pasta_com_acentos / "fundo.png")).localizar(cv2.resize(img, (1000, 800)))
+        Localizador(_com_referencia(pasta / "fundo.png")).localizar(cv2.resize(img, (1000, 800)))
 
 
 def test_referencia_em_falta_da_erro_no_arranque():

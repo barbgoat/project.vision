@@ -1,4 +1,4 @@
-"""M1 Aquisição, disparo: uma passagem por saco (foto/botão, sensor, barreira virtual) e aquisição em paralelo."""
+"""M1 Aquisição: fontes (pasta, vídeo), disparo (foto/botão, sensor, barreira virtual) e aquisição em paralelo."""
 
 from __future__ import annotations
 
@@ -6,16 +6,18 @@ import dataclasses
 import math
 import time
 
+import cv2
 import numpy as np
 import pytest
 
 import mestre as m
-from modulos.m1_aquisicao import AquisicaoEmParalelo, criar_disparo
+from modulos.m1_aquisicao import AquisicaoEmParalelo, FonteVideo, criar_disparo, criar_fonte
 from modulos.m1_aquisicao.disparo import DisparoFoto, DisparoSensor, DisparoVirtual
 from modulos.m1_aquisicao.fontes import FonteImagem
 from nucleo.config import Config
 from nucleo.contrato import Captura, Estado, Passagem
-from testes.sinteticos import COMPRIMENTO, LARGURA, Linha
+from nucleo.imagens import guardar_imagem, ler_imagem
+from testes.apoio import COMPRIMENTO, LARGURA, Linha, com_acentos
 
 PPM, FPS, VEL = Linha.PPM, Linha.FPS, Linha.VELOCIDADE
 CFG_VIRTUAL = Config.de_dict({"geral": {"px_por_mm": PPM}, "disparo": {"modo": "virtual", "fps": FPS}})
@@ -37,6 +39,50 @@ def gravacao(linha):
 @pytest.fixture(scope="module")
 def passagens_virtuais(gravacao):
     return list(DisparoVirtual(CFG_VIRTUAL).passagens(gravacao[0]))
+
+
+# --- Fontes -------------------------------------------------------------------------------
+
+IMAGEM = np.zeros((40, 60, 3), np.uint8)
+IMAGEM[:, :30] = (255, 0, 0)
+
+
+def test_ler_e_guardar_imagem_com_acentos(tmp_path):
+    caminho = com_acentos(tmp_path) / "ok" / "saco ã 1.png"
+    guardar_imagem(caminho, IMAGEM)
+    assert np.array_equal(ler_imagem(caminho), IMAGEM)
+
+
+def test_fonte_pasta_le_subpastas_e_salta_imagens_corrompidas(tmp_path):
+    pasta = com_acentos(tmp_path)
+    guardar_imagem(pasta / "ok" / "saco ã 1.png", IMAGEM)
+    guardar_imagem(pasta / "rugas" / "saco é 2.png", IMAGEM)
+    (pasta / "rugas" / "corrompida.jpg").write_bytes(b"xx")
+    with criar_fonte("pasta", Config(), pasta=pasta) as fonte:
+        n, capturas = len(fonte), list(fonte)
+    assert n == 3 and len(capturas) == 2
+    assert all(np.array_equal(c.imagem, IMAGEM) for c in capturas)
+
+
+def test_fonte_video_com_acentos(tmp_path):
+    temporario = tmp_path / "v.mp4"  # o VideoWriter não aceita acentos
+    escritor = cv2.VideoWriter(str(temporario), cv2.VideoWriter_fourcc(*"mp4v"), 24, (64, 48))
+    for k in range(10):
+        escritor.write(np.full((48, 64, 3), 20 * k, np.uint8))
+    escritor.release()
+    video = com_acentos(tmp_path) / "vídeo linha ç.mp4"
+    temporario.rename(video)
+    fonte = FonteVideo(video)
+    try:
+        assert sum(1 for _ in fonte) == 10
+    finally:
+        fonte.fechar()
+
+
+@pytest.mark.parametrize("tipo", ["webcam", "spinnaker"])
+def test_fontes_por_implementar(tipo):
+    with pytest.raises(NotImplementedError):
+        criar_fonte(tipo, Config())
 
 
 # --- Barreira virtual ---------------------------------------------------------------------
