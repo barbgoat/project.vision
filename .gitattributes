@@ -1,0 +1,5 @@
+# Fins de linha normalizados no repositório (o Windows converte ao fazer checkout).
+* text=auto
+*.png binary
+*.jpg binary
+*.whl binary
