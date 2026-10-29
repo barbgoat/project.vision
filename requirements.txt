@@ -1,5 +1,6 @@
 numpy==2.5.4
 opencv-python==5.0.0.93
+PySide6-Essentials==6.12.0  # interface gráfica (gui.py)
 pytest==8.4.2  # testes
 
 # Câmara (PySpin): não está no PyPI; instala-se da wheel do Spinnaker 4.4 (fora do git):

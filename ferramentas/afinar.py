@@ -18,49 +18,12 @@ from pathlib import Path
 if __package__ in (None, ""):  # corrido como ficheiro: python ferramentas\afinar.py
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nucleo.config import CAMINHO_POR_OMISSAO  # noqa: E402
+from nucleo.config import AFINACAO, CAMINHO_POR_OMISSAO  # noqa: E402
 
-# Barras deslizantes por módulo: (parâmetro da secção, mínimo, máximo, passo).
+# Barras deslizantes por módulo: (parâmetro da secção, mínimo, máximo, passo), em nucleo/config.py.
 # O cv2.createTrackbar só trabalha com inteiros 0..N, por isso:
 #   posição = round((valor − mínimo) / passo)   e   valor = mínimo + posição · passo
-PARAMETROS: dict[str, list[tuple[str, float, float, float]]] = {
-    "localizacao": [
-        ("limiar_delta_e", 0, 60, 0.5),
-        ("delta_e_min", 0, 30, 0.5),
-        ("peso_luminosidade", 0, 2, 0.1),
-        ("arestas_fator", 1, 10, 0.5),
-        ("fecho_mm", 0, 10, 0.5),
-        ("abertura_mm", 0, 10, 0.5),
-        ("margem_borda_mm", 0, 15, 0.5),
-        ("margem_extremidades_mm", 0, 30, 1),
-    ],
-    "dimensoes": [
-        ("tolerancia_comprimento_mm", 0, 20, 0.5),
-        ("tolerancia_largura_mm", 0, 20, 0.5),
-        ("forma_folga_mm", 0, 5, 0.5),
-        ("forma_area_min_mm2", 5, 200, 5),
-    ],
-    "cor": [
-        ("delta_e_max", 0.5, 30, 0.5),
-    ],
-    "relevo": [
-        ("fundo_sigma_mm", 1, 20, 0.5),
-        ("crista_limiar_alto", 0, 0.3, 0.005),
-        ("crista_limiar_baixo", 0, 0.3, 0.005),
-        ("linha_comprimento_min_mm", 1, 60, 1),
-        ("risco_largura_max_mm", 0.1, 4, 0.1),
-        ("linha_ligar_distancia_mm", 0, 10, 0.5),
-        ("linha_ligar_angulo_graus", 0, 60, 5),
-        ("zona_densidade_min", 0.01, 0.6, 0.01),
-        ("rugas_coerencia_min", 0, 1, 0.05),
-    ],
-    "manchas": [
-        ("fundo_sigma_mm", 1, 30, 0.5),
-        ("contraste_min", 0.01, 1, 0.01),
-        ("area_min_mm2", 0, 100, 1),
-        ("alongamento_max", 1, 20, 0.5),
-    ],
-}
+PARAMETROS = AFINACAO
 
 
 def construir_parser() -> argparse.ArgumentParser:

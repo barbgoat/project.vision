@@ -47,6 +47,10 @@ class TipoDefeito(StrEnum):
     MANCHA = "mancha"  # M6: zona mais clara ou mais escura do que a vizinhança
 
 
+# Pastas do dataset: "ok", uma por tipo de defeito e "varios" (mais do que um defeito).
+CLASSES_DATASET = ("ok", *(tipo.value for tipo in TipoDefeito), "varios")
+
+
 @dataclass
 class Captura:
     """Uma imagem adquirida pelo M1 e a identificação da sua origem."""

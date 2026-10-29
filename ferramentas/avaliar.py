@@ -33,10 +33,9 @@ if __package__ in (None, ""):  # corrido como ficheiro: python ferramentas\avali
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from nucleo.config import CAMINHO_POR_OMISSAO, RAIZ  # noqa: E402
-from nucleo.contrato import TipoDefeito  # noqa: E402
+from nucleo.contrato import CLASSES_DATASET  # noqa: E402
 
-# Pastas do dataset: "ok", uma por tipo de defeito e "varios" (mais do que um defeito).
-CLASSES = ("ok", *(tipo.value for tipo in TipoDefeito), "varios")
+CLASSES = CLASSES_DATASET  # as pastas do dataset (nucleo/contrato.py)
 
 
 def construir_parser() -> argparse.ArgumentParser:
