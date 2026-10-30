@@ -17,7 +17,7 @@ from nucleo.contrato import SemSaco
 
 
 
-def pose(arestas: np.ndarray) -> tuple[np.ndarray, float, float, float]:
+def pose(arestas: np.ndarray, px_por_mm: float) -> tuple[np.ndarray, float, float, float]:
     """Centro, ângulo do eixo maior (rad, em (−π/2, π/2]), comprimento e largura em px.
 
     O ângulo vem dos momentos centrais, θ = ½·atan2(2·μ11, μ20 − μ02), que não
@@ -26,7 +26,7 @@ def pose(arestas: np.ndarray) -> tuple[np.ndarray, float, float, float]:
     dobrado ou uma aba desequilibram os momentos e inclinavam o saco ~1°.
 
     Recebe os pontos do contorno já na aresta (subpíxel, N×2), de
-    segmentacao.afinar_contorno.
+    segmentacao.afinar_contorno, e a escala (para as tolerâncias em mm).
 
     As medidas são como as de um paquímetro encostado aos lados: a posição de
     cada lado é a mediana dos pontos do contorno nesse lado, longe dos cantos.
@@ -46,7 +46,7 @@ def pose(arestas: np.ndarray) -> tuple[np.ndarray, float, float, float]:
     if np.ptp(v) > np.ptp(u):  # forma quase quadrada: garantir que o eixo "maior" é o maior
         angulo += math.pi / 2
     for _ in range(D.M2_ANGULO_ITERACOES):
-        correcao_angulo = _inclinacao_lados(*_projetar(pontos, angulo))
+        correcao_angulo = _inclinacao_lados(*_projetar(pontos, angulo), D.M2_ANGULO_DESVIO_MM * px_por_mm)
         if correcao_angulo is None:
             break
         angulo += correcao_angulo
@@ -71,11 +71,11 @@ def _projetar(pontos: np.ndarray, angulo: float) -> tuple[np.ndarray, np.ndarray
     return pontos[:, 0] * cos + pontos[:, 1] * sen, -pontos[:, 0] * sen + pontos[:, 1] * cos
 
 
-def _inclinacao_lados(u: np.ndarray, v: np.ndarray) -> float | None:
+def _inclinacao_lados(u: np.ndarray, v: np.ndarray, desvio_px: float) -> float | None:
     """Quanto rodar (rad) para os lados compridos ficarem na horizontal.
 
     Ajusta uma reta v = a·u + b à parte central de cada lado comprido, deita
-    fora os pontos que se afastam mais do que M2_ANGULO_DESVIO_PX (uma aba,
+    fora os pontos que se afastam mais do que desvio_px (M2_ANGULO_DESVIO_MM; uma aba,
     um rasgão) e volta a ajustar. Devolve a média das inclinações, pesada
     pelo nº de pontos, ou None se não houver pontos suficientes.
     """
@@ -87,7 +87,7 @@ def _inclinacao_lados(u: np.ndarray, v: np.ndarray) -> float | None:
         if len(uu) < 10:
             continue
         a, b = np.polyfit(uu, vv, 1)
-        perto = np.abs(vv - (a * uu + b)) < D.M2_ANGULO_DESVIO_PX
+        perto = np.abs(vv - (a * uu + b)) < desvio_px
         if perto.sum() >= 10:
             a, _ = np.polyfit(uu[perto], vv[perto], 1)
         inclinacoes.append(a)

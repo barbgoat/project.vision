@@ -34,6 +34,9 @@ from typing import Final
 # (0,13 mm por píxel). Depois de montar, medir com uma régua; a calculadora
 # (python -m ferramentas.calcular_montagem) avisa se este valor não bater com a
 # lente. Telemóvel e outras montagens: noutro config.json.
+# É também a escala do espaço métrico onde o M2 e os escravos trabalham: a folha e os
+# marcadores endireitam a foto para ela, e uma Captura com outra escala conhecida
+# (câmara calibrada) é reamostrada para ela pelo Mestre.
 GERAL_PX_POR_MM: Final = 8.0  # [MEDIR]
 # Velocidade do tapete: só importa na fase 3 de ensaios (tapete a andar); com o saco
 # parado não é usada. Ver as fases de ensaio em modulos/m1_aquisicao/__init__.py.
@@ -230,7 +233,9 @@ M2_SEM_ESCALA_CAMPO_MM: Final = 300.0  # sem referência, a foto conta como tend
 M2_SEM_ESCALA_COMPRIMENTO_MIN: Final = 0.05  # sem referência, limites do saco em frações do campo: comprimento ≥ isto
 M2_SEM_ESCALA_LARGURA_MIN: Final = 0.02  # ... largura ≥ isto
 M2_SEM_ESCALA_MAX: Final = 2.0  # ... comprimento e largura ≤ isto
-M2_AFINAR_PROCURA: Final = 3  # a aresta subpíxel procura-se a ± isto px (da imagem reduzida) do contorno
+# A aresta subpíxel procura-se a ± isto px DO MAPA do segmentador. Fica em px (não em mm): é a
+# precisão da máscara grosseira na sua própria resolução, não uma tolerância do saco.
+M2_AFINAR_PROCURA: Final = 3
 M2_AFINAR_VIZINHOS: Final = 4  # pontos de cada lado usados para a direção da normal ao contorno
 M2_AFINAR_GRADIENTE_MIN: Final = 2.0  # transição mais fraca do que isto (ΔE/px) não move o ponto
 M2_SUAVIZACAO_MM: Final = 0.25  # desfoque antes de comparar com o fundo (tira o ruído do sensor)
@@ -239,7 +244,7 @@ M2_GRADIENTE_FUNDO_MIN: Final = 0.5  # piso do "gradiente normal do fundo" (ΔE/
 M2_RETANGULARIDADE_SO_COR: Final = 0.8  # abaixo disto a região de cor é um pedaço de saco → tentar com arestas
 M2_PARTE_CENTRAL_LADOS: Final = 0.7  # fração central de cada lado usada para o medir (sem os cantos)
 M2_ANGULO_ITERACOES: Final = 2  # voltas de afinação do ângulo pelos lados compridos
-M2_ANGULO_DESVIO_PX: Final = 2.0  # nessa afinação, pontos mais afastados da reta do que isto (abas) não contam
+M2_ANGULO_DESVIO_MM: Final = 0.4  # nessa afinação, pontos mais afastados da reta do que isto (abas) não contam
 M2_FUNDO_PONTOS_MAX: Final = 5000  # pontos da faixa da borda usados no modelo do fundo
 M2_FUNDO_ITERACOES: Final = 3  # voltas do ajuste robusto do modelo do fundo
 M2_FUNDO_DESVIOS: Final = 3.0  # num ajuste, descarta pontos a mais de N desvios (sujidade, cantos de saco)

@@ -503,3 +503,12 @@ def test_escravos_declaram_a_iluminacao_e_o_saco_recorta_outras():
     img, _ = cena_saco(rng, comprimento=150, largura=55)
     saco = m.Localizador(config_teste(geral={"px_por_mm": 5.0})).localizar(img)
     assert np.array_equal(saco.recortar(img), saco.imagem), "a mesma transformação do recorte"
+
+
+def test_escravos_so_tem_parametros_em_mm():
+    """Depois do M2 tudo está no espaço métrico: os parâmetros dos escravos são em mm, mm² ou graus."""
+    cfg = Config()
+    em_px = [f"{secao}.{nome}" for secao in ("dimensoes", "cor", "relevo", "manchas")
+             for nome in dataclasses.asdict(getattr(cfg, secao)) if "px" in nome]
+    em_px += [n for n in dir(D) if re.match(r"M[3-6]_", n) and "PX" in n]
+    assert not em_px

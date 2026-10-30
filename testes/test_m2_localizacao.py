@@ -446,3 +446,21 @@ def test_limites_sem_escala_vem_dos_defines(rng, monkeypatch):
     monkeypatch.setattr(escravo.D, "M2_SEM_ESCALA_MAX", 0.1)  # nenhum saco cabe em 10 % do campo
     r = m.Mestre(cfg, apenas=[]).inspecionar(img)
     assert r.estado is Estado.SEM_SACO, r.mensagem
+
+
+# --- Espaço métrico canónico ---------------------------------------------------------------
+
+def test_imagem_de_outra_escala_e_reamostrada_para_a_do_perfil(rng):
+    """Uma câmara calibrada a 10 px/mm, num perfil a 5 px/mm: tudo é feito a 5 px/mm."""
+    from nucleo.contrato import Captura, Passagem
+    img, _ = cena_saco(rng, comprimento=150, largura=55, ppm=10.0, tamanho=(2000, 2500))
+    mestre = m.Mestre(CFG, apenas=[])
+    r = mestre.inspecionar(img, px_por_mm=10.0)
+    medidas = r.relatorio("localizacao").medidas
+    assert abs(medidas["comprimento_mm"] - 150) < 0.3 and abs(medidas["largura_mm"] - 55) < 0.3, medidas
+    assert r.imagem.shape[:2] == (1000, 1250), "a imagem analisada está à escala do perfil"
+    assert mestre.inspecionar(img).estado is Estado.SEM_SACO, "sem a escala, 300 mm: fora dos limites"
+    captura = Captura(img, "camara#1", 0.0, px_por_mm=10.0, fonte="spinnaker")
+    r = mestre.inspecionar_passagem(Passagem(1, [captura], [0.0], 1, 0.0, 0.0, "foto"))
+    assert abs(r.relatorio("localizacao").medidas["comprimento_mm"] - 150) < 0.3
+    assert m.no_espaco_metrico(img, 5.0, 5.0) is img and m.no_espaco_metrico(img, None, 5.0) is img

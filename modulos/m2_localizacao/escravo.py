@@ -115,7 +115,7 @@ class Localizador:
         contorno = np.round(borda).astype(np.int32)
 
         # 3. Orientação e medidas
-        centro, angulo, comprimento_px, largura_px = medicao.pose(arestas)
+        centro, angulo, comprimento_px, largura_px = medicao.pose(arestas, self.cfg.geral.px_por_mm)
         ppm = self.cfg.geral.px_por_mm
         comprimento_mm, largura_mm = comprimento_px / ppm, largura_px / ppm
         if not (p.comprimento_min_mm <= comprimento_mm <= p.comprimento_max_mm

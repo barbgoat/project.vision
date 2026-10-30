@@ -31,6 +31,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+import cv2
 import numpy as np
 
 from modulos.m2_localizacao import Localizador
@@ -42,6 +43,15 @@ from nucleo.config import RAIZ, Config
 from nucleo.contrato import Escravo, Estado, Passagem, Relatorio, Resultado, Saco, SemSaco
 
 log = logging.getLogger("mestre")
+
+
+def no_espaco_metrico(img: np.ndarray, px_por_mm: float | None, canonico: float) -> np.ndarray:
+    """A imagem à escala canónica (geral.px_por_mm), se a sua escala for conhecida e diferente."""
+    if px_por_mm is None or abs(px_por_mm - canonico) <= 1e-6 * canonico:
+        return img
+    fator = canonico / px_por_mm
+    return cv2.resize(img, None, fx=fator, fy=fator,
+                      interpolation=cv2.INTER_AREA if fator < 1 else cv2.INTER_LINEAR)
 
 # Escravos de inspeção, pela ordem em que são chamados. Para acrescentar um
 # módulo novo (selagem, furos...): criar o ficheiro em modulos/, a secção em
@@ -89,16 +99,21 @@ class Mestre:
         return [Localizador.nome, *(e.nome for e in self.escravos)]
 
     # --- Inspeção ---------------------------------------------------------------------
-    def inspecionar(self, img: np.ndarray, guardar_intermedios: bool = False) -> Resultado:
+    def inspecionar(self, img: np.ndarray, guardar_intermedios: bool = False,
+                    px_por_mm: float | None = None) -> Resultado:
         """Inspeciona uma imagem: localiza o saco, distribui-o pelos escravos e decide.
 
         Recebe:
             img: imagem BGR uint8 (Captura.imagem). Passa a ser só de leitura.
             guardar_intermedios: pedir a cada escravo as imagens das suas etapas.
+            px_por_mm: a escala da imagem, se já for conhecida (Captura.px_por_mm, câmara
+                calibrada). Se for diferente de geral.px_por_mm, a imagem é reamostrada para
+                essa escala, a do espaço métrico onde tudo é feito. None (telemóvel): a
+                imagem fica como está (a escala vem da folha ou dos marcadores).
         Devolve:
             Resultado com o estado do saco, o relatório de cada módulo, a OF e o produto.
         """
-        resultado = self._inspecionar(img, guardar_intermedios)
+        resultado = self._inspecionar(no_espaco_metrico(img, px_por_mm, self.cfg.geral.px_por_mm), guardar_intermedios)
         resultado.of, resultado.produto = self.of, self.produto
         return resultado
 
@@ -216,7 +231,7 @@ class Mestre:
 
         resultado: Resultado | None = None
         for tentativa, captura in enumerate(passagem.candidatas, start=1):
-            resultado = self.inspecionar(captura.imagem, guardar_intermedios)
+            resultado = self.inspecionar(captura.imagem, guardar_intermedios, captura.px_por_mm)
             resultado.captura, resultado.imagens_analisadas = captura, tentativa
             if resultado.estado is not Estado.SEM_SACO:
                 break
