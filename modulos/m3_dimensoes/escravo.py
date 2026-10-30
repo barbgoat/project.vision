@@ -1,4 +1,4 @@
-"""M3 Dimensões: o ponto de entrada que o Mestre chama (Dimensoes.analisar).
+"""M3 Dimensões: o ponto de entrada que o Mestre chama (Dimensoes.inspecionar).
 
     1 e 2. comprimento e largura face ao nominal ± tolerância (aqui)
     3.     forma: silhueta vs retângulo ideal (forma.py)
@@ -10,21 +10,24 @@ from __future__ import annotations
 import cv2
 
 from modulos.m3_dimensoes import forma, geometria
-from nucleo.contrato import Defeito, Escravo, Relatorio, Saco, TipoDefeito
+from nucleo.config import Config
+from nucleo.contrato import Captura, Defeito, Escravo, Relatorio, Saco, TipoDefeito
 
 
 class Dimensoes(Escravo):
-    """O escravo M3. Usa a secção dimensoes da configuração."""
+    """O escravo M3. Usa a secção dimensoes da configuração. Sem estado entre chamadas."""
 
     nome = "dimensoes"
     pergunta = "O saco tem o tamanho e a forma certos?"
 
-    def analisar(self, saco: Saco, guardar_intermedios: bool = False) -> Relatorio:
+    def inspecionar(self, saco: Saco, captura: Captura, cfg: Config, guardar_intermedios: bool = False) -> Relatorio:
         """Compara as medidas e a forma do saco com o nominal.
 
         Recebe:
             saco: o Saco do M2 (só de leitura), com comprimento_mm, largura_mm e
                 a silhueta (mascara) no recorte normalizado.
+            captura: não usada (o M3 só precisa da silhueta).
+            cfg: usa dimensoes e geral.px_por_mm.
             guardar_intermedios: se True, devolve a imagem "forma": o recorte
                 com o retângulo ideal (amarelo), a falta (vermelho), a sobra
                 de material (magenta) e as retas dos lados com os ângulos (ciano).
@@ -41,8 +44,8 @@ class Dimensoes(Escravo):
             forma_profundidade_max_mm, proporcao e, se houver as 4 retas, esquadria_esquerda_graus,
             esquadria_direita_graus, paralelismo_graus, canto_desvio_max_graus.
         """
-        p = self.cfg.dimensoes
-        ppm = self.cfg.geral.px_por_mm
+        p = cfg.dimensoes
+        ppm = cfg.geral.px_por_mm
         area_mm2 = cv2.countNonZero(saco.mascara) / ppm**2
         defeitos: list[Defeito] = []
 
@@ -61,6 +64,7 @@ class Dimensoes(Escravo):
                     largura_mm=saco.largura_mm,
                     area_mm2=area_mm2,
                     intensidade=abs(desvio),
+                    severidade=abs(desvio) / tolerancia if tolerancia > 0 else float("inf"),
                     descricao=(f"{nome} {medido:.1f} mm, fora de {nominal:g} +/- {tolerancia:g} mm "
                                f"({desvio:+.1f} mm)"),
                 ))
@@ -75,7 +79,7 @@ class Dimensoes(Escravo):
                              p.forma_profundidade_min_mm)
         sobras = forma.zonas(sobra, "material a mais", saco, ppm, p.forma_area_min_mm2, fora,
                              p.forma_profundidade_min_mm)
-        cortes_tortos = forma.reconhecer_cortes_tortos(faltas, sobras, saco)
+        faltas, sobras, cortes_tortos = forma.reconhecer_cortes_tortos(faltas, sobras, saco)
 
         # 4. Geometria: ângulos das pontas e dos lados (não dependem da escala)
         geo = geometria.medir(saco, ppm)
@@ -83,13 +87,14 @@ class Dimensoes(Escravo):
         if geo is not None:
             for ponta, lado in (("esquerda", -1), ("direita", 1)):
                 if abs(geo.esquadria_graus(ponta)) > p.esquadria_max_graus:
-                    defeitos.append(geometria.defeito_ponta(geo, ponta, saco, ppm))
+                    defeitos.append(geometria.defeito_ponta(geo, ponta, saco, ppm, p.esquadria_max_graus))
                     pontas_tortas.add(lado)
             if abs(geo.paralelismo_graus) > p.paralelismo_max_graus:
                 defeitos.append(Defeito(
                     TipoDefeito.DIMENSAO,
                     angulo_graus=geo.paralelismo_graus,
                     intensidade=abs(geo.paralelismo_graus),
+                    severidade=abs(geo.paralelismo_graus) / p.paralelismo_max_graus,
                     descricao=f"lados compridos não paralelos: {geo.paralelismo_graus:+.1f} graus (saco em trapézio?)",
                 ))
         # O par falta/sobra de um corte torto numa ponta já marcada é o mesmo defeito

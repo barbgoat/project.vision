@@ -3,27 +3,29 @@
     Captura    M1 (fonte)     → M1 (disparo)    as imagens de um instante (uma por iluminação) e a origem
     Passagem   M1 Aquisição   → Mestre          as melhores imagens de um saco, da entrada à saída
     Saco       M2 Localização → Mestre → M3–M6  o saco encontrado e normalizado (só de leitura)
-    Relatorio  cada módulo    → Mestre          o que o módulo concluiu
+    Relatorio  cada módulo    → Mestre          o que o módulo concluiu (imutável)
     Resultado  Mestre         → M7 Saída        a decisão final sobre o saco
 
-Os escravos de inspeção (M3 a M6) derivam de Escravo e implementam um só
-método: analisar(saco) -> Relatorio. O Mestre não sabe como cada um trabalha;
-só conhece este contrato.
+Os escravos de inspeção (M3 a M6) cumprem o Protocol Escravo: um só método,
+inspecionar(saco, captura, cfg) -> Relatorio, sem estado partilhado entre chamadas.
+O Mestre não sabe como cada um trabalha; só conhece este contrato.
 """
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 import math
+import traceback
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
-from typing import ClassVar
+from pathlib import Path
+from types import MappingProxyType
+from typing import ClassVar, Protocol, runtime_checkable
 
 import cv2
 import numpy as np
 
-from nucleo.config import Config
+from nucleo.config import RAIZ, Config
 
 
 class Estado(StrEnum):
@@ -168,6 +170,17 @@ class Saco:
         altura, largura = self.mascara.shape
         return (u - (largura - 1) / 2) / px_por_mm, (v - (altura - 1) / 2) / px_por_mm
 
+    def px_para_mm(self, pontos: np.ndarray, px_por_mm: float) -> np.ndarray:
+        """Pontos do recorte normalizado (px, N×2 ou N×1×2) → mm no referencial do saco (N×2)."""
+        altura, largura = self.mascara.shape
+        return (np.asarray(pontos, float).reshape(-1, 2) - ((largura - 1) / 2, (altura - 1) / 2)) / px_por_mm
+
+    def mm_para_imagem(self, pontos_mm: np.ndarray, px_por_mm: float) -> np.ndarray:
+        """Pontos em mm no referencial do saco (N×2) → px da imagem analisada (N×2), pela matriz do Saco."""
+        altura, largura = self.mascara.shape
+        recorte = np.asarray(pontos_mm, float).reshape(-1, 2) * px_por_mm + ((largura - 1) / 2, (altura - 1) / 2)
+        return cv2.transform(recorte.reshape(-1, 1, 2), cv2.invertAffineTransform(self.matriz)).reshape(-1, 2)
+
     def recortar(self, imagem: np.ndarray) -> np.ndarray:
         """Outra imagem do mesmo instante (p.ex. outra iluminação) no referencial do recorte normalizado."""
         altura, largura = self.mascara.shape
@@ -183,9 +196,10 @@ class SemSaco(Exception):
     """
 
 
-@dataclass
+@dataclass(frozen=True, eq=False)
 class Defeito:
-    """Um defeito encontrado num saco. Medidas em mm, no referencial do saco."""
+    """Um defeito encontrado num saco (imutável). Medidas em mm, no referencial do saco:
+    origem no centro do saco, x ao longo do eixo maior, y ao longo do menor."""
 
     tipo: TipoDefeito
     x_mm: float = 0.0  # centro do defeito, ao longo do eixo maior, a partir do centro do saco
@@ -195,23 +209,32 @@ class Defeito:
     area_mm2: float = 0.0  # área afetada
     angulo_graus: float = 0.0  # orientação em relação ao eixo maior do saco
     intensidade: float = 0.0  # força do sinal (resposta, contraste, ΔE...); ajuda a afinar limiares
-    contorno: np.ndarray | None = None  # no recorte normalizado (N×1×2, int32, px); None = o saco todo
+    severidade: float = 0.0  # quanto ultrapassa o limiar: valor / limiar (≥ 1 num defeito); 0 = não indicada
+    contorno: np.ndarray | None = None  # em mm no referencial do saco (N×2, float); None = o saco todo
     descricao: str = ""  # texto legível, p.ex. "comprimento 158.2 mm (150 +/- 3)"
     modulo: str = ""  # preenchido pelo Mestre: o módulo que o encontrou
 
 
-@dataclass
+@dataclass(frozen=True, eq=False)
 class Relatorio:
-    """O que um módulo devolve ao Mestre."""
+    """O que um módulo devolve ao Mestre. Imutável: o Mestre acrescenta o tempo com replace().
+
+    defeitos fica um tuplo; medidas e intermedios, dicionários só de leitura.
+    """
 
     modulo: str  # nome do módulo, p.ex. "dimensoes"
     estado: Estado
-    defeitos: list[Defeito] = field(default_factory=list)
-    medidas: dict[str, float] = field(default_factory=dict)  # valores medidos, p.ex. {"comprimento_mm": 151.2}
+    defeitos: tuple[Defeito, ...] = ()
+    medidas: MappingProxyType = field(default_factory=dict)  # valores medidos, p.ex. {"comprimento_mm": 151.2}
     tempo_ms: float = 0.0  # preenchido pelo Mestre
     mensagem: str = ""  # explicação, ou o erro se estado == ERRO
-    intermedios: dict[str, np.ndarray] = field(default_factory=dict)  # imagens de cada etapa (depuração)
+    intermedios: MappingProxyType = field(default_factory=dict)  # imagens de cada etapa (depuração)
     detalhe: str = ""  # preenchido pelo Mestre quando há ERRO: o traceback completo
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "defeitos", tuple(self.defeitos))
+        object.__setattr__(self, "medidas", MappingProxyType(dict(self.medidas)))
+        object.__setattr__(self, "intermedios", MappingProxyType(dict(self.intermedios)))
 
     @classmethod
     def concluir(
@@ -231,6 +254,22 @@ class Relatorio:
             mensagem=mensagem,
             intermedios=intermedios or {},
         )
+
+    @classmethod
+    def por_implementar(cls, modulo: str, falta: BaseException | None = None) -> Relatorio:
+        """Relatório de um módulo que ainda é um esqueleto: não conta para a decisão.
+
+        falta: o NotImplementedError apanhado, para dizer onde (ficheiro:linha (função)).
+        """
+        onde = ""
+        if falta is not None and falta.__traceback__ is not None:
+            quadro = traceback.extract_tb(falta.__traceback__)[-1]
+            try:
+                ficheiro = Path(quadro.filename).resolve().relative_to(RAIZ).as_posix()
+            except ValueError:
+                ficheiro = quadro.filename
+            onde = f": {ficheiro}:{quadro.lineno} ({quadro.name})"
+        return cls(modulo, Estado.POR_IMPLEMENTAR, mensagem=f"por implementar{onde}")
 
     @property
     def resumo(self) -> str:
@@ -274,15 +313,19 @@ class Resultado:
         return next((r for r in self.relatorios if r.modulo == modulo), None)
 
 
-class Escravo(ABC):
-    """Base dos escravos de inspeção (M3 a M6).
+@runtime_checkable
+class Escravo(Protocol):
+    """O contrato dos escravos de inspeção (M3 a M6).
 
     Cada escravo:
         - responde a uma só pergunta (`pergunta`);
         - lê só a sua secção da configuração (com o mesmo nome do módulo) e a geral;
         - não importa outros módulos;
-        - não altera o Saco que recebe;
-        - devolve sempre um Relatorio (os erros são apanhados pelo Mestre).
+        - não guarda estado entre chamadas (o Mestre pode chamá-los em paralelo);
+        - não altera o Saco, a Captura nem a configuração que recebe (são imutáveis);
+        - devolve sempre um Relatorio (os erros são apanhados pelo Mestre); um módulo
+          ainda por fazer devolve Relatorio.por_implementar(nome).
+    Os escravos do projeto declaram-se subclasses de Escravo (herdam a iluminação por omissão).
     """
 
     nome: ClassVar[str]  # nome da sua secção da configuração e prefixo dos seus defines, p.ex. "dimensoes"
@@ -290,17 +333,19 @@ class Escravo(ABC):
     # A iluminação que prefere (uma de ILUMINACOES); sem ela na Captura, usa a "difusa".
     iluminacao: ClassVar[str] = "difusa"
 
-    def __init__(self, cfg: Config) -> None:
-        self.cfg = cfg
-
-    @abstractmethod
-    def analisar(self, saco: Saco, guardar_intermedios: bool = False) -> Relatorio:
-        """Analisa o saco e devolve as conclusões do módulo.
+    def inspecionar(self, saco: Saco, captura: Captura, cfg: Config,
+                    guardar_intermedios: bool = False) -> Relatorio:
+        """Inspeciona o saco e devolve as conclusões do módulo.
 
         Recebe:
-            saco: o Saco do M2 (só de leitura).
+            saco: o Saco do M2 (só de leitura), no espaço métrico (cfg.geral.px_por_mm).
+            captura: as imagens do mesmo instante, no espaço métrico; a da sua iluminação
+                é captura.imagem_para(self.iluminacao), e saco.recortar(...) leva-a ao recorte.
+            cfg: a configuração (só de leitura).
             guardar_intermedios: se True, pôr em Relatorio.intermedios as
                 imagens de cada etapa, para afinar e depurar.
         Devolve:
-            Relatorio.concluir(self.nome, defeitos, medidas, ...).
+            Relatorio.concluir(self.nome, defeitos, medidas, ...): os contornos dos
+            defeitos em mm, no referencial do saco (saco.px_para_mm).
         """
+        ...

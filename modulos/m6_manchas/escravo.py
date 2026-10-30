@@ -10,7 +10,8 @@ são linhas e pertencem ao M5.
 
 from __future__ import annotations
 
-from nucleo.contrato import Escravo, Relatorio, Saco
+from nucleo.config import Config
+from nucleo.contrato import Captura, Escravo, Relatorio, Saco
 
 
 class Manchas(Escravo):
@@ -19,7 +20,7 @@ class Manchas(Escravo):
     nome = "manchas"
     pergunta = "Há manchas (zonas mais claras ou mais escuras)?"
 
-    def analisar(self, saco: Saco, guardar_intermedios: bool = False) -> Relatorio:
+    def inspecionar(self, saco: Saco, captura: Captura, cfg: Config, guardar_intermedios: bool = False) -> Relatorio:
         """Procura manchas na zona útil do saco.
 
         Recebe:
@@ -31,7 +32,9 @@ class Manchas(Escravo):
             Relatorio com um Defeito MANCHA por mancha encontrada (cada uma em
             separado) e as medidas num_manchas e area_total_mm2.
 
-        O que vai fazer (parâmetros em self.cfg.manchas):
+        Por agora devolve Relatorio.por_implementar (não conta para a decisão).
+
+        O que vai fazer (parâmetros em cfg.manchas):
             1. contraste = nucleo.imagens.contraste_relativo(
                    extrair_canal(saco.imagem, canal), saco.mascara,
                    sigma_px = mm_para_px(fundo_sigma_mm)).
@@ -51,4 +54,4 @@ class Manchas(Escravo):
         pela estimativa da iluminação. Para manchas grandes, aumentar
         fundo_sigma_mm ou estimar o fundo com um filtro de mediana.
         """
-        raise NotImplementedError
+        return Relatorio.por_implementar(self.nome)

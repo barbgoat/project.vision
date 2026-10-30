@@ -23,7 +23,7 @@ CFG = config_teste(geral={"px_por_mm": PPM})
 class ComDefeitos(Escravo):
     nome, pergunta = "relevo", "?"
 
-    def analisar(self, saco, guardar_intermedios=False):
+    def inspecionar(self, saco, captura, cfg, guardar_intermedios=False):
         return Relatorio.concluir(self.nome, [Defeito(TipoDefeito.RISCO, 1, 2, 20, 0.4),
                                               Defeito(TipoDefeito.RUGAS, 30, 0, 25, 15)])
 
@@ -31,7 +31,7 @@ class ComDefeitos(Escravo):
 class Rebenta(Escravo):
     nome, pergunta = "cor", "?"
 
-    def analisar(self, saco, guardar_intermedios=False):
+    def inspecionar(self, saco, captura, cfg, guardar_intermedios=False):
         return [1, 2][5]
 
 
@@ -44,7 +44,7 @@ def imagem():
 def resultado(imagem):
     """Saco com 2 defeitos de forma (M3 real), 2 de relevo (falso) e um módulo que rebenta."""
     mestre = m.Mestre(CFG, apenas=["dimensoes"])
-    mestre.escravos += [ComDefeitos(CFG), Rebenta(CFG)]
+    mestre.escravos += [ComDefeitos(), Rebenta()]
     r = mestre.inspecionar(imagem.copy(), guardar_intermedios=True)
     r.captura = Captura(imagem, "pasta/rugas/saco é 2.png", 1_700_000_000.0)
     return r

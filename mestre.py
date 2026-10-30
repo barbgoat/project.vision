@@ -24,6 +24,7 @@ sistema um módulo de cada vez.
 from __future__ import annotations
 
 import logging
+import time
 import traceback
 from collections.abc import Callable, Iterable
 from dataclasses import replace
@@ -40,7 +41,7 @@ from modulos.m4_cor import Cor
 from modulos.m5_relevo import Relevo
 from modulos.m6_manchas import Manchas
 from nucleo.config import RAIZ, Config
-from nucleo.contrato import Escravo, Estado, Passagem, Relatorio, Resultado, Saco, SemSaco
+from nucleo.contrato import Captura, Escravo, Estado, Passagem, Relatorio, Resultado, Saco, SemSaco
 
 log = logging.getLogger("mestre")
 
@@ -85,7 +86,7 @@ class Mestre:
             if desconhecidos:
                 raise ValueError(f"Módulos desconhecidos: {sorted(desconhecidos)}; existem: {self.disponiveis()}")
             classes = [e for e in ESCRAVOS if e.nome in pedidos]
-        self.escravos: list[Escravo] = [classe(cfg) for classe in classes]
+        self.escravos: list[Escravo] = [classe() for classe in classes]
         self._avisados: set[str] = set()
 
     @staticmethod
@@ -100,7 +101,7 @@ class Mestre:
 
     # --- Inspeção ---------------------------------------------------------------------
     def inspecionar(self, img: np.ndarray, guardar_intermedios: bool = False,
-                    px_por_mm: float | None = None) -> Resultado:
+                    px_por_mm: float | None = None, captura: Captura | None = None) -> Resultado:
         """Inspeciona uma imagem: localiza o saco, distribui-o pelos escravos e decide.
 
         Recebe:
@@ -110,16 +111,22 @@ class Mestre:
                 calibrada). Se for diferente de geral.px_por_mm, a imagem é reamostrada para
                 essa escala, a do espaço métrico onde tudo é feito. None (telemóvel): a
                 imagem fica como está (a escala vem da folha ou dos marcadores).
+            captura: a Captura de onde a imagem veio (com as outras iluminações); sem ela, é
+                criada uma só com esta imagem.
         Devolve:
             Resultado com o estado do saco, o relatório de cada módulo, a OF e o produto.
         """
-        resultado = self._inspecionar(no_espaco_metrico(img, px_por_mm, self.cfg.geral.px_por_mm), guardar_intermedios)
+        if captura is None:
+            captura = Captura(img, "imagem", time.time(), px_por_mm=px_por_mm)
+        resultado = self._inspecionar(no_espaco_metrico(img, px_por_mm, self.cfg.geral.px_por_mm), captura,
+                                      guardar_intermedios)
         resultado.of, resultado.produto = self.of, self.produto
         return resultado
 
-    def _inspecionar(self, img: np.ndarray, guardar_intermedios: bool) -> Resultado:
+    def _inspecionar(self, img: np.ndarray, captura: Captura, guardar_intermedios: bool) -> Resultado:
         inicio = perf_counter()
         img.flags.writeable = False
+        endireitada = False
 
         # 0. Referência (fotos à mão): daqui em diante a imagem é a folha, ou o que está entre os
         # marcadores, vista de cima
@@ -131,47 +138,46 @@ class Mestre:
             if rel_folha.estado is not Estado.OK:
                 return Resultado(img, Estado.ERRO, None, [rel_folha], _ms_desde(inicio),
                                  f"{Localizador.nome}: {rel_folha.mensagem}")
-            img, ms_folha = retificada, rel_folha.tempo_ms
+            img, ms_folha, endireitada = retificada, rel_folha.tempo_ms, True
             img.flags.writeable = False
 
         # 1. M2 Localização
         saco, rel_localizacao = self._executar(
             Localizador.nome, lambda: self.localizador.localizar(img, guardar_intermedios)
         )
-        rel_localizacao.tempo_ms += ms_folha
-        rel_localizacao.medidas = dict(self.localizador.medidas)
-        rel_localizacao.intermedios = dict(self.localizador.intermedios)
-        relatorios = [rel_localizacao]
+        rel_localizacao = replace(rel_localizacao, tempo_ms=rel_localizacao.tempo_ms + ms_folha,
+                                  medidas=self.localizador.medidas, intermedios=self.localizador.intermedios)
         if rel_localizacao.estado is Estado.OK:
             if saco is None:
-                rel_localizacao.estado = Estado.SEM_SACO
-                rel_localizacao.mensagem = "nenhum saco completo na imagem"
+                rel_localizacao = replace(rel_localizacao, estado=Estado.SEM_SACO,
+                                          mensagem="nenhum saco completo na imagem")
             elif not isinstance(saco, Saco):
-                self._violacao(rel_localizacao, f"devolveu {type(saco).__name__} em vez de Saco ou None")
+                rel_localizacao = self._violacao(rel_localizacao,
+                                                 f"devolveu {type(saco).__name__} em vez de Saco ou None")
         if rel_localizacao.estado is not Estado.OK:
             estado = Estado.SEM_SACO if rel_localizacao.estado is Estado.SEM_SACO else Estado.ERRO
-            return Resultado(img, estado, None, relatorios, _ms_desde(inicio),
+            return Resultado(img, estado, None, [rel_localizacao], _ms_desde(inicio),
                              f"{Localizador.nome}: {rel_localizacao.mensagem}")
         _so_leitura(saco)
-        rel_localizacao.medidas.update(
-            comprimento_mm=saco.comprimento_mm,
-            largura_mm=saco.largura_mm,
-            angulo_graus=saco.angulo_graus,
-        )
+        rel_localizacao = replace(rel_localizacao, medidas={
+            **rel_localizacao.medidas, "comprimento_mm": saco.comprimento_mm, "largura_mm": saco.largura_mm,
+            "angulo_graus": saco.angulo_graus})
+        relatorios = [rel_localizacao]
 
-        # 2. Escravos de inspeção, cada um protegido
+        # 2. Escravos de inspeção, cada um protegido, com as imagens no espaço métrico
+        metrica = _captura_metrica(captura, img, endireitada, self.cfg.geral.px_por_mm)
         for escravo in self.escravos:
             devolvido, execucao = self._executar(
-                escravo.nome, lambda e=escravo: e.analisar(saco, guardar_intermedios)
+                escravo.nome, lambda e=escravo: e.inspecionar(saco, metrica, self.cfg, guardar_intermedios)
             )
             if execucao.estado is Estado.OK:
                 if isinstance(devolvido, Relatorio) and devolvido.modulo == escravo.nome:
-                    devolvido.tempo_ms = execucao.tempo_ms
-                    for defeito in devolvido.defeitos:
-                        defeito.modulo = escravo.nome
-                    execucao = devolvido
+                    execucao = replace(devolvido, tempo_ms=execucao.tempo_ms,
+                                       defeitos=[replace(d, modulo=escravo.nome) for d in devolvido.defeitos])
+                    if execucao.estado is Estado.POR_IMPLEMENTAR:
+                        self._avisar_por_implementar(escravo.nome, execucao.mensagem)
                 else:
-                    self._violacao(execucao, f"devolveu {devolvido!r:.80} em vez do seu Relatorio")
+                    execucao = self._violacao(execucao, f"devolveu {devolvido!r:.80} em vez do seu Relatorio")
             relatorios.append(execucao)
 
         # 3. Decisão
@@ -187,12 +193,10 @@ class Mestre:
         """
         devolvido, rel = self._executar(
             Localizador.nome, lambda: self.localizador.localizar_sem_escala(img, guardar_intermedios))
-        rel.tempo_ms += rel_referencia.tempo_ms
-        rel.intermedios = dict(self.localizador.intermedios)
+        rel = replace(rel, tempo_ms=rel.tempo_ms + rel_referencia.tempo_ms, intermedios=self.localizador.intermedios)
         if rel.estado is not Estado.OK or devolvido is None:
-            rel_referencia.tempo_ms = rel.tempo_ms
-            return Resultado(img, Estado.SEM_SACO, None, [rel_referencia], _ms_desde(inicio),
-                             f"{Localizador.nome}: {rel_referencia.mensagem}")
+            return Resultado(img, Estado.SEM_SACO, None, [replace(rel_referencia, tempo_ms=rel.tempo_ms)],
+                             _ms_desde(inicio), f"{Localizador.nome}: {rel_referencia.mensagem}")
         saco, ppm = devolvido
         comprimento_px, largura_px = saco.comprimento_mm * ppm, saco.largura_mm * ppm
         # Para o desenho (que usa geral.px_por_mm) e o ecrã, as medidas à escala do perfil;
@@ -200,10 +204,11 @@ class Mestre:
         escala = ppm / self.cfg.geral.px_por_mm
         saco = replace(saco, comprimento_mm=saco.comprimento_mm * escala, largura_mm=saco.largura_mm * escala)
         _so_leitura(saco)
-        rel.estado = Estado.ERRO
-        rel.medidas = {"comprimento_px": comprimento_px, "largura_px": largura_px, "angulo_graus": saco.angulo_graus}
-        rel.mensagem = (f"{rel_referencia.mensagem}: sem escala, o saco tem {comprimento_px:.0f} x "
-                        f"{largura_px:.0f} px (não são mm) e não foi inspecionado")
+        rel = replace(rel, estado=Estado.ERRO,
+                      medidas={"comprimento_px": comprimento_px, "largura_px": largura_px,
+                               "angulo_graus": saco.angulo_graus},
+                      mensagem=(f"{rel_referencia.mensagem}: sem escala, o saco tem {comprimento_px:.0f} x "
+                                f"{largura_px:.0f} px (não são mm) e não foi inspecionado"))
         return Resultado(img, Estado.ERRO, saco, [rel], _ms_desde(inicio), f"{Localizador.nome}: {rel.mensagem}")
 
     # --- Passagem de um saco (várias imagens) ---------------------------------------------
@@ -231,7 +236,7 @@ class Mestre:
 
         resultado: Resultado | None = None
         for tentativa, captura in enumerate(passagem.candidatas, start=1):
-            resultado = self.inspecionar(captura.imagem, guardar_intermedios, captura.px_por_mm)
+            resultado = self.inspecionar(captura.imagem, guardar_intermedios, captura.px_por_mm, captura)
             resultado.captura, resultado.imagens_analisadas = captura, tentativa
             if resultado.estado is not Estado.SEM_SACO:
                 break
@@ -260,11 +265,9 @@ class Mestre:
             devolvido = chamada()
         except SemSaco as motivo:
             return None, Relatorio(nome, Estado.SEM_SACO, tempo_ms=_ms_desde(inicio), mensagem=str(motivo))
-        except NotImplementedError as erro:
+        except NotImplementedError as erro:  # um esqueleto que ainda não devolve por_implementar
             onde = _onde(erro)
-            if nome not in self._avisados:
-                self._avisados.add(nome)
-                log.warning("Módulo %s ainda por implementar (%s); não conta para a decisão.", nome, onde)
+            self._avisar_por_implementar(nome, onde)
             return None, Relatorio(nome, Estado.POR_IMPLEMENTAR, tempo_ms=_ms_desde(inicio),
                                    mensagem=f"por implementar: {onde}")
         except Exception as erro:
@@ -277,12 +280,16 @@ class Mestre:
                                    detalhe="".join(traceback.format_exception(erro)))
         return devolvido, Relatorio(nome, Estado.OK, tempo_ms=_ms_desde(inicio))
 
+    def _avisar_por_implementar(self, nome: str, onde: str) -> None:
+        if nome not in self._avisados:
+            self._avisados.add(nome)
+            log.warning("Módulo %s ainda por implementar (%s); não conta para a decisão.", nome, onde)
+
     @staticmethod
-    def _violacao(relatorio: Relatorio, problema: str) -> None:
-        """Marca um módulo que não cumpriu o contrato."""
-        relatorio.estado = Estado.ERRO
-        relatorio.mensagem = f"contrato não cumprido: {problema}"
-        log.error("Módulo %s: %s", relatorio.modulo, relatorio.mensagem)
+    def _violacao(relatorio: Relatorio, problema: str) -> Relatorio:
+        """O relatório de um módulo que não cumpriu o contrato (ERRO)."""
+        log.error("Módulo %s: contrato não cumprido: %s", relatorio.modulo, problema)
+        return replace(relatorio, estado=Estado.ERRO, mensagem=f"contrato não cumprido: {problema}")
 
     # --- Decisão ------------------------------------------------------------------------
     def _decidir(self, relatorios: list[Relatorio]) -> tuple[Estado, str]:
@@ -305,6 +312,18 @@ _FORA_DO_PROJETO = "fora do código do projeto"
 
 def _ms_desde(inicio: float) -> float:
     return (perf_counter() - inicio) * 1000
+
+
+def _captura_metrica(captura: Captura, img: np.ndarray, endireitada: bool, px_por_mm: float) -> Captura:
+    """A Captura que os escravos recebem: as imagens no espaço métrico, como a do Saco.
+
+    A difusa é a imagem analisada. As outras iluminações são reamostradas da mesma maneira;
+    numa foto endireitada pela folha ou pelos marcadores só fica a difusa (a homografia
+    não é guardada).
+    """
+    outras = {} if endireitada else {nome: no_espaco_metrico(i, captura.px_por_mm, px_por_mm)
+                                     for nome, i in captura.imagens.items() if nome != "difusa"}
+    return replace(captura, imagens={"difusa": img, **outras}, px_por_mm=px_por_mm)
 
 
 def _so_leitura(saco: Saco) -> None:

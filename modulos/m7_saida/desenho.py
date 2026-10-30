@@ -70,13 +70,12 @@ def desenhar(resultado: Resultado, px_por_mm: float) -> np.ndarray:
         cv2.line(imagem, (round(cx - dx), round(cy - dy)), (round(cx + dx), round(cy + dy)), cor_saco, 1)
         cv2.circle(imagem, (round(cx), round(cy)), 2 * espessura, cor_saco, -1)
 
-        # Defeitos com contorno: do recorte normalizado para a imagem original
-        inversa = cv2.invertAffineTransform(saco.matriz)
+        # Defeitos com contorno: de mm no referencial do saco para a imagem, pela matriz do Saco
         for numero, defeito in enumerate(resultado.defeitos, start=1):
             if defeito.contorno is None:
                 continue
             cor = CORES_TIPO.get(defeito.tipo, (255, 255, 255))
-            pontos = np.round(cv2.transform(defeito.contorno.astype(np.float32), inversa)).astype(np.int32)
+            pontos = np.round(saco.mm_para_imagem(defeito.contorno, px_por_mm)).astype(np.int32).reshape(-1, 1, 2)
             camada = imagem.copy()
             cv2.fillPoly(camada, [pontos], cor)
             imagem = cv2.addWeighted(camada, 0.35, imagem, 0.65, 0)  # semitransparente

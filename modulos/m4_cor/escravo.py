@@ -11,7 +11,8 @@ alarmes; nesse caso desligar o módulo (COR_ATIVO = False em nucleo/defines.py).
 
 from __future__ import annotations
 
-from nucleo.contrato import Escravo, Relatorio, Saco
+from nucleo.config import Config
+from nucleo.contrato import Captura, Escravo, Relatorio, Saco
 
 
 class Cor(Escravo):
@@ -20,7 +21,7 @@ class Cor(Escravo):
     nome = "cor"
     pergunta = "O saco tem a cor certa?"
 
-    def analisar(self, saco: Saco, guardar_intermedios: bool = False) -> Relatorio:
+    def inspecionar(self, saco: Saco, captura: Captura, cfg: Config, guardar_intermedios: bool = False) -> Relatorio:
         """Compara a cor média do saco com a referência.
 
         Recebe:
@@ -32,7 +33,9 @@ class Cor(Escravo):
             Relatorio com um Defeito COR se a diferença for grande (contorno =
             None: diz respeito ao saco todo) e as medidas L, a, b e delta_e.
 
-        O que vai fazer (parâmetros em self.cfg.cor):
+        Por agora devolve Relatorio.por_implementar (não conta para a decisão).
+
+        O que vai fazer (parâmetros em cfg.cor):
             1. Converter o recorte para CIELAB a partir de float32 em [0, 1]
                (cv2.cvtColor(img.astype(np.float32) / 255, cv2.COLOR_BGR2Lab)):
                dá L* em 0–100 e a*, b* com sinal. Em uint8, o OpenCV escala os
@@ -47,4 +50,4 @@ class Cor(Escravo):
         Calibração (ferramenta futura): referencia_lab = média das cores de
         vários sacos OK, medidas com a câmara final.
         """
-        raise NotImplementedError
+        return Relatorio.por_implementar(self.nome)

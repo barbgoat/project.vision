@@ -4,7 +4,7 @@ Os quatro defeitos são alterações de relevo que, com iluminação adequada,
 aparecem na imagem como cristas (linhas mais claras ou mais escuras do que a
 vizinhança). O módulo está partido por etapas, um ficheiro cada:
 
-    escravo.py           o ponto de entrada que o Mestre chama (Relevo.analisar)
+    escravo.py           o ponto de entrada que o Mestre chama (Relevo.inspecionar)
     preprocessamento.py  remove as variações lentas de iluminação
     cristas.py           realça as cristas (Hessiana) e extrai as linhas centrais
     zonas.py             zonas com muitas cristas: rugas (paralelas) ou amasso (caóticas)

@@ -175,3 +175,14 @@ def test_entalhe_estreito_apanhado_pela_profundidade(mestre):
     descricoes = [d.descricao for d in r.defeitos]
     assert len(descricoes) == 1 and "num lado" in descricoes[0] and r.defeitos[0].area_mm2 < 25, descricoes
     assert abs(r.defeitos[0].intensidade - 3.0) < 0.4, r.defeitos[0].intensidade
+
+
+def test_severidade_e_contorno_em_mm_dos_defeitos():
+    """Severidade = valor / limiar; o contorno da forma vem em mm, dentro do saco."""
+    comprido = m.Mestre(CFG, apenas=["dimensoes"]).inspecionar(cena_forma(np.random.default_rng(3), FORMAS["comprido_158"]))
+    (d,) = [d for d in comprido.defeitos if d.descricao.startswith("comprimento")]
+    assert d.severidade == pytest.approx(abs(d.intensidade) / CFG.dimensoes.tolerancia_comprimento_mm) and d.severidade > 1
+    dobrado = m.Mestre(CFG, apenas=["dimensoes"]).inspecionar(cena_forma(np.random.default_rng(3), FORMAS["canto_dobrado"]))
+    forma = [d for d in dobrado.defeitos if d.contorno is not None]
+    assert forma and all(d.severidade >= 1 and d.contorno.shape[1] == 2 for d in forma)
+    assert all(np.abs(d.contorno[:, 0]).max() <= 150 / 2 + 2 for d in forma), "em mm, no referencial do saco"

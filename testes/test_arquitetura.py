@@ -8,6 +8,7 @@ import json
 import py_compile
 import re
 
+import cv2
 import numpy as np
 import pytest
 
@@ -233,14 +234,14 @@ def saco_falso(monkeypatch):
 class Bom(Escravo):
     nome, pergunta = "dimensoes", "?"
 
-    def analisar(self, saco, guardar_intermedios=False):
+    def inspecionar(self, saco, captura, cfg, guardar_intermedios=False):
         return Relatorio.concluir(self.nome, [], {"comprimento_mm": saco.comprimento_mm})
 
 
 class ComDefeitos(Escravo):
     nome, pergunta = "relevo", "?"
 
-    def analisar(self, saco, guardar_intermedios=False):
+    def inspecionar(self, saco, captura, cfg, guardar_intermedios=False):
         return Relatorio.concluir(self.nome, [Defeito(TipoDefeito.RISCO, 1, 2, 20, 0.4),
                                               Defeito(TipoDefeito.RUGAS, 30, 0, 25, 15)])
 
@@ -248,14 +249,14 @@ class ComDefeitos(Escravo):
 class Rebenta(Escravo):
     nome, pergunta = "cor", "?"
 
-    def analisar(self, saco, guardar_intermedios=False):
+    def inspecionar(self, saco, captura, cfg, guardar_intermedios=False):
         return 1 / 0
 
 
 class EscreveNaImagem(Escravo):
     nome, pergunta = "manchas", "?"
 
-    def analisar(self, saco, guardar_intermedios=False):
+    def inspecionar(self, saco, captura, cfg, guardar_intermedios=False):
         saco.imagem[0, 0] = 255  # proibido
         return Relatorio.concluir(self.nome, [])
 
@@ -263,7 +264,7 @@ class EscreveNaImagem(Escravo):
 class MudaOSaco(Escravo):
     nome, pergunta = "manchas", "?"
 
-    def analisar(self, saco, guardar_intermedios=False):
+    def inspecionar(self, saco, captura, cfg, guardar_intermedios=False):
         saco.comprimento_mm = 1.0  # proibido
         return Relatorio.concluir(self.nome, [])
 
@@ -271,22 +272,22 @@ class MudaOSaco(Escravo):
 class MudaAConfig(Escravo):
     nome, pergunta = "manchas", "?"
 
-    def analisar(self, saco, guardar_intermedios=False):
-        self.cfg.geral.px_por_mm = 1.0  # proibido: os outros escravos usam a mesma configuração
+    def inspecionar(self, saco, captura, cfg, guardar_intermedios=False):
+        cfg.geral.px_por_mm = 1.0  # proibido: os outros escravos usam a mesma configuração
         return Relatorio.concluir(self.nome, [])
 
 
 class FalhaOContrato(Escravo):
     nome, pergunta = "manchas", "?"
 
-    def analisar(self, saco, guardar_intermedios=False):
+    def inspecionar(self, saco, captura, cfg, guardar_intermedios=False):
         return "não sou um Relatorio"
 
 
 def mestre_com(*classes, politica="rejeitar"):
     cfg = config_teste(geral={"em_caso_de_erro": politica})
     mestre = m.Mestre(cfg, apenas=[])
-    mestre.escravos = [k(cfg) for k in classes]
+    mestre.escravos = [k() for k in classes]
     return mestre
 
 
@@ -512,3 +513,59 @@ def test_escravos_so_tem_parametros_em_mm():
              for nome in dataclasses.asdict(getattr(cfg, secao)) if "px" in nome]
     em_px += [n for n in dir(D) if re.match(r"M[3-6]_", n) and "PX" in n]
     assert not em_px
+
+
+# --- Contrato único dos escravos ----------------------------------------------------------
+
+def test_defeito_e_relatorio_sao_imutaveis():
+    d = Defeito(TipoDefeito.RISCO, 1, 2, 20, 0.4)
+    r = Relatorio.concluir("relevo", [d], {"num_linhas": 1.0})
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        d.descricao = "outra"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        r.estado = Estado.OK
+    with pytest.raises(TypeError):
+        r.medidas["num_linhas"] = 2.0
+    assert r.defeitos == (d,) and r.estado is Estado.NOK
+
+
+def test_escravos_cumprem_o_protocolo_e_m4_m6_por_implementar_sem_rebentar():
+    from nucleo.contrato import Escravo as Protocolo
+    rng = np.random.default_rng(2)
+    img, _ = cena_saco(rng, comprimento=150, largura=55)
+    cfg = config_teste(geral={"px_por_mm": 5.0})
+    saco = m.Localizador(cfg).localizar(img)
+    from nucleo.contrato import Captura
+    for classe in m.ESCRAVOS:
+        escravo = classe()
+        assert isinstance(escravo, Protocolo), classe.__name__
+        r = escravo.inspecionar(saco, Captura(img, "x", 0.0), cfg)  # não levanta exceções
+        assert isinstance(r, Relatorio) and r.modulo == classe.nome
+        if classe.nome in ("cor", "relevo", "manchas"):
+            assert r.estado is Estado.POR_IMPLEMENTAR and r.mensagem.startswith("por implementar")
+
+
+def test_escravos_recebem_a_captura_no_espaco_metrico(saco_falso):
+    vistas = []
+
+    class Espia(Escravo):
+        nome, pergunta = "manchas", "?"
+
+        def inspecionar(self, saco, captura, cfg, guardar_intermedios=False):
+            vistas.append((captura.px_por_mm, captura.imagem.shape, captura.imagem_para("rasante") is captura.imagem))
+            return Relatorio.concluir(self.nome, [])
+
+    mestre = mestre_com(Espia)
+    mestre.inspecionar(np.zeros((80, 120, 3), np.uint8), px_por_mm=10.0)  # câmara a 10 px/mm, perfil a 5
+    assert vistas == [(5.0, (40, 60, 3), True)]
+
+
+def test_contornos_dos_defeitos_em_mm_ida_e_volta():
+    rng = np.random.default_rng(4)
+    img, _ = cena_saco(rng, comprimento=150, largura=55, angulo=31.0)
+    saco = m.Localizador(config_teste(geral={"px_por_mm": 5.0})).localizar(img)
+    na_imagem = saco.contorno.reshape(-1, 2).astype(float)
+    no_recorte = cv2.transform(na_imagem.reshape(-1, 1, 2), saco.matriz).reshape(-1, 2)
+    em_mm = saco.px_para_mm(no_recorte, 5.0)
+    assert np.abs(em_mm[:, 0]).max() < 150 / 2 + 1 and np.abs(em_mm[:, 1]).max() < 55 / 2 + 1
+    assert np.allclose(saco.mm_para_imagem(em_mm, 5.0), na_imagem, atol=1e-6)

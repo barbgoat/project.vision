@@ -14,7 +14,8 @@ from modulos.m5_relevo.cristas import mapa_cristas
 from modulos.m5_relevo.linhas import classificar_linhas
 from modulos.m5_relevo.preprocessamento import preprocessar
 from modulos.m5_relevo.zonas import zonas_densas
-from nucleo.contrato import Escravo, Relatorio, Saco
+from nucleo.config import Config
+from nucleo.contrato import Captura, Escravo, Relatorio, Saco
 
 
 def _ms_desde(inicio: float) -> float:
@@ -27,7 +28,7 @@ class Relevo(Escravo):
     nome = "relevo"
     pergunta = "Há riscos, dobras, rugas ou amassos?"
 
-    def analisar(self, saco: Saco, guardar_intermedios: bool = False) -> Relatorio:
+    def inspecionar(self, saco: Saco, captura: Captura, cfg: Config, guardar_intermedios: bool = False) -> Relatorio:
         """Corre as quatro etapas do módulo sobre o saco.
 
         Recebe:
@@ -40,24 +41,30 @@ class Relevo(Escravo):
             ordenados ao longo do saco (x_mm), e as medidas num_linhas,
             num_zonas e tempo_<etapa>_ms.
         """
+        try:
+            return self._inspecionar(saco, cfg, guardar_intermedios)
+        except NotImplementedError as falta:  # etapas ainda por fazer: controlado, não conta para a decisão
+            return Relatorio.por_implementar(self.nome, falta)
+
+    def _inspecionar(self, saco: Saco, cfg: Config, guardar_intermedios: bool) -> Relatorio:
         tempos: dict[str, float] = {}
 
         inicio = perf_counter()
-        pre = preprocessar(saco.imagem, saco.mascara, self.cfg)
+        pre = preprocessar(saco.imagem, saco.mascara, cfg)
         tempos["preprocessamento"] = _ms_desde(inicio)
 
         inicio = perf_counter()
-        cristas = mapa_cristas(pre, saco.mascara_util, self.cfg)
+        cristas = mapa_cristas(pre, saco.mascara_util, cfg)
         tempos["cristas"] = _ms_desde(inicio)
 
         # As zonas vêm antes das linhas: as cristas que pertencem a umas rugas
         # não devem ser contadas outra vez como riscos.
         inicio = perf_counter()
-        zonas, mascara_zonas = zonas_densas(cristas, self.cfg)
+        zonas, mascara_zonas = zonas_densas(cristas, cfg)
         tempos["zonas"] = _ms_desde(inicio)
 
         inicio = perf_counter()
-        linhas = classificar_linhas(cristas, self.cfg, excluir=mascara_zonas)
+        linhas = classificar_linhas(cristas, cfg, excluir=mascara_zonas)
         tempos["linhas"] = _ms_desde(inicio)
 
         defeitos = sorted(zonas + linhas, key=lambda d: d.x_mm)

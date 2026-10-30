@@ -8,6 +8,8 @@ no saco ou sai dele) apanha entalhes estreitos e fundos, de pouca área.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import cv2
 import numpy as np
 
@@ -91,7 +93,7 @@ def zonas(mascara: np.ndarray, o_que: str, saco: Saco, ppm: float, area_min_mm2:
         if area_mm2 < area_min_mm2 and profundidade_mm < profundidade_min_mm:
             continue
         contornos, _ = cv2.findContours((rotulos == i).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contorno = max(contornos, key=cv2.contourArea)
+        contorno = max(contornos, key=cv2.contourArea)  # px do recorte; no Defeito fica em mm
         (_, _), (lado1, lado2), angulo = cv2.minAreaRect(contorno)
         if lado1 < lado2:
             angulo += 90
@@ -105,7 +107,8 @@ def zonas(mascara: np.ndarray, o_que: str, saco: Saco, ppm: float, area_min_mm2:
             area_mm2=area_mm2,
             angulo_graus=angulo,
             intensidade=profundidade_mm,
-            contorno=contorno.astype(np.int32),
+            severidade=max(area_mm2 / area_min_mm2, profundidade_mm / profundidade_min_mm),
+            contorno=saco.px_para_mm(contorno, ppm),
             descricao=_descrever(o_que, x_mm, y_mm, area_mm2, profundidade_mm, saco),
         ))
     return defeitos
@@ -131,24 +134,29 @@ def _descrever(o_que: str, x_mm: float, y_mm: float, area_mm2: float, profundida
             f"em x={x_mm:.0f}, y={y_mm:.0f} mm")
 
 
-def reconhecer_cortes_tortos(faltas: list[Defeito], sobras: list[Defeito], saco: Saco) -> list[tuple[Defeito, Defeito]]:
+def reconhecer_cortes_tortos(faltas: list[Defeito], sobras: list[Defeito], saco: Saco
+                             ) -> tuple[list[Defeito], list[Defeito], list[tuple[Defeito, Defeito]]]:
     """Um corte torto deixa, na mesma ponta, falta de material num canto e sobra no canto oposto.
 
     Quando aparece esse par, a causa provável dos dois passa a "corte torto?".
-    Devolve os pares (falta, sobra) reconhecidos.
+    Devolve (faltas, sobras, pares): as listas com esses defeitos já redescritos (os
+    Defeitos são imutáveis) e os pares (falta, sobra) reconhecidos.
     """
-    pares = []
-    for f in faltas:
-        for s in sobras:
+    novos: dict[int, Defeito] = {}
+    pares_idx = []
+    for i, f in enumerate(faltas):
+        for j, s in enumerate(sobras):
             na_mesma_ponta = (f.x_mm * s.x_mm > 0
                               and min(abs(f.x_mm), abs(s.x_mm)) > saco.comprimento_mm * (0.5 - _FRACAO_BORDA))
             em_lados_opostos = f.y_mm * s.y_mm < 0
             if na_mesma_ponta and em_lados_opostos:
                 for d, o_que in ((f, "falta material"), (s, "material a mais")):
-                    d.descricao = _descrever(o_que, d.x_mm, d.y_mm, d.area_mm2, d.intensidade, saco,
-                                             causa="corte torto?")
-                pares.append((f, s))
-    return pares
+                    novos[id(d)] = replace(d, descricao=_descrever(o_que, d.x_mm, d.y_mm, d.area_mm2, d.intensidade,
+                                                                   saco, causa="corte torto?"))
+                pares_idx.append((i, j))
+    faltas = [novos.get(id(d), d) for d in faltas]
+    sobras = [novos.get(id(d), d) for d in sobras]
+    return faltas, sobras, [(faltas[i], sobras[j]) for i, j in pares_idx]
 
 
 def desenhar_forma(saco: Saco, ppm: float, falta: np.ndarray, sobra: np.ndarray,

@@ -84,8 +84,9 @@ def _reta(x: np.ndarray, y: np.ndarray, desvio_max: float) -> tuple[float, float
     return float(a), float(b)
 
 
-def defeito_ponta(geo: Geometria, ponta: str, saco: Saco, ppm: float) -> Defeito:
-    """O Defeito de uma ponta fora de esquadria, com uma faixa ao longo dessa ponta como contorno."""
+def defeito_ponta(geo: Geometria, ponta: str, saco: Saco, ppm: float, limite_graus: float) -> Defeito:
+    """O Defeito de uma ponta fora de esquadria, com uma faixa ao longo dessa ponta como contorno (em mm).
+    limite_graus: a esquadria máxima aceite (para a severidade)."""
     angulo = geo.esquadria_graus(ponta)
     a, b = getattr(geo, ponta)
     altura, largura = saco.mascara.shape
@@ -104,7 +105,8 @@ def defeito_ponta(geo: Geometria, ponta: str, saco: Saco, ppm: float) -> Defeito
         largura_mm=2.0,
         angulo_graus=angulo,
         intensidade=abs(angulo),
-        contorno=np.round(poligono).astype(np.int32).reshape(-1, 1, 2),
+        severidade=abs(angulo) / limite_graus,
+        contorno=saco.px_para_mm(poligono, ppm),
         descricao=f"ponta {ponta} fora de esquadria (corte torto?): {angulo:+.1f} graus em x={x_mm:.0f} mm",
     )
 

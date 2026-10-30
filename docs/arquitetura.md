@@ -69,7 +69,10 @@ produtos e OFs; `nucleo/servidor_dashboard.py` envia o estado por SSE sempre que
 
 ## Acrescentar um módulo
 
-1. `modulos/m8_<nome>/escravo.py`: classe que deriva de `Escravo` (`nome`, `pergunta`, `analisar`).
+1. `modulos/m8_<nome>/escravo.py`: classe que cumpre o Protocol `Escravo` (`nome`, `pergunta`,
+   `iluminacao`, `inspecionar(saco, captura, cfg)`), sem estado entre chamadas. Devolve um
+   `Relatorio` imutável; os contornos dos defeitos em mm (`saco.px_para_mm`). Enquanto não estiver
+   feito, devolve `Relatorio.por_implementar(nome)`.
 2. Valores em `defines.py` e a secção respetiva em `nucleo/config.py`.
 3. Juntar a classe a `ESCRAVOS` em `mestre.py`.
 4. Imagens das etapas em `Relatorio.intermedios` → aparecem sozinhas na depuração.
