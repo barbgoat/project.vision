@@ -7,6 +7,7 @@ import dataclasses
 import json
 import py_compile
 import re
+import time
 
 import cv2
 import numpy as np
@@ -569,3 +570,65 @@ def test_contornos_dos_defeitos_em_mm_ida_e_volta():
     em_mm = saco.px_para_mm(no_recorte, 5.0)
     assert np.abs(em_mm[:, 0]).max() < 150 / 2 + 1 and np.abs(em_mm[:, 1]).max() < 55 / 2 + 1
     assert np.allclose(saco.mm_para_imagem(em_mm, 5.0), na_imagem, atol=1e-6)
+
+
+# --- Tempo real: tempo limite e paralelo -----------------------------------------------------
+
+def _lento(nome_modulo, segundos):
+    class Lento(Escravo):
+        nome, pergunta = nome_modulo, "?"
+
+        def inspecionar(self, saco, captura, cfg, guardar_intermedios=False):
+            time.sleep(segundos)
+            return Relatorio.concluir(self.nome, [])
+    return Lento
+
+
+@pytest.mark.parametrize("paralelo", [False, True])
+def test_escravo_que_passa_o_tempo_limite_da_erro(saco_falso, paralelo):
+    cfg = config_teste(geral={"paralelo": paralelo}, manchas={"timeout_ms": 50.0})
+    mestre = m.Mestre(cfg, apenas=[])
+    mestre.escravos = [Bom(), _lento("manchas", 0.4)()]
+    inicio = time.perf_counter()
+    r = mestre.inspecionar(IMG.copy())
+    assert time.perf_counter() - inicio < 0.3, "o Mestre não espera pelo módulo atrasado"
+    assert r.relatorio("manchas").estado is Estado.ERRO and "tempo limite de 50 ms" in r.relatorio("manchas").mensagem
+    assert r.relatorio("dimensoes").estado is Estado.OK and r.estado is Estado.ERRO
+
+
+def test_escravos_em_paralelo_poupam_tempo_e_mantem_a_ordem(saco_falso):
+    mestre = m.Mestre(config_teste(geral={"paralelo": True}), apenas=[])
+    mestre.escravos = [_lento("relevo", 0.25)(), _lento("manchas", 0.25)(), Bom()]
+    inicio = time.perf_counter()
+    r = mestre.inspecionar(IMG.copy())
+    assert time.perf_counter() - inicio < 0.45, "os dois lentos correram ao mesmo tempo"
+    assert [x.modulo for x in r.relatorios] == ["localizacao", "relevo", "manchas", "dimensoes"]
+    assert r.estado is Estado.OK and r.relatorio("relevo").tempo_ms >= 240
+
+
+def test_paralelo_da_o_mesmo_que_em_sequencia():
+    img = cena_saco(np.random.default_rng(7), comprimento=158, largura=55)[0]
+    sequencial = m.Mestre(config_teste(geral={"px_por_mm": 5.0})).inspecionar(img.copy())
+    paralelo = m.Mestre(config_teste(geral={"px_por_mm": 5.0, "paralelo": True})).inspecionar(img.copy())
+    assert sequencial.estado is paralelo.estado is Estado.NOK
+    assert [d.descricao for d in sequencial.defeitos] == [d.descricao for d in paralelo.defeitos]
+    assert dict(sequencial.relatorio("dimensoes").medidas) == dict(paralelo.relatorio("dimensoes").medidas)
+
+
+def test_timeout_negativo_e_recusado():
+    with pytest.raises(ValueError, match="relevo.timeout_ms"):
+        config_teste(relevo={"timeout_ms": -1.0})
+
+
+def test_desempenho_a_resolucao_da_camara_cabe_no_orcamento():
+    """Um saco a 2448×2048 (a Blackfly), a 8 px/mm: M2 + M3 (M4–M6 por implementar) dentro dos 500 ms."""
+    cfg = config_teste(geral={"px_por_mm": 8.0})
+    img, _ = cena_saco(np.random.default_rng(1), comprimento=150, largura=55, ppm=8.0, tamanho=(2048, 2448))
+    mestre = m.Mestre(cfg)
+    tempos = []
+    for _ in range(3):
+        inicio = time.perf_counter()
+        r = mestre.inspecionar(img.copy())
+        tempos.append((time.perf_counter() - inicio) * 1000)
+    assert r.estado is Estado.OK and abs(r.saco.comprimento_mm - 150) < 0.3
+    assert sorted(tempos)[1] < cfg.geral.orcamento_ms, f"mediana {sorted(tempos)[1]:.0f} ms"

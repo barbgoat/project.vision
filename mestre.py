@@ -10,6 +10,12 @@ Para cada saco (uma passagem do M1, com as suas melhores imagens):
        relatório (com o ficheiro e a linha onde falhou) e os outros continuam;
     4. junta os relatórios e decide o estado do saco.
 
+Tempo real: cada relatório traz o tempo do módulo (e o registo.csv também). Um escravo
+com <secção>.timeout_ms > 0 que demore mais fica com ERRO (a thread acaba sozinha em
+segundo plano: em Python não se interrompe uma thread). Com geral.paralelo, os escravos
+correm ao mesmo tempo em threads (o OpenCV e o NumPy libertam o GIL); são sem estado,
+e o Saco, a Captura e a configuração são imutáveis.
+
 Regra da decisão:
     - algum módulo NOK                         → NOK
     - algum módulo ERRO (em_caso_de_erro =
@@ -27,6 +33,8 @@ import logging
 import time
 import traceback
 from collections.abc import Callable, Iterable
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as TempoEsgotado
 from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
@@ -88,6 +96,7 @@ class Mestre:
             classes = [e for e in ESCRAVOS if e.nome in pedidos]
         self.escravos: list[Escravo] = [classe() for classe in classes]
         self._avisados: set[str] = set()
+        self._threads: ThreadPoolExecutor | None = None  # só com paralelo ou timeouts
 
     @staticmethod
     def disponiveis() -> list[str]:
@@ -166,19 +175,7 @@ class Mestre:
 
         # 2. Escravos de inspeção, cada um protegido, com as imagens no espaço métrico
         metrica = _captura_metrica(captura, img, endireitada, self.cfg.geral.px_por_mm)
-        for escravo in self.escravos:
-            devolvido, execucao = self._executar(
-                escravo.nome, lambda e=escravo: e.inspecionar(saco, metrica, self.cfg, guardar_intermedios)
-            )
-            if execucao.estado is Estado.OK:
-                if isinstance(devolvido, Relatorio) and devolvido.modulo == escravo.nome:
-                    execucao = replace(devolvido, tempo_ms=execucao.tempo_ms,
-                                       defeitos=[replace(d, modulo=escravo.nome) for d in devolvido.defeitos])
-                    if execucao.estado is Estado.POR_IMPLEMENTAR:
-                        self._avisar_por_implementar(escravo.nome, execucao.mensagem)
-                else:
-                    execucao = self._violacao(execucao, f"devolveu {devolvido!r:.80} em vez do seu Relatorio")
-            relatorios.append(execucao)
+        relatorios += self._correr_escravos(saco, metrica, guardar_intermedios)
 
         # 3. Decisão
         estado, mensagem = self._decidir(relatorios[1:])
@@ -251,6 +248,56 @@ class Mestre:
         if passagem.aviso:
             resultado.mensagem = " | ".join(filter(None, [resultado.mensagem, f"disparo: {passagem.aviso}"]))
         return resultado
+
+    # --- Escravos: em sequência, com tempo limite ou em paralelo -----------------------------
+    def _correr_escravos(self, saco: Saco, captura: Captura, guardar_intermedios: bool) -> list[Relatorio]:
+        """Os relatórios dos escravos, pela ordem de self.escravos."""
+        chamadas = [(e, lambda e=e: e.inspecionar(saco, captura, self.cfg, guardar_intermedios))
+                    for e in self.escravos]
+        paralelo = self.cfg.geral.paralelo
+        if not paralelo and not any(self._limite_ms(e) for e in self.escravos):  # o caso simples: sem threads
+            return [self._concluir(e, *self._executar(e.nome, chamada)) for e, chamada in chamadas]
+        if self._threads is None:
+            self._threads = ThreadPoolExecutor(max_workers=max(2, 2 * len(self.escravos)),
+                                               thread_name_prefix="escravo")
+        inicio = perf_counter()
+        futuros: dict[int, Future] = {}
+        if paralelo:  # todos ao mesmo tempo; cada um conta o seu tempo limite desde o início
+            futuros = {i: self._threads.submit(self._executar, e.nome, c) for i, (e, c) in enumerate(chamadas)}
+        relatorios = []
+        for i, (escravo, chamada) in enumerate(chamadas):
+            limite = self._limite_ms(escravo)
+            if not paralelo:
+                if not limite:
+                    relatorios.append(self._concluir(escravo, *self._executar(escravo.nome, chamada)))
+                    continue
+                inicio = perf_counter()
+                futuros[i] = self._threads.submit(self._executar, escravo.nome, chamada)
+            espera = None if not limite else max(0.0, limite / 1000 - (perf_counter() - inicio))
+            try:
+                relatorios.append(self._concluir(escravo, *futuros[i].result(timeout=espera)))
+            except TempoEsgotado:
+                log.error("Módulo %s excedeu o tempo limite de %g ms", escravo.nome, limite)
+                relatorios.append(Relatorio(escravo.nome, Estado.ERRO, tempo_ms=_ms_desde(inicio),
+                                            mensagem=f"excedeu o tempo limite de {limite:g} ms "
+                                                     f"({escravo.nome}.timeout_ms)"))
+        return relatorios
+
+    def _limite_ms(self, escravo: Escravo) -> float:
+        """O tempo limite do escravo (secção.timeout_ms); 0 = sem limite."""
+        return float(getattr(getattr(self.cfg, escravo.nome, None), "timeout_ms", 0.0))
+
+    def _concluir(self, escravo: Escravo, devolvido: Any, execucao: Relatorio) -> Relatorio:
+        """O relatório final de um escravo: o que ele devolveu, com o tempo e o módulo de cada defeito."""
+        if execucao.estado is not Estado.OK:
+            return execucao
+        if not (isinstance(devolvido, Relatorio) and devolvido.modulo == escravo.nome):
+            return self._violacao(execucao, f"devolveu {devolvido!r:.80} em vez do seu Relatorio")
+        relatorio = replace(devolvido, tempo_ms=execucao.tempo_ms,
+                            defeitos=[replace(d, modulo=escravo.nome) for d in devolvido.defeitos])
+        if relatorio.estado is Estado.POR_IMPLEMENTAR:
+            self._avisar_por_implementar(escravo.nome, relatorio.mensagem)
+        return relatorio
 
     # --- Proteção de cada chamada ------------------------------------------------------
     def _executar(self, nome: str, chamada: Callable[[], Any]) -> tuple[Any, Relatorio]:

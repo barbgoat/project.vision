@@ -46,6 +46,7 @@ GERAL_EM_CASO_DE_ERRO: Final = "rejeitar"  # se um módulo der ERRO: "rejeitar" 
 # o registo de cada saco têm de caber aqui, em média; senão a fila do M1 enche e passam
 # sacos sem inspeção (ERRO). Para ter folga, apontar para ~70 % deste valor.
 GERAL_ORCAMENTO_MS: Final = 500.0  # [MEDIR] confirmar o ritmo real da linha
+GERAL_PARALELO: Final = False  # True = os escravos de inspeção correm ao mesmo tempo (threads)
 
 # =============================================================================
 # CÂMARA: FLIR Blackfly S BFS-PGE-50S5C-C (PoE GigE, cor, Sony IMX264) — fixas
@@ -254,6 +255,7 @@ M2_FUNDO_TOLERANCIA_DELTA_E: Final = 1.0  # folga fixa nesse descarte (ΔE)
 # M3 DIMENSÕES (o saco tem o tamanho e a forma certos?)
 # =============================================================================
 DIMENSOES_ATIVO: Final = True
+DIMENSOES_TIMEOUT_MS: Final = 0.0  # tempo máximo do módulo por saco; acima disto ERRO; 0 = sem limite
 DIMENSOES_COMPRIMENTO_NOMINAL_MM: Final = 150.0  # [MEDIR] comprimento do produto
 DIMENSOES_LARGURA_NOMINAL_MM: Final = 55.0  # [MEDIR] largura do produto
 DIMENSOES_TOLERANCIA_COMPRIMENTO_MM: Final = 3.0  # [MEDIR] aceita nominal ± tolerância
@@ -280,6 +282,7 @@ M3_GEOMETRIA_PONTOS_MIN: Final = 10  # pontos mínimos num lado para lhe ajustar
 # M4 COR (o saco tem a cor certa?)
 # =============================================================================
 COR_ATIVO: Final = True  # desligar com fotos de telemóvel (balanço de brancos automático)
+COR_TIMEOUT_MS: Final = 0.0  # tempo máximo do módulo por saco; acima disto ERRO; 0 = sem limite
 COR_REFERENCIA_LAB: Final = (70.0, 0.0, 0.0)  # [MEDIR] cor média de sacos OK em CIELAB (L* 0–100, a*, b*)
 COR_DELTA_E_MAX: Final = 6.0  # diferença de cor máxima aceite (ΔE)
 
@@ -287,6 +290,7 @@ COR_DELTA_E_MAX: Final = 6.0  # diferença de cor máxima aceite (ΔE)
 # M5 RELEVO (riscos, dobras, rugas, amassos)
 # =============================================================================
 RELEVO_ATIVO: Final = True
+RELEVO_TIMEOUT_MS: Final = 0.0  # tempo máximo do módulo por saco; acima disto ERRO; 0 = sem limite
 RELEVO_CANAL: Final = "cinzento"  # "cinzento" | "b" | "g" | "r" | "h" | "s" | "v"
 RELEVO_FUNDO_SIGMA_MM: Final = 5.0  # desfoque que estima a iluminação; bem maior do que os defeitos
 RELEVO_CRISTA_SIGMAS_MM: Final = (0.25, 0.5, 1.0, 2.0)  # escalas da Hessiana (larguras de crista)
@@ -309,6 +313,7 @@ RELEVO_RUGAS_COERENCIA_MIN: Final = 0.5  # coerência de orientação ≥ isto �
 # M6 MANCHAS
 # =============================================================================
 MANCHAS_ATIVO: Final = True
+MANCHAS_TIMEOUT_MS: Final = 0.0  # tempo máximo do módulo por saco; acima disto ERRO; 0 = sem limite
 MANCHAS_CANAL: Final = "cinzento"  # "cinzento" | "b" | "g" | "r" | "h" | "s" | "v"
 MANCHAS_FUNDO_SIGMA_MM: Final = 10.0  # desfoque que estima a iluminação; maior do que as manchas
 MANCHAS_POLARIDADE: Final = "ambas"  # "ambas" | "clara" | "escura"

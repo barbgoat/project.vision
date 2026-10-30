@@ -129,3 +129,14 @@ def test_registo_tem_a_data_da_captura(resultado, tmp_path):
         saida.registar(resultado)
     (linha,) = ler_csv(saida.pasta / "registo.csv")
     assert linha["data_hora"].startswith(time.strftime("%Y-%m-%d", time.localtime(1_700_000_000.0)))
+
+
+def test_passagem_descartada_fica_no_registo(tmp_path):
+    """Fila cheia: a passagem não é analisada, mas fica no registo como ERRO (nunca é ignorada)."""
+    from nucleo.contrato import Passagem
+    descartada = Passagem(7, [], [], 12, 0.0, 0.3, "virtual", aviso="não analisada: fila cheia", descartada=True)
+    resultado = m.Mestre(CFG, apenas=["dimensoes"]).inspecionar_passagem(descartada)
+    with Saida(CFG, tmp_path, ["localizacao", "dimensoes"]) as saida:
+        saida.registar(resultado)
+    (linha,) = ler_csv(saida.pasta / "registo.csv")
+    assert linha["estado"] == "ERRO" and "fila cheia" in linha["mensagens"]

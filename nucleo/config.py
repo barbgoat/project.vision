@@ -77,6 +77,7 @@ class ConfigGeral:
     velocidade_mm_s: float = D.GERAL_VELOCIDADE_MM_S
     em_caso_de_erro: PoliticaErro = D.GERAL_EM_CASO_DE_ERRO
     orcamento_ms: float = D.GERAL_ORCAMENTO_MS
+    paralelo: bool = D.GERAL_PARALELO
 
     def erros(self) -> list[str]:
         return _verificar([
@@ -277,6 +278,7 @@ class ConfigDimensoes:
     """M3 Dimensões: tamanho e forma face ao nominal."""
 
     ativo: bool = D.DIMENSOES_ATIVO
+    timeout_ms: float = D.DIMENSOES_TIMEOUT_MS
     comprimento_nominal_mm: float = D.DIMENSOES_COMPRIMENTO_NOMINAL_MM
     largura_nominal_mm: float = D.DIMENSOES_LARGURA_NOMINAL_MM
     tolerancia_comprimento_mm: float = D.DIMENSOES_TOLERANCIA_COMPRIMENTO_MM
@@ -312,6 +314,7 @@ class ConfigCor:
     """M4 Cor: cor média do saco face à referência."""
 
     ativo: bool = D.COR_ATIVO
+    timeout_ms: float = D.COR_TIMEOUT_MS
     referencia_lab: list[float] = field(default_factory=lambda: list(D.COR_REFERENCIA_LAB))
     delta_e_max: float = D.COR_DELTA_E_MAX
 
@@ -329,6 +332,7 @@ class ConfigRelevo:
     """M5 Relevo: riscos, dobras, rugas e amassos (cristas na imagem)."""
 
     ativo: bool = D.RELEVO_ATIVO
+    timeout_ms: float = D.RELEVO_TIMEOUT_MS
     canal: Canal = D.RELEVO_CANAL
     fundo_sigma_mm: float = D.RELEVO_FUNDO_SIGMA_MM
     crista_sigmas_mm: list[float] = field(default_factory=lambda: list(D.RELEVO_CRISTA_SIGMAS_MM))
@@ -375,6 +379,7 @@ class ConfigManchas:
     """M6 Manchas: zonas mais claras ou mais escuras do que a vizinhança."""
 
     ativo: bool = D.MANCHAS_ATIVO
+    timeout_ms: float = D.MANCHAS_TIMEOUT_MS
     canal: Canal = D.MANCHAS_CANAL
     fundo_sigma_mm: float = D.MANCHAS_FUNDO_SIGMA_MM
     polaridade: Polaridade = D.MANCHAS_POLARIDADE
@@ -524,6 +529,9 @@ class Config:
         if self.lente.circulo_imagem_mm < diagonal_sensor:
             erros.append(f"lente.circulo_imagem_mm ({self.lente.circulo_imagem_mm:g}) não cobre a diagonal do "
                          f"sensor ({diagonal_sensor:.1f} mm): os cantos da imagem ficam escuros")
+        for secao in ("dimensoes", "cor", "relevo", "manchas"):
+            if getattr(self, secao).timeout_ms < 0:
+                erros.append(f"{secao}.timeout_ms tem de ser ≥ 0 (0 = sem limite)")
         # O M2 não pode rejeitar sacos com as medidas nominais.
         loc, dim = self.localizacao, self.dimensoes
         if not loc.comprimento_min_mm <= dim.comprimento_nominal_mm <= loc.comprimento_max_mm:
