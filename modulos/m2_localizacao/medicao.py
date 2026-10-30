@@ -17,13 +17,16 @@ from nucleo.contrato import SemSaco
 
 
 
-def pose(contorno: np.ndarray) -> tuple[np.ndarray, float, float, float]:
+def pose(arestas: np.ndarray) -> tuple[np.ndarray, float, float, float]:
     """Centro, ângulo do eixo maior (rad, em (−π/2, π/2]), comprimento e largura em px.
 
     O ângulo vem dos momentos centrais, θ = ½·atan2(2·μ11, μ20 − μ02), que não
     depende das convenções de ângulo do cv2.minAreaRect, e é depois afinado
     pelos lados compridos (reta ajustada à parte central de cada um): um canto
     dobrado ou uma aba desequilibram os momentos e inclinavam o saco ~1°.
+
+    Recebe os pontos do contorno já na aresta (subpíxel, N×2), de
+    segmentacao.afinar_contorno.
 
     As medidas são como as de um paquímetro encostado aos lados: a posição de
     cada lado é a mediana dos pontos do contorno nesse lado, longe dos cantos.
@@ -32,11 +35,11 @@ def pose(contorno: np.ndarray) -> tuple[np.ndarray, float, float, float]:
     O centro é o meio entre os lados (não o centro de massa), para as posições
     em mm irem de −comprimento/2 a +comprimento/2.
     """
-    m = cv2.moments(contorno)
+    m = cv2.moments(arestas.reshape(-1, 1, 2).astype(np.float32))
     if m["m00"] <= 0:
         raise SemSaco("o contorno encontrado não tem área")
     cx, cy = m["m10"] / m["m00"], m["m01"] / m["m00"]
-    pontos = contorno.reshape(-1, 2).astype(np.float64) - (cx, cy)
+    pontos = arestas.reshape(-1, 2).astype(np.float64) - (cx, cy)
 
     angulo = 0.5 * math.atan2(2 * m["mu11"], m["mu20"] - m["mu02"])
     u, v = _projetar(pontos, angulo)
@@ -55,11 +58,8 @@ def pose(contorno: np.ndarray) -> tuple[np.ndarray, float, float, float]:
 
     esquerda, direita, cima, baixo = _lados(u, v)
     cos, sen = math.cos(angulo), math.sin(angulo)
-    # Os pontos do contorno são centros de píxeis da borda, em média meio píxel
-    # (projetado na normal do lado) para dentro de cada lado.
-    correcao = max(abs(cos), abs(sen))
-    comprimento = direita - esquerda + correcao
-    largura = baixo - cima + correcao
+    comprimento = direita - esquerda
+    largura = baixo - cima
     meio_u, meio_v = (esquerda + direita) / 2, (cima + baixo) / 2
     centro = np.array([cx + meio_u * cos - meio_v * sen, cy + meio_u * sen + meio_v * cos])
     return centro, angulo, comprimento, largura

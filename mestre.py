@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import traceback
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -51,7 +52,7 @@ ESCRAVOS: tuple[type[Escravo], ...] = (Dimensoes, Cor, Relevo, Manchas)
 class Mestre:
     """Coordena o M2 e os escravos de inspeção M3–M6."""
 
-    def __init__(self, cfg: Config, apenas: Iterable[str] | None = None) -> None:
+    def __init__(self, cfg: Config, apenas: Iterable[str] | None = None, of: str = "", produto: str = "") -> None:
         """Prepara os escravos.
 
         Recebe:
@@ -59,8 +60,12 @@ class Mestre:
             apenas: se dado, corre só estes escravos de inspeção (pelo nome),
                 mesmo que estejam desligados na configuração; útil para testar
                 um módulo sozinho. Por omissão corre os que têm "ativo": true.
+            of, produto: a ordem de fabrico e o produto, que ficam em cada
+                Resultado. Mudar de OF é criar outro Mestre: um saco que já está
+                a ser analisado acaba sempre com a OF com que começou.
         """
         self.cfg = cfg
+        self.of, self.produto = of, produto
         self.localizador = Localizador(cfg)
         if apenas is None:
             classes = [e for e in ESCRAVOS if getattr(cfg, e.nome).ativo]
@@ -91,15 +96,34 @@ class Mestre:
             img: imagem BGR uint8 (Captura.imagem). Passa a ser só de leitura.
             guardar_intermedios: pedir a cada escravo as imagens das suas etapas.
         Devolve:
-            Resultado com o estado do saco e o relatório de cada módulo.
+            Resultado com o estado do saco, o relatório de cada módulo, a OF e o produto.
         """
+        resultado = self._inspecionar(img, guardar_intermedios)
+        resultado.of, resultado.produto = self.of, self.produto
+        return resultado
+
+    def _inspecionar(self, img: np.ndarray, guardar_intermedios: bool) -> Resultado:
         inicio = perf_counter()
         img.flags.writeable = False
+
+        # 0. Referência (fotos à mão): daqui em diante a imagem é a folha, ou o que está entre os
+        # marcadores, vista de cima
+        ms_folha = 0.0
+        if self.cfg.localizacao.referencia != "nenhuma":
+            retificada, rel_folha = self._executar(Localizador.nome, lambda: self.localizador.retificar(img))
+            if rel_folha.estado is Estado.SEM_SACO:  # sem a referência: região e medidas em px
+                return self._sem_escala(img, rel_folha, inicio, guardar_intermedios)
+            if rel_folha.estado is not Estado.OK:
+                return Resultado(img, Estado.ERRO, None, [rel_folha], _ms_desde(inicio),
+                                 f"{Localizador.nome}: {rel_folha.mensagem}")
+            img, ms_folha = retificada, rel_folha.tempo_ms
+            img.flags.writeable = False
 
         # 1. M2 Localização
         saco, rel_localizacao = self._executar(
             Localizador.nome, lambda: self.localizador.localizar(img, guardar_intermedios)
         )
+        rel_localizacao.tempo_ms += ms_folha
         rel_localizacao.medidas = dict(self.localizador.medidas)
         rel_localizacao.intermedios = dict(self.localizador.intermedios)
         relatorios = [rel_localizacao]
@@ -139,6 +163,34 @@ class Mestre:
         estado, mensagem = self._decidir(relatorios[1:])
         return Resultado(img, estado, saco, relatorios, _ms_desde(inicio), mensagem)
 
+    def _sem_escala(self, img: np.ndarray, rel_referencia: Relatorio, inicio: float,
+                    guardar_intermedios: bool) -> Resultado:
+        """Foto sem a referência (folha ou marcadores): sem mm, o saco não se pode inspecionar.
+
+        Localiza-o à mesma, para se ver a região e as medidas em px, e dá ERRO (nunca é
+        aprovado). Se nem assim houver saco, SEM_SACO com o motivo da referência.
+        """
+        devolvido, rel = self._executar(
+            Localizador.nome, lambda: self.localizador.localizar_sem_escala(img, guardar_intermedios))
+        rel.tempo_ms += rel_referencia.tempo_ms
+        rel.intermedios = dict(self.localizador.intermedios)
+        if rel.estado is not Estado.OK or devolvido is None:
+            rel_referencia.tempo_ms = rel.tempo_ms
+            return Resultado(img, Estado.SEM_SACO, None, [rel_referencia], _ms_desde(inicio),
+                             f"{Localizador.nome}: {rel_referencia.mensagem}")
+        saco, ppm = devolvido
+        comprimento_px, largura_px = saco.comprimento_mm * ppm, saco.largura_mm * ppm
+        # Para o desenho (que usa geral.px_por_mm) e o ecrã, as medidas à escala do perfil;
+        # nunca são registadas como mm (ERRO).
+        escala = ppm / self.cfg.geral.px_por_mm
+        saco = replace(saco, comprimento_mm=saco.comprimento_mm * escala, largura_mm=saco.largura_mm * escala)
+        _so_leitura(saco)
+        rel.estado = Estado.ERRO
+        rel.medidas = {"comprimento_px": comprimento_px, "largura_px": largura_px, "angulo_graus": saco.angulo_graus}
+        rel.mensagem = (f"{rel_referencia.mensagem}: sem escala, o saco tem {comprimento_px:.0f} x "
+                        f"{largura_px:.0f} px (não são mm) e não foi inspecionado")
+        return Resultado(img, Estado.ERRO, saco, [rel], _ms_desde(inicio), f"{Localizador.nome}: {rel.mensagem}")
+
     # --- Passagem de um saco (várias imagens) ---------------------------------------------
     def inspecionar_passagem(self, passagem: Passagem, guardar_intermedios: bool = False) -> Resultado:
         """Inspeciona um saco a partir da sua passagem: UMA decisão por saco.
@@ -159,7 +211,8 @@ class Mestre:
         inicio = perf_counter()
         if passagem.descartada or not passagem.candidatas:
             mensagem = passagem.aviso or "passagem sem imagens"
-            return Resultado(None, Estado.ERRO, None, [], _ms_desde(inicio), mensagem, passagem=passagem)
+            return Resultado(None, Estado.ERRO, None, [], _ms_desde(inicio), mensagem, passagem=passagem,
+                             of=self.of, produto=self.produto)
 
         resultado: Resultado | None = None
         for tentativa, captura in enumerate(passagem.candidatas, start=1):

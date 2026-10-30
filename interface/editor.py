@@ -195,11 +195,11 @@ class EditorParametros(QWidget):
         self.erro.setWordWrap(True)
         self.btn_aplicar = QPushButton("Aplicar à produção")
         self.btn_aplicar.setToolTip("Os sacos seguintes passam a usar estes valores.")
-        btn_repor = QPushButton("Repor o perfil")
-        btn_guardar = QPushButton("Guardar no perfil")
+        self.btn_repor = QPushButton("Repor o perfil")
+        self.btn_guardar = QPushButton("Guardar no perfil")
         self.btn_aplicar.clicked.connect(self.aplicar)
-        btn_repor.clicked.connect(self.repor)
-        btn_guardar.clicked.connect(self.guardar)
+        self.btn_repor.clicked.connect(self.repor)
+        self.btn_guardar.clicked.connect(self.guardar)
 
         paginas = QStackedWidget()
         cfg = Config()
@@ -231,7 +231,7 @@ class EditorParametros(QWidget):
         for w in (QLabel("Secção:"), self.secao, self.nome_perfil):
             topo.addWidget(w)
         topo.addStretch()
-        for w in (self.btn_aplicar, btn_repor, btn_guardar):
+        for w in (self.btn_aplicar, self.btn_repor, self.btn_guardar):
             topo.addWidget(w)
         layout = QVBoxLayout(self)
         layout.addLayout(topo)

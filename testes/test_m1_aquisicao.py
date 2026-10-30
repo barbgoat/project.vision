@@ -289,3 +289,98 @@ def test_main_camara_que_desliga_a_meio_mostra_o_resumo(gravacao, tmp_path, monk
     assert codigo == 1, "a câmara falhou: não pode acabar como se estivesse tudo bem"
     assert "saco 1 (" in consola and "ms saída)" in consola, "uma linha por saco, com o tempo do registo"
     assert "Sacos inspecionados:" in consola, "o resumo do que já foi feito aparece na mesma"
+
+
+def test_barreira_virtual_ignora_objetos_pequenos_pelo_define(monkeypatch):
+    """Só contam objetos com M1_OBJETO_AREA_MIN da área do maior (valor no define, não no código)."""
+    from modulos.m1_aquisicao import disparo
+    diferente = np.zeros((100, 200), bool)
+    diferente[10:50, 10:70] = True  # objeto grande, longe do centro (2400 px)
+    diferente[45:55, 95:105] = True  # objeto pequeno, ao centro (100 px, 4 % do grande)
+    longe = disparo._pontuacao(diferente)
+    monkeypatch.setattr(disparo.D, "M1_OBJETO_AREA_MIN", 0.02)
+    assert disparo._pontuacao(diferente) < 0.05 < longe, "com o limite a 2 % o pequeno passa a contar"
+
+
+# --- Captura canónica e pré-processamento (debayer, calibração) -----------------------------
+
+from modulos.m1_aquisicao import preprocessamento as pre  # noqa: E402
+from nucleo.contrato import ILUMINACOES  # noqa: E402
+
+
+def test_captura_com_iluminacoes_e_compativel():
+    difusa, rasante = np.zeros((4, 6, 3), np.uint8), np.ones((4, 6, 3), np.uint8)
+    c = Captura(difusa, "x.png", 1.0)
+    assert c.imagens == {"difusa": difusa} and c.imagem is difusa, "Captura(imagem, ...) continua a funcionar"
+    assert c.imagem_para("rasante") is difusa, "sem a rasante, a difusa"
+    c2 = Captura({"difusa": difusa, "rasante": rasante}, "x", 1.0, px_por_mm=7.9, calibracao_id="linha1", fonte="spinnaker")
+    assert c2.imagem_para("rasante") is rasante and c2.px_por_mm == 7.9 and c2.calibracao_id == "linha1"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        c.origem = "outra"
+    with pytest.raises(ValueError, match="difusa"):
+        Captura({"rasante": rasante}, "x", 1.0)
+    with pytest.raises(ValueError, match="difusa"):
+        Captura({"difusa": difusa, "uv": rasante}, "x", 1.0)
+    assert ILUMINACOES[0] == "difusa"
+
+
+def test_passagem_da_o_id_do_saco_as_candidatas():
+    img = np.zeros((4, 6, 3), np.uint8)
+    p = Passagem(7, [Captura(img, "a", 0.0), Captura(img, "b", 0.1)], [0.1, 0.2], 2, 0.0, 0.1, "foto")
+    assert [c.id_saco for c in p.candidatas] == [7, 7]
+
+
+def test_fontes_dizem_quem_sao(tmp_path):
+    guardar_imagem(tmp_path / "a.png", np.zeros((8, 8, 3), np.uint8))
+    with criar_fonte("pasta", config_teste(), pasta=tmp_path) as fonte:
+        assert fonte.ler().fonte == "pasta"
+
+
+def test_debayer_bayer_rg8_recupera_as_cores():
+    bgr = np.zeros((60, 80, 3), np.uint8)
+    bgr[:, :40] = (30, 40, 200)  # vermelho à esquerda
+    bgr[:, 40:] = (200, 120, 20)  # azul à direita
+    recuperada = pre.debayer(pre.mosaico_bayer_rg(bgr), "BayerRG8")
+    assert recuperada.shape == bgr.shape and recuperada.dtype == np.uint8
+    interior = (slice(4, -4), np.r_[4:36, 44:76])
+    assert np.abs(recuperada[interior].astype(int) - bgr[interior].astype(int)).max() <= 2, "sem canais trocados"
+    assert pre.debayer(bgr, "BGR8") is bgr
+    with pytest.raises(ValueError, match="BayerRG12p"):
+        pre.debayer(bgr, "BayerRG12p")
+
+
+def test_calibracao_tira_a_distorcao_da_lente(tmp_path):
+    """Pontos desenhados onde uma lente com distorção (k1 = -0,25) os poria voltam ao sítio certo."""
+    altura, largura, f = 480, 640, 500.0
+    matriz = np.array([[f, 0, (largura - 1) / 2], [0, f, (altura - 1) / 2], [0, 0, 1]])
+    distorcao = np.array([-0.25, 0.05, 0.0, 0.0])
+    ideais = np.array([(u, v) for u in range(80, 600, 110) for v in range(70, 420, 90)], float)
+    normalizados = np.c_[(ideais - matriz[:2, 2]) / f, np.ones(len(ideais))]
+    distorcidos, _ = cv2.projectPoints(normalizados, np.zeros(3), np.zeros(3), matriz, distorcao)
+    img = np.zeros((altura, largura, 3), np.uint8)
+    for x, y in distorcidos.reshape(-1, 2):
+        cv2.circle(img, (round(x * 16), round(y * 16)), 3 * 16, (255, 255, 255), -1, cv2.LINE_AA, 4)
+    cal = pre.Calibracao("teste", matriz, distorcao)
+    pre.guardar_calibracao(tmp_path / "cal.npz", cal)
+    corrigida = pre.corrigir(img, pre.carregar_calibracao(tmp_path / "cal.npz"))
+    n, _, _, centros = cv2.connectedComponentsWithStats((corrigida[..., 0] > 100).astype(np.uint8))
+    erros = [np.min(np.hypot(*(centros[1:] - p).T)) for p in ideais]
+    assert n - 1 == len(ideais) and max(erros) < 0.5, max(erros)
+
+
+def test_calibracao_com_homografia_e_erros_claros(tmp_path):
+    img = np.zeros((100, 200, 3), np.uint8)
+    img[40:60, 80:120] = 255
+    cal = pre.Calibracao("h", np.eye(3), np.zeros(4), px_por_mm=0.5, homografia=np.diag([0.5, 0.5, 1.0]),
+                         tamanho=(100, 50))
+    pre.guardar_calibracao(tmp_path / "h.npz", cal)
+    lida = pre.carregar_calibracao(tmp_path / "h.npz")
+    assert lida.px_por_mm == 0.5 and lida.tamanho == (100, 50)
+    saida = pre.preparar(img, "BGR8", lida)
+    assert saida.shape == (50, 100, 3) and saida[25, 50, 0] == 255 and saida[5, 5, 0] == 0
+    with pytest.raises(FileNotFoundError, match="aquisicao.calibracao"):
+        pre.carregar_calibracao(tmp_path / "nao.npz")
+    with pytest.raises(ValueError, match="calibracao"):
+        config_teste(aquisicao={"calibracao": "cal.txt"})
+    with pytest.raises(FileNotFoundError, match="aquisicao.calibracao"):  # a câmara carrega-a logo ao abrir
+        criar_fonte("spinnaker", config_teste(aquisicao={"calibracao": str(tmp_path / "nao.npz")}))

@@ -2,32 +2,61 @@
 
 ## M2 Localização (`modulos/m2_localizacao/`)
 
-1. **Fundo**: foto do fundo vazio (`LOCALIZACAO_FUNDO_REFERENCIA`) ou superfície ajustada à borda da imagem.
+0. **Referência** (opcional, fotos à mão): a foto é endireitada pelos 4 cantos de uma A4 por
+   baixo do saco (papel = claro e liso; arestas subpíxel) ou por 4 marcadores ArUco à volta dele,
+   em qualquer fundo (homografia e posição de cada marcador ajustadas em conjunto aos 16 cantos).
+   Tira a perspetiva e dá mm reais. `referencia = auto`: os marcadores se houver, senão a folha.
+   Sem nenhum na foto, o saco é localizado à mesma (região e medidas em px) e fica ERRO.
+1. **Segmentador** (`localizacao.segmentador`): `delta_e` (abaixo), `aprendido` (as cores e
+   texturas das fotos anotadas, completadas pelo GrabCut, CPU; P(saco) dentro menos à volta < `aprendido_score_min` → ERRO), `sam3` (SAM 3 por texto,
+   qualquer fundo, GPU; confiança < `sam3_score_min` → ERRO) ou `duplo` (os dois; IoU <
+   `duplo_iou_min` → ERRO e a foto para `dataset/revisao/`). No ΔE:
+   **Fundo**: foto do fundo vazio (`LOCALIZACAO_FUNDO_REFERENCIA`) ou superfície ajustada à borda da imagem.
 2. **Diferença de cor** ao fundo (ΔE em CIELAB), limiar automático: sacos de qualquer cor.
 3. **Arestas**, só se a cor não chegar (sacos transparentes).
-4. **Ângulo e medidas** como um paquímetro (mediana de cada lado, sem os cantos).
+4. **Contorno subpíxel**: cada ponto vai para o máximo do gradiente ao longo da normal (do ΔE,
+   ou da cor em CIELAB com o SAM 3), por isso as medidas não dependem do limiar nem da máscara. **Ângulo e medidas** como um paquímetro
+   (mediana de cada lado, sem os cantos).
 5. **Recorte** rodado e centrado + **zona útil** (sem as margens), entregue aos outros módulos.
 
 Sem saco, diz porquê: "nada difere do fundo", "toca na borda", "fora dos limites".
 
 Em imagens sintéticas: erro ≤ 0,2 mm e ≤ 0,03° (opacos e translúcidos), ~0,9 mm
-(transparentes); ~80 ms numa imagem de 5 MP.
+(transparentes); ~80 ms numa imagem de 5 MP. Com a folha (A4 em trapézio): erro ≤ 0,15 mm;
+fotos reais: o mesmo saco repete a ±0,5 mm em 4 fotos; a folha custa ~35 ms por foto. Com
+marcadores (sintéticas, 3 fundos, de frente, em trapézio e rodados): erro ≤ 0,21 mm, ~25 ms por foto.
 
 **Dicas:** fotografar o fundo vazio em cada sessão; sombra no contorno → baixar
 `LOCALIZACAO_PESO_LUMINOSIDADE`; pedaços de fundo → subir `LOCALIZACAO_DELTA_E_MIN`;
-sacos "fora dos limites" → verificar `GERAL_PX_POR_MM`.
+sacos "fora dos limites" → verificar `GERAL_PX_POR_MM`. Fundo de inox com reflexos e
+sacos com cor na orla (perfil `telemovel`) → peso da luminosidade 0 e limiar fixo de 8 ΔE:
+os reflexos são só luminosidade e o Otsu cortava o saco por dentro (laranja vs bege).
 
 ## M3 Dimensões (`modulos/m3_dimensoes/`)
 
 Usa as medidas do M2:
 
-1. **Comprimento** e **largura** face ao nominal ± tolerância (`DIMENSOES_*`).
-2. **Forma**: silhueta vs retângulo ideal. Cada zona com **falta** (canto dobrado,
-   rasgão) ou **sobra** (aba) de material acima de `DIMENSOES_FORMA_AREA_MIN_MM2`
-   é um defeito, com posição e causa provável; falta + sobra na mesma ponta = corte torto.
+1. **Comprimento** e **largura** face ao nominal ± tolerância (`DIMENSOES_*`, ou do produto
+   na base de dados: `CORRESPONDENCIA` em `nucleo/especificacoes.py`). Cada saco fica na base
+   com o medido e o pedido; o dashboard mostra, por OF, média, mínimo, máximo e sacos fora.
+2. **Forma**: silhueta vs retângulo ideal, com os cantos do produto
+   (`DIMENSOES_FORMA_RAIO_CANTO_MM`, e `..._OUTRA_PONTA_MM` se as pontas forem diferentes: o
+   saco pode vir virado para qualquer lado, fica a atribuição que encaixa melhor). Cada zona
+   com **falta** (canto dobrado, rasgão) ou **sobra** (aba) de material com área ≥
+   `DIMENSOES_FORMA_AREA_MIN_MM2` **ou** profundidade ≥ `DIMENSOES_FORMA_PROFUNDIDADE_MIN_MM`
+   (entalhes estreitos e fundos) é um defeito, com posição e causa provável.
+3. **Geometria**: uma reta robusta a cada lado (sem cantos nem acidentes) → **esquadria** de
+   cada ponta e **paralelismo** dos lados compridos, em graus (não dependem da escala). Uma
+   ponta acima de `DIMENSOES_ESQUADRIA_MAX_GRAUS` = corte torto (substitui o par falta/sobra
+   da forma nessa ponta); lados acima de `DIMENSOES_PARALELISMO_MAX_GRAUS` = trapézio.
 
-Em sacos sintéticos: 8 sacos certos sem falsos alarmes; canto dobrado, aba,
-rasgão, corte torto e dois defeitos no mesmo saco detetados e separados; ~5 ms.
+Em sacos sintéticos: sacos certos a ±0,06°; corte torto de 4 mm (4,2°, invisível pela
+área) apanhado; entalhe de 5 × 3 mm (7 mm²) apanhado pela profundidade; canto dobrado,
+aba, rasgão e dois defeitos no mesmo saco separados; ~15 ms. Entalhes mais estreitos do
+que `LOCALIZACAO_FECHO_MM` são tapados pelo M2. Fotos reais (PreVital na folha): pontas a
+≤ 1°, lados a ≤ 0,2°, cantos de 4 e 10 mm; sem falsos alarmes de forma. Um saco branco
+sobre a folha branca perde contraste nas zonas sem impressão: daí a profundidade de 3 mm
+no perfil `telemovel`.
 
 ## M5 Relevo (`modulos/m5_relevo/`, por fazer)
 

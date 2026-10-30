@@ -1,6 +1,6 @@
 """Contrato entre o Mestre e os Escravos: o que circula entre eles.
 
-    Captura    M1 (fonte)     → M1 (disparo)    uma imagem e a sua origem
+    Captura    M1 (fonte)     → M1 (disparo)    as imagens de um instante (uma por iluminação) e a origem
     Passagem   M1 Aquisição   → Mestre          as melhores imagens de um saco, da entrada à saída
     Saco       M2 Localização → Mestre → M3–M6  o saco encontrado e normalizado (só de leitura)
     Relatorio  cada módulo    → Mestre          o que o módulo concluiu
@@ -16,10 +16,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 import math
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import ClassVar
 
+import cv2
 import numpy as np
 
 from nucleo.config import Config
@@ -51,16 +52,47 @@ class TipoDefeito(StrEnum):
 CLASSES_DATASET = ("ok", *(tipo.value for tipo in TipoDefeito), "varios")
 
 
-@dataclass
-class Captura:
-    """Uma imagem adquirida pelo M1 e a identificação da sua origem."""
+# Iluminações possíveis de uma Captura. Hoje só há "difusa"; um escravo que prefira
+# outra (p.ex. o M5 a "rasante") recebe a difusa enquanto a sua não existir.
+ILUMINACOES = ("difusa", "retro", "rasante")
 
-    imagem: np.ndarray  # BGR uint8 (altura × largura × 3)
+
+@dataclass(frozen=True, eq=False)
+class Captura:
+    """As imagens de um instante, adquiridas pelo M1, e a identificação da sua origem.
+
+    Imutável. As imagens são sempre BGR uint8, já sem distorção da lente (o M1 faz o
+    debayer e a correção: modulos/m1_aquisicao/preprocessamento.py). Por compatibilidade,
+    Captura(imagem, origem, instante) com uma só imagem guarda-a como "difusa".
+    """
+
+    imagens: dict[str, np.ndarray]  # por iluminação ("difusa", "retro", "rasante"); BGR uint8
     origem: str  # caminho do ficheiro, "linha.mp4#17", "spinnaker:<nº de série>#<FrameID>"
     instante: float  # momento da aquisição (time.time(), em s)
     # Estado do sensor de presença no momento da exposição (gravado pela câmara
     # em cada imagem); None se a fonte não tem sensor (pasta, vídeo, webcam).
     sensor: bool | None = None
+    px_por_mm: float | None = None  # escala já conhecida (câmara calibrada); None = desconhecida (telemóvel)
+    calibracao_id: str | None = None  # a calibração aplicada (Calibracao.id); None = nenhuma
+    fonte: str = ""  # "pasta", "video", "spinnaker"...
+    id_saco: int | None = None  # o nº da Passagem a que pertence (posto pela Passagem)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.imagens, np.ndarray):  # Captura(imagem, ...): uma só imagem, a difusa
+            object.__setattr__(self, "imagens", {"difusa": self.imagens})
+        desconhecidas = set(self.imagens) - set(ILUMINACOES)
+        if "difusa" not in self.imagens or desconhecidas:
+            raise ValueError(f"Captura: tem de ter a imagem 'difusa' e só iluminações de {ILUMINACOES} "
+                             f"(chegou {sorted(self.imagens)})")
+
+    @property
+    def imagem(self) -> np.ndarray:
+        """A imagem com luz difusa (a que o M2 usa)."""
+        return self.imagens["difusa"]
+
+    def imagem_para(self, iluminacao: str) -> np.ndarray:
+        """A imagem da iluminação pedida, ou a difusa se essa não existir."""
+        return self.imagens.get(iluminacao, self.imagens["difusa"])
 
 
 @dataclass
@@ -80,6 +112,11 @@ class Passagem:
     modo: str  # o modo de disparo que a criou: "foto", "sensor" ou "virtual"
     aviso: str = ""  # algo de anormal, p.ex. "passagem demasiado longa (sacos encostados?)"
     descartada: bool = False  # True se não pôde ser analisada (a análise está atrasada face à linha)
+
+    def __post_init__(self) -> None:
+        """Cada candidata fica com o id do saco (o nº desta passagem)."""
+        self.candidatas = [c if c.id_saco == self.numero else replace(c, id_saco=self.numero)
+                           for c in self.candidatas]
 
     @property
     def duracao_ms(self) -> float:
@@ -130,6 +167,12 @@ class Saco:
         """
         altura, largura = self.mascara.shape
         return (u - (largura - 1) / 2) / px_por_mm, (v - (altura - 1) / 2) / px_por_mm
+
+    def recortar(self, imagem: np.ndarray) -> np.ndarray:
+        """Outra imagem do mesmo instante (p.ex. outra iluminação) no referencial do recorte normalizado."""
+        altura, largura = self.mascara.shape
+        return cv2.warpAffine(imagem, self.matriz, (largura, altura), flags=cv2.INTER_LINEAR,
+                              borderMode=cv2.BORDER_CONSTANT, borderValue=0)
 
 
 class SemSaco(Exception):
@@ -208,6 +251,8 @@ class Resultado:
     captura: Captura | None = None  # a imagem da passagem que foi analisada
     passagem: Passagem | None = None  # a passagem a que pertence (None se veio de uma imagem solta)
     imagens_analisadas: int = 1  # quantas candidatas o Mestre teve de experimentar
+    of: str = ""  # a ordem de fabrico e o produto com que foi analisado ("" = sem OF)
+    produto: str = ""
 
     @property
     def ok(self) -> bool:
@@ -242,6 +287,8 @@ class Escravo(ABC):
 
     nome: ClassVar[str]  # nome da sua secção da configuração e prefixo dos seus defines, p.ex. "dimensoes"
     pergunta: ClassVar[str]  # a pergunta a que o módulo responde
+    # A iluminação que prefere (uma de ILUMINACOES); sem ela na Captura, usa a "difusa".
+    iluminacao: ClassVar[str] = "difusa"
 
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg

@@ -46,6 +46,8 @@ SeparadorDecimal = Literal[",", "."]
 ModoDisparo = Literal["foto", "sensor", "virtual"]
 EstrategiaSensor = Literal["janela", "rajada"]
 Direcao = Literal["horizontal", "vertical"]
+Referencia = Literal["nenhuma", "folha", "marcadores", "auto"]
+TipoSegmentador = Literal["delta_e", "aprendido", "sam3", "duplo"]
 FormatoPixel = Literal["BayerRG8", "BayerRG12p", "BGR8"]
 
 
@@ -138,12 +140,15 @@ class ConfigAquisicao:
     """M1 Aquisição: parâmetros da câmara Blackfly S."""
 
     exposicao_us: float = D.AQUISICAO_EXPOSICAO_US
+    calibracao: str = D.AQUISICAO_CALIBRACAO
     ganho_db: float = D.AQUISICAO_GANHO_DB
 
     def erros(self) -> list[str]:
         return _verificar([
             (self.exposicao_us > 0, "exposicao_us tem de ser > 0"),
             (self.ganho_db >= 0, "ganho_db tem de ser ≥ 0"),
+            (self.calibracao == "" or self.calibracao.lower().endswith(".npz"),
+             "calibracao tem de ser um ficheiro .npz (ou vazia)"),
         ])
 
 
@@ -205,6 +210,18 @@ class ConfigDisparo:
 class ConfigLocalizacao:
     """M2 Localização: separar o saco do fundo, medi-lo e normalizá-lo."""
 
+    referencia: Referencia = D.LOCALIZACAO_REFERENCIA
+    folha_largura_mm: float = D.LOCALIZACAO_FOLHA_LARGURA_MM
+    folha_altura_mm: float = D.LOCALIZACAO_FOLHA_ALTURA_MM
+    marcadores_lado_mm: float = D.LOCALIZACAO_MARCADORES_LADO_MM
+    referencia_margem_mm: float = D.LOCALIZACAO_REFERENCIA_MARGEM_MM
+    segmentador: TipoSegmentador = D.LOCALIZACAO_SEGMENTADOR
+    aprendido_modelo: str = D.LOCALIZACAO_APRENDIDO_MODELO
+    aprendido_score_min: float = D.LOCALIZACAO_APRENDIDO_SCORE_MIN
+    sam3_prompt: str = D.LOCALIZACAO_SAM3_PROMPT
+    sam3_score_min: float = D.LOCALIZACAO_SAM3_SCORE_MIN
+    sam3_fecho_mm: float = D.LOCALIZACAO_SAM3_FECHO_MM
+    duplo_iou_min: float = D.LOCALIZACAO_DUPLO_IOU_MIN
     resolucao_px_por_mm: float = D.LOCALIZACAO_RESOLUCAO_PX_POR_MM
     fundo_referencia: str = D.LOCALIZACAO_FUNDO_REFERENCIA
     faixa_fundo_mm: float = D.LOCALIZACAO_FAIXA_FUNDO_MM
@@ -240,6 +257,18 @@ class ConfigLocalizacao:
             (self.folga_mm >= 0, "folga_mm tem de ser ≥ 0"),
             (self.margem_borda_mm >= 0, "margem_borda_mm tem de ser ≥ 0"),
             (self.margem_extremidades_mm >= 0, "margem_extremidades_mm tem de ser ≥ 0"),
+            (self.folha_largura_mm > 0 and self.folha_altura_mm > 0, "folha_largura_mm e folha_altura_mm têm de ser > 0"),
+            (0 <= 2 * self.referencia_margem_mm < min(self.folha_largura_mm, self.folha_altura_mm),
+             "referencia_margem_mm tem de ser ≥ 0 e caber na folha"),
+            (self.marcadores_lado_mm > 0, "marcadores_lado_mm tem de ser > 0"),
+            _opcao(self, "referencia", Referencia),
+            _opcao(self, "segmentador", TipoSegmentador),
+            (bool(self.aprendido_modelo.strip()), "aprendido_modelo não pode estar vazio"),
+            (0 <= self.aprendido_score_min <= 1, "aprendido_score_min tem de estar entre 0 e 1"),
+            (bool(self.sam3_prompt.strip()), "sam3_prompt não pode estar vazio"),
+            (0 <= self.sam3_score_min <= 1, "sam3_score_min tem de estar entre 0 e 1"),
+            (self.sam3_fecho_mm >= 0, "sam3_fecho_mm tem de ser ≥ 0 (0 = sem fecho)"),
+            (0 < self.duplo_iou_min <= 1, "duplo_iou_min tem de estar entre 0 (exclusive) e 1"),
         ])
 
 
@@ -252,8 +281,13 @@ class ConfigDimensoes:
     largura_nominal_mm: float = D.DIMENSOES_LARGURA_NOMINAL_MM
     tolerancia_comprimento_mm: float = D.DIMENSOES_TOLERANCIA_COMPRIMENTO_MM
     tolerancia_largura_mm: float = D.DIMENSOES_TOLERANCIA_LARGURA_MM
+    forma_raio_canto_mm: float = D.DIMENSOES_FORMA_RAIO_CANTO_MM
+    forma_raio_canto_outra_ponta_mm: float = D.DIMENSOES_FORMA_RAIO_CANTO_OUTRA_PONTA_MM
     forma_folga_mm: float = D.DIMENSOES_FORMA_FOLGA_MM
     forma_area_min_mm2: float = D.DIMENSOES_FORMA_AREA_MIN_MM2
+    forma_profundidade_min_mm: float = D.DIMENSOES_FORMA_PROFUNDIDADE_MIN_MM
+    esquadria_max_graus: float = D.DIMENSOES_ESQUADRIA_MAX_GRAUS
+    paralelismo_max_graus: float = D.DIMENSOES_PARALELISMO_MAX_GRAUS
 
     def erros(self) -> list[str]:
         return _verificar([
@@ -261,8 +295,15 @@ class ConfigDimensoes:
             (self.largura_nominal_mm > 0, "largura_nominal_mm tem de ser > 0"),
             (self.tolerancia_comprimento_mm >= 0, "tolerancia_comprimento_mm tem de ser ≥ 0"),
             (self.tolerancia_largura_mm >= 0, "tolerancia_largura_mm tem de ser ≥ 0"),
+            (self.forma_raio_canto_mm >= 0, "forma_raio_canto_mm tem de ser ≥ 0"),
+            (self.forma_raio_canto_outra_ponta_mm >= 0 or self.forma_raio_canto_outra_ponta_mm == -1,
+             "forma_raio_canto_outra_ponta_mm tem de ser ≥ 0, ou -1 (igual)"),
             (self.forma_folga_mm >= 0, "forma_folga_mm tem de ser ≥ 0"),
             (self.forma_area_min_mm2 > 0, "forma_area_min_mm2 tem de ser > 0"),
+            (self.forma_profundidade_min_mm > self.forma_folga_mm,
+             "forma_profundidade_min_mm tem de ser > forma_folga_mm"),
+            (self.esquadria_max_graus > 0, "esquadria_max_graus tem de ser > 0"),
+            (self.paralelismo_max_graus > 0, "paralelismo_max_graus tem de ser > 0"),
         ])
 
 
@@ -359,6 +400,11 @@ class ConfigSaida:
     guardar_imagens: GuardarImagens = D.SAIDA_GUARDAR_IMAGENS
     formato_imagem: FormatoImagem = D.SAIDA_FORMATO_IMAGEM
     separador_decimal: SeparadorDecimal = D.SAIDA_SEPARADOR_DECIMAL
+    base_dados: str = D.SAIDA_BASE_DADOS
+    dashboard_endereco: str = D.SAIDA_DASHBOARD_ENDERECO
+    dashboard_porta: int = D.SAIDA_DASHBOARD_PORTA
+    dashboard_intervalo_ms: int = D.SAIDA_DASHBOARD_INTERVALO_MS
+    dashboard_limpar: bool = D.SAIDA_DASHBOARD_LIMPAR
     depurar: GuardarImagens = D.SAIDA_DEPURAR
     painel_colunas: int = D.SAIDA_PAINEL_COLUNAS
     painel_largura_etapa_px: int = D.SAIDA_PAINEL_LARGURA_ETAPA_PX
@@ -369,6 +415,9 @@ class ConfigSaida:
             _opcao(self, "formato_imagem", FormatoImagem),
             _opcao(self, "separador_decimal", SeparadorDecimal),
             _opcao(self, "depurar", GuardarImagens),
+            (bool(self.dashboard_endereco.strip()), "dashboard_endereco não pode estar vazio"),
+            (1 <= self.dashboard_porta <= 65535, "dashboard_porta tem de estar entre 1 e 65535"),
+            (self.dashboard_intervalo_ms >= 100, "dashboard_intervalo_ms tem de ser ≥ 100"),
             (self.painel_colunas >= 1, "painel_colunas tem de ser ≥ 1"),
             (self.painel_largura_etapa_px >= 160, "painel_largura_etapa_px tem de ser ≥ 160"),
         ])
@@ -392,8 +441,13 @@ AFINACAO: dict[str, list[tuple[str, float, float, float]]] = {
     "dimensoes": [
         ("tolerancia_comprimento_mm", 0, 20, 0.5),
         ("tolerancia_largura_mm", 0, 20, 0.5),
+        ("forma_raio_canto_mm", 0, 30, 0.5),
+        ("forma_raio_canto_outra_ponta_mm", -1, 30, 0.5),
         ("forma_folga_mm", 0, 5, 0.5),
         ("forma_area_min_mm2", 5, 200, 5),
+        ("forma_profundidade_min_mm", 0.5, 20, 0.5),
+        ("esquadria_max_graus", 0.5, 15, 0.5),
+        ("paralelismo_max_graus", 0.5, 15, 0.5),
     ],
     "cor": [
         ("delta_e_max", 0.5, 30, 0.5),

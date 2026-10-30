@@ -17,10 +17,12 @@ from nucleo import config
 from nucleo import defines as D
 from nucleo.config import RAIZ, Config, carregar_configuracao, nome_define
 from nucleo.contrato import Defeito, Escravo, Estado, Relatorio, Saco, TipoDefeito
-from testes.apoio import MONTAGEM, com_acentos, config_teste
+from nucleo.imagens import guardar_imagem
+from testes.apoio import MONTAGEM, alfa_retangulo, cena_saco, com_acentos, config_teste
 
 PERFIS = sorted((RAIZ / "configuracoes").glob("*.json"))
-MONTAGENS = sorted(p for p in (RAIZ / "dataset").iterdir() if p.is_dir())
+MONTAGENS = sorted(p for p in (RAIZ / "dataset").iterdir()  # sem as pastas das ferramentas
+                   if p.is_dir() and p.name not in ("segmentacao", "teste", "revisao"))
 
 
 def _ficheiros_do_projeto():
@@ -346,3 +348,158 @@ def test_escravos_reais_m3_decide_enquanto_m4_m6_por_implementar(saco_falso):
     assert all(estados[k] is Estado.POR_IMPLEMENTAR for k in ("cor", "relevo", "manchas"))
     assert r.estado is estados["dimensoes"]
     assert "m5_relevo/preprocessamento.py" in r.relatorio("relevo").mensagem
+
+
+def test_anotar_sem_janela(tmp_path):
+    """A proposta do anotador apanha o saco num fundo com textura e guarda máscara e polígono."""
+    from ferramentas import anotar
+    rng = np.random.default_rng(2)
+    img, (cx, cy) = cena_saco(rng, comprimento=150, largura=55, textura=True)
+    verdade = alfa_retangulo(*img.shape[:2], cx, cy, 150 * 5.0, 55 * 5.0, 23.0) > 0.5
+    saco = anotar.mascara(anotar.proposta(img))
+    assert (saco & verdade).sum() / (saco | verdade).sum() > 0.95
+    assert anotar.mascara(anotar.com_retangulo(img, 0, 0, 10, 10)).sum() < verdade.sum() / 10
+
+    foto = tmp_path / "fotos" / "sub" / "saco.png"
+    guardar_imagem(foto, img)
+    anotar.guardar(foto, "sub__saco", tmp_path / "seg", saco)
+    linha = (tmp_path / "seg" / "etiquetas" / "sub__saco.txt").read_text(encoding="utf-8").split()
+    assert linha[0] == "0" and len(linha) % 2 == 1 and all(0 <= float(v) <= 1 for v in linha[1:])
+    assert (tmp_path / "seg" / "imagens" / "sub__saco.png").exists()
+    assert anotar.fotos(tmp_path / "fotos", tmp_path / "seg") == [], "as já anotadas são saltadas"
+
+
+def test_anotar_aprende_com_as_fotos_guardadas(tmp_path):
+    """O modelo treinado numa foto anotada dá a proposta noutra; fica guardado e é recarregado."""
+    from ferramentas import anotar
+    rng = np.random.default_rng(4)
+    fotos = [cena_saco(rng, comprimento=150, largura=55, textura=True, angulo=a) for a in (23.0, -40.0)]
+    verdades = [alfa_retangulo(*img.shape[:2], cx, cy, 750, 275, a) > 0.5
+                for (img, (cx, cy)), a in zip(fotos, (23.0, -40.0))]
+    modelo = anotar.Modelo()
+    assert not modelo.treinado
+    modelo.aprender(fotos[0][0], verdades[0])
+    modelo.guardar(tmp_path)
+    modelo = anotar.Modelo.carregar(tmp_path)
+    assert modelo.treinado and modelo.fotos == 1
+    assert modelo.probabilidade(fotos[1][0])[verdades[1]].mean() > 0.9
+    saco = anotar.mascara(anotar.proposta(fotos[1][0], modelo))
+    assert (saco & verdades[1]).sum() / (saco | verdades[1]).sum() > 0.95
+
+
+def test_anotar_pontos_e_zoom():
+    """Pontos clicados (com zoom) fecham um polígono que é a máscara, à resolução da foto."""
+    import cv2
+    from ferramentas import anotar
+    rng = np.random.default_rng(6)
+    img, (cx, cy) = cena_saco(rng, comprimento=150, largura=55, textura=True, tamanho=(2000, 2500), ppm=10.0)
+    an = anotar.Anotacao(img)
+    an.ampliar(400, 300, 2.0)
+    assert an.zoom == 2.0 and np.allclose(an._para_ecra(an._para_original(400, 300)), (400, 300))
+    an.modo = 3
+    cantos = cv2.boxPoints(((cx, cy), (1500, 550), 23.0))
+    an.zoom, an.origem = 1.0, np.zeros(2)
+    for p in cantos:
+        an.rato(cv2.EVENT_LBUTTONDOWN, *an._para_ecra(p), 0)
+    an.rato(cv2.EVENT_LBUTTONDOWN, *an._para_ecra(cantos[0]), 0)  # clique no 1.º ponto: fecha
+    assert an.poligono is not None and not an.pontos
+    saco, verdade = an.mascara_final(), alfa_retangulo(*img.shape[:2], cx, cy, 1500, 550, 23.0) > 0.5
+    assert saco.shape == img.shape[:2] and (saco & verdade).sum() / (saco | verdade).sum() > 0.99
+    assert anotar._roda(120 << 16) > 0 > anotar._roda((-(120 << 16)) & 0xFFFFFFFF)
+
+
+def test_anotar_metadados_coco_e_edicao(tmp_path):
+    """Cada foto guardada fica nos metadados e no COCO; o contorno vira pontos que se arrastam."""
+    import cv2
+    from ferramentas import anotar
+    rng = np.random.default_rng(8)
+    img, (cx, cy) = cena_saco(rng, comprimento=150, largura=55, textura=True)
+    verdade = alfa_retangulo(*img.shape[:2], cx, cy, 750, 275, 23.0) > 0.5
+    foto = tmp_path / "fotos" / "saco_A" / "f1.png"
+    guardar_imagem(foto, img)
+    saida = tmp_path / "seg"
+    anotar.guardar(foto, "saco_A__f1", saida, verdade, {"saco": "saco_A", "tipo_saco": "PreVital", "fundo": "cinza"})
+    anotar.guardar(foto, "saco_A__f1", saida, verdade, {"saco": "saco_A", "tipo_saco": "PreVital", "fundo": "cinza"})
+    assert anotar.ler_metadados(saida) == {"saco_A__f1": {"saco": "saco_A", "tipo_saco": "PreVital", "fundo": "cinza"}}
+    coco = json.loads((saida / "anotacoes_coco.json").read_text(encoding="utf-8"))
+    assert len(coco["images"]) == 1 and len(coco["annotations"]) == 1, "guardar outra vez substitui"
+    (anotacao,) = coco["annotations"]
+    assert abs(anotacao["area"] - verdade.sum()) < 1 and len(anotacao["segmentation"][0]) >= 8
+    assert coco["images"][0]["fundo"] == "cinza" and coco["images"][0]["file_name"] == "imagens/saco_A__f1.png"
+    assert anotar.exportar_coco(saida)["annotations"][0]["bbox"] == anotacao["bbox"]
+
+    an = anotar.Anotacao(img)
+    an.usar_mascara(verdade)
+    assert an.mascara_final() is verdade, "a máscara do SAM fica à resolução total"
+    an.editar()
+    assert an.modo == 3 and an.poligono is not None and an.exata is None
+    vertice = an.poligono[0].copy()
+    an.rato(cv2.EVENT_LBUTTONDOWN, *an._para_ecra(vertice), 0)
+    an.rato(cv2.EVENT_MOUSEMOVE, *an._para_ecra(vertice + (40, 0)), 0)
+    an.rato(cv2.EVENT_LBUTTONUP, *an._para_ecra(vertice + (40, 0)), 0)
+    assert np.allclose(an.poligono[0], vertice + (40, 0), atol=1.5), "o vértice foi arrastado"
+
+
+def test_dividir_sem_repetir_sacos():
+    from ferramentas.dividir_dataset import dividir
+    fotos = {f"{s}_{k}": {"saco": s, "tipo_saco": "B" if s == "s9" else "A", "fundo": "inox" if k == 0 else "preto"}
+             for s in (f"s{i}" for i in range(10)) for k in range(3)}
+    divisao = dividir(fotos, semente=1)
+    for saco in {m["saco"] for m in fotos.values()}:
+        assert len({divisao[n] for n, m in fotos.items() if m["saco"] == saco}) == 1, saco
+    assert {c: list(divisao.values()).count(c) for c in ("treino", "validacao", "teste")} == \
+        {"treino": 21, "validacao": 6, "teste": 3}
+    fora = dividir(fotos, fora_fundo="inox")
+    assert {n for n, c in fora.items() if c == "teste"} == {n for n, m in fotos.items() if m["fundo"] == "inox"}
+    assert set(fora.values()) == {"teste", "fora"}, "todos os sacos têm uma foto no inox: o resto fica de fora"
+    por_tipo = dividir(fotos, fora_tipo="B")
+    assert {n for n, c in por_tipo.items() if c == "teste"} == {"s9_0", "s9_1", "s9_2"}
+    assert "fora" not in por_tipo.values()
+
+
+def test_validar_com_medidas_reais(tmp_path):
+    from ferramentas import validar
+    rng = np.random.default_rng(3)
+    pasta = tmp_path / "teste"
+    linhas = ["ficheiro;saco;tipo_saco;fundo;comprimento_mm;largura_mm"]
+    for nome, saco, angulo, (c, l) in (("a1.png", "A", 23.0, (150, 55)), ("a2.png", "A", -10.0, (150, 55)),
+                                      ("b1.png", "B", 40.0, (120, 50))):
+        img, (cx, cy) = cena_saco(rng, comprimento=c, largura=l, angulo=angulo)
+        guardar_imagem(pasta / "imagens" / nome, img)
+        linhas.append(f"{nome};{saco};{'grande' if saco == 'A' else 'pequeno'};cinza;{c};{l}")
+        if nome == "a1.png":
+            mascara = alfa_retangulo(*img.shape[:2], cx, cy, c * 5.0, l * 5.0, angulo) > 0.5
+            guardar_imagem(pasta / "mascaras" / "a1.png", mascara.astype(np.uint8) * 255)
+    (pasta / "ground_truth.csv").write_text("\n".join(linhas) + "\n", encoding="utf-8")
+    (tmp_path / "perfil.json").write_text(json.dumps(MONTAGEM | {"geral": {"px_por_mm": 5.0}}), encoding="utf-8")
+
+    saida = tmp_path / "res" / "validacao.csv"
+    assert validar.main(["--pasta", str(pasta), "--config", str(tmp_path / "perfil.json"), "--saida", str(saida)]) == 0
+    medicoes = validar.medir(pasta, carregar_configuracao(tmp_path / "perfil.json"), "delta_e")
+    assert all(m.estado == "OK" and abs(m.erro_comprimento_mm) < 0.5 and abs(m.erro_largura_mm) < 0.5
+               for m in medicoes), medicoes
+    assert medicoes[0].iou > 0.97 and medicoes[1].iou is None
+    (geral,) = validar.resumir(medicoes)
+    assert geral["fotos"] == 3 and geral["taxa_erro_ou_sem_saco"] == 0 and geral["comprimento_erro_max_mm"] < 0.5
+    assert len(validar.resumir(medicoes, "tipo_saco")) == 2
+    (repet,) = validar.repetibilidade(medicoes)
+    assert repet["saco"] == "A" and repet["comprimento_dp_mm"] < 0.3
+    assert saida.exists() and saida.with_name("validacao_resumo.csv").exists()
+
+
+def test_cada_define_interno_e_usado_no_codigo():
+    """Os defines internos (M1_, M2_, ...) existem para tirar números fixos do código: cada um tem de ser lido."""
+    codigo = "\n".join(f.read_text(encoding="utf-8") for pasta in ("modulos", "nucleo", "ferramentas")
+                       for f in (RAIZ / pasta).rglob("*.py") if f.name != "defines.py")
+    codigo += (RAIZ / "mestre.py").read_text(encoding="utf-8")
+    internos = [n for n in dir(D) if re.match(r"M\d_", n)]
+    assert internos and not [n for n in internos if n not in codigo], "defines internos que ninguém usa"
+
+
+def test_escravos_declaram_a_iluminacao_e_o_saco_recorta_outras():
+    from nucleo.contrato import ILUMINACOES
+    assert all(e.iluminacao in ILUMINACOES for e in m.ESCRAVOS)
+    rng = np.random.default_rng(1)
+    img, _ = cena_saco(rng, comprimento=150, largura=55)
+    saco = m.Localizador(config_teste(geral={"px_por_mm": 5.0})).localizar(img)
+    assert np.array_equal(saco.recortar(img), saco.imagem), "a mesma transformação do recorte"

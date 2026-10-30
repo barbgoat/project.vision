@@ -89,6 +89,7 @@ LENTE_DISTANCIA_MM: Final = 300.0  # [MEDIR] da frente da lente ao tapete (0,3 m
 # exposição ≤ 0,5 / (500 × 8) s = 125 µs, o que pede muita luz (LED forte ou
 # estroboscópica). Tem de estar entre 11 µs e 1/FPS.
 AQUISICAO_EXPOSICAO_US: Final = 120.0  # [MEDIR]
+AQUISICAO_CALIBRACAO: Final = ""  # ficheiro .npz da calibração da montagem (lente + plano do tapete); "" = nenhuma
 AQUISICAO_GANHO_DB: Final = 0.0  # ganho da câmara em dB; subir só se faltar luz (aumenta o ruído)
 
 # =============================================================================
@@ -142,6 +143,7 @@ DISPARO_VIRTUAL_OCUPACAO_ENTRADA: Final = 0.03  # o saco ENTROU quando ocupa mai
 DISPARO_VIRTUAL_OCUPACAO_SAIDA: Final = 0.01  # o saco SAIU quando ocupa menos do que esta (histerese)
 DISPARO_VIRTUAL_IMAGENS_FUNDO: Final = 5  # imagens iniciais (tapete vazio) usadas para aprender o fundo
 DISPARO_VIRTUAL_APRENDIZAGEM: Final = 0.05  # quanto o fundo se adapta a cada imagem sem saco (luz que muda)
+M1_OBJETO_AREA_MIN: Final = 0.2  # na barreira virtual, só contam objetos com esta fração da área do maior (o resto é ruído)
 
 # --- Validação das passagens e desempenho -------------------------------------------
 DISPARO_IMAGENS_MIN: Final = 1  # passagens com menos imagens são ignoradas (subir para 2–3 contra disparos falsos)
@@ -154,6 +156,28 @@ DISPARO_FILA_MAX: Final = 4  # passagens à espera de análise; acima disto a an
 # =============================================================================
 # M2 LOCALIZAÇÃO (encontrar o saco, medir, endireitar)
 # =============================================================================
+# Referência para fotos à mão (câmara não fixa): a foto é endireitada (sem perspetiva) e fica a
+# GERAL_PX_POR_MM exatos. "folha": o saco pousado numa folha de tamanho conhecido, inteira na foto;
+# "marcadores": 4 marcadores ArUco à volta do saco, em qualquer fundo (folha para imprimir:
+# python -m modulos.m2_localizacao.marcadores); "auto": os marcadores, se os houver, senão a folha.
+# Sem a referência na foto, o saco é localizado à mesma (região e medidas em px), mas fica ERRO.
+# "nenhuma": câmara fixa, com GERAL_PX_POR_MM calibrado.
+LOCALIZACAO_REFERENCIA: Final = "nenhuma"
+LOCALIZACAO_FOLHA_LARGURA_MM: Final = 210.0  # A4
+LOCALIZACAO_FOLHA_ALTURA_MM: Final = 297.0
+LOCALIZACAO_MARCADORES_LADO_MM: Final = 40.0  # lado de cada marcador impresso (medir com a régua)
+LOCALIZACAO_REFERENCIA_MARGEM_MM: Final = 3.0  # faixa junto à folha / aos marcadores que é cortada
+# Segmentador (o que separa o saco do fundo): "delta_e" (diferença de cor ao fundo, CPU, rápido),
+# "aprendido" (as cores e texturas aprendidas com as fotos anotadas em ferramentas/anotar.py:
+# fundos variados, CPU), "sam3" (SAM 3 da Meta por texto: qualquer fundo, precisa de GPU e dos
+# pesos; ver o README) ou "duplo" (ΔE e SAM 3; se discordarem, ERRO e a foto vai para dataset/revisao/).
+LOCALIZACAO_SEGMENTADOR: Final = "delta_e"
+LOCALIZACAO_APRENDIDO_MODELO: Final = "dataset/segmentacao/modelo.npz"  # criado e atualizado pelo anotar.py
+LOCALIZACAO_APRENDIDO_SCORE_MIN: Final = 0.15  # P(saco) dentro do saco menos à volta (folha branca ~0,25, fundo preto ~0,5); abaixo: ERRO "incerta"
+LOCALIZACAO_SAM3_PROMPT: Final = "plastic bag"  # o que o SAM 3 procura (texto, em inglês)
+LOCALIZACAO_SAM3_SCORE_MIN: Final = 0.5  # confiança mínima (0–1); abaixo: ERRO "segmentação incerta"
+LOCALIZACAO_SAM3_FECHO_MM: Final = 0.0  # fecho morfológico com o SAM 3 (0 = nenhum: não tapa entalhes)
+LOCALIZACAO_DUPLO_IOU_MIN: Final = 0.95  # "duplo": coincidência mínima (IoU) das duas máscaras
 LOCALIZACAO_RESOLUCAO_PX_POR_MM: Final = 4.0  # resolução da segmentação (a imagem é reduzida para isto)
 LOCALIZACAO_FUNDO_REFERENCIA: Final = ""  # foto do fundo vazio (recomendado); "" = estimar pela borda da imagem
 LOCALIZACAO_FAIXA_FUNDO_MM: Final = 5.0  # faixa junto à borda da imagem usada para estimar o fundo
@@ -176,7 +200,41 @@ LOCALIZACAO_MARGEM_BORDA_MM: Final = 3.0  # faixa junto ao contorno do saco que 
 LOCALIZACAO_MARGEM_EXTREMIDADES_MM: Final = 5.0  # [MEDIR] faixa extra nas pontas do saco (selagens)
 
 # --- M2: afinação interna ----------------------------------------------------------
+M2_FOLHA_DETECAO_PX: Final = 600  # a folha procura-se numa versão reduzida com este lado maior (px)
+M2_FOLHA_TEXTURA_MAX: Final = 4.0  # desvio-padrão local (níveis de cinzento) abaixo do qual é papel liso
+M2_FOLHA_AREA_MIN: Final = 0.1  # a folha ocupa pelo menos esta fração da imagem
+M2_FOLHA_PROCURA: Final = 6  # na resolução total, procurar a aresta a ± isto px da versão reduzida
+M2_FOLHA_PONTOS_ARESTA: Final = 200  # pontos por aresta no ajuste da reta
+M2_FOLHA_TEXTURA_JANELA_PX: Final = 7  # janela (px da versão reduzida) do desvio-padrão local que mede a textura
+M2_FOLHA_DESFOQUE_PX: Final = 5  # desfoque (px da versão reduzida) antes do limiar de Otsu do claro
+M2_FOLHA_ABERTURA_PX: Final = 9  # abertura (px da versão reduzida) que corta as pontes do papel para os reflexos
+M2_FOLHA_APROXIMACAO: Final = 0.02  # tolerância do polígono da folha (fração do perímetro)
+M2_FOLHA_SUAVIZACAO_PX: Final = 1.5  # desfoque (px da imagem original) antes do gradiente das arestas
+M2_FOLHA_ANGULO_MIN_GRAUS: Final = 20.0  # arestas vizinhas mais paralelas do que isto: não há canto
+M2_MARCADORES_ITERACOES: Final = 30  # máximo de iterações do ajuste conjunto (Levenberg-Marquardt)
+M2_MARCADORES_ERRO_MAX_PX: Final = 3.0  # erro médio dos cantos acima disto: marcadores fora do plano
+M2_MARCADORES_ESPACO_MIN_MM: Final = 20.0  # o espaço entre os marcadores tem de ter pelo menos isto
+M2_APRENDIDO_LADO_PX: Final = 800  # o modelo aprendido aprende e trabalha a esta resolução (lado maior)
+M2_APRENDIDO_NIVEIS_COR: Final = 16  # níveis por canal de CIELAB no modelo (16³ cores)
+M2_APRENDIDO_NIVEIS_TEXTURA: Final = 4  # níveis do desvio-padrão local da luminosidade
+M2_APRENDIDO_TEXTURA_JANELA_PX: Final = 7  # janela (px da versão de 800 px) do desvio-padrão que mede a textura
+M2_APRENDIDO_COR_SUAVIZACAO_PX: Final = 1.0  # desfoque (px da versão de 800 px) antes de ler a cor
+M2_APRENDIDO_TEXTURA_MAX: Final = 24.0  # desvio-padrão (níveis de cinzento) a partir do qual é o último nível
+M2_APRENDIDO_PROBABILIDADE_MIN: Final = 0.6  # P(saco) para ser saco: > 0,5 (o ambíguo e o nunca visto ficam de fora)
+M2_APRENDIDO_SUAVIZACAO_PX: Final = 2.0  # desfoque do mapa de P(saco) antes do limiar
+M2_APRENDIDO_FAIXA_INCERTA: Final = 0.02  # zona junto à aresta (fração da imagem) que o GrabCut decide
+M2_APRENDIDO_GRABCUT_LADO_PX: Final = 400  # o GrabCut corre numa versão com este lado maior (é o passo lento)
+M2_APRENDIDO_GRABCUT_ITERACOES: Final = 3
+M2_REVISAO: Final = "dataset/revisao"  # "duplo": onde ficam as fotos em que os segmentadores discordam
+M2_SEM_ESCALA_CAMPO_MM: Final = 300.0  # sem referência, a foto conta como tendo este lado (só p/ os tamanhos do M2)
+M2_SEM_ESCALA_COMPRIMENTO_MIN: Final = 0.05  # sem referência, limites do saco em frações do campo: comprimento ≥ isto
+M2_SEM_ESCALA_LARGURA_MIN: Final = 0.02  # ... largura ≥ isto
+M2_SEM_ESCALA_MAX: Final = 2.0  # ... comprimento e largura ≤ isto
+M2_AFINAR_PROCURA: Final = 3  # a aresta subpíxel procura-se a ± isto px (da imagem reduzida) do contorno
+M2_AFINAR_VIZINHOS: Final = 4  # pontos de cada lado usados para a direção da normal ao contorno
+M2_AFINAR_GRADIENTE_MIN: Final = 2.0  # transição mais fraca do que isto (ΔE/px) não move o ponto
 M2_SUAVIZACAO_MM: Final = 0.25  # desfoque antes de comparar com o fundo (tira o ruído do sensor)
+M2_SUAVIZACAO_MIN_PX: Final = 0.3  # esse desfoque nunca é menor do que isto (px)
 M2_GRADIENTE_FUNDO_MIN: Final = 0.5  # piso do "gradiente normal do fundo" (ΔE/px), para fundos muito lisos
 M2_RETANGULARIDADE_SO_COR: Final = 0.8  # abaixo disto a região de cor é um pedaço de saco → tentar com arestas
 M2_PARTE_CENTRAL_LADOS: Final = 0.7  # fração central de cada lado usada para o medir (sem os cantos)
@@ -198,8 +256,20 @@ DIMENSOES_TOLERANCIA_LARGURA_MM: Final = 3.0  # [MEDIR]
 # Forma: a silhueta do saco é comparada com o retângulo ideal do tamanho medido.
 # Zonas onde FALTA material (canto dobrado, corte torto, rasgão na borda) ou SOBRA
 # (aba, dobra para fora) são defeitos, cada um com a sua posição.
-DIMENSOES_FORMA_FOLGA_MM: Final = 1.5  # desvios junto às arestas até isto são ignorados (cantos arredondados, soldaduras)
+DIMENSOES_FORMA_RAIO_CANTO_MM: Final = 0.0  # [MEDIR] raio dos cantos do saco bom; 0 = cantos vivos
+DIMENSOES_FORMA_RAIO_CANTO_OUTRA_PONTA_MM: Final = -1.0  # [MEDIR] se a outra ponta for diferente; -1 = igual
+DIMENSOES_FORMA_FOLGA_MM: Final = 1.5  # desvios junto às arestas até isto são ignorados (soldaduras, píxeis)
 DIMENSOES_FORMA_AREA_MIN_MM2: Final = 25.0  # área mínima de uma falta ou sobra para ser defeito
+DIMENSOES_FORMA_PROFUNDIDADE_MIN_MM: Final = 2.5  # ...ou profundidade mínima (entalhes estreitos e fundos)
+# Geometria: uma reta a cada lado. Ângulos não dependem da escala: apanham cortes tortos pequenos.
+DIMENSOES_ESQUADRIA_MAX_GRAUS: Final = 2.0  # [MEDIR] desvio máximo de cada ponta à perpendicular do eixo
+DIMENSOES_PARALELISMO_MAX_GRAUS: Final = 2.0  # [MEDIR] ângulo máximo entre os lados compridos
+
+# --- M3: afinação interna ----------------------------------------------------------
+M3_GEOMETRIA_PARTE_CENTRAL: Final = 0.5  # fração central de cada lado usada na reta (sem os cantos arredondados)
+M3_GEOMETRIA_DESVIO_MM: Final = 0.5  # pontos mais longe da reta do que isto (canto dobrado, rasgão) não contam
+M3_GEOMETRIA_ITERACOES: Final = 2  # voltas de reajuste sem os pontos afastados
+M3_GEOMETRIA_PONTOS_MIN: Final = 10  # pontos mínimos num lado para lhe ajustar uma reta
 
 # =============================================================================
 # M4 COR (o saco tem a cor certa?)
@@ -247,6 +317,14 @@ MANCHAS_ALONGAMENTO_MAX: Final = 4.0  # acima disto é uma linha (assunto do M5)
 SAIDA_GUARDAR_IMAGENS: Final = "nok"  # "nenhuma" | "nok" (todas as que não são OK) | "todas"
 SAIDA_FORMATO_IMAGEM: Final = ".jpg"  # ".jpg" | ".png"
 SAIDA_SEPARADOR_DECIMAL: Final = ","  # "," para o Excel em português; "." para Python/pandas
+# Base de dados dos produtos, das ordens de fabrico (OF) e das inspeções (nucleo/especificacoes.py):
+# "" = especificacoes.sqlite na pasta dos resultados; senão o caminho do ficheiro (relativo à raiz).
+SAIDA_BASE_DADOS: Final = ""
+# Dashboard fora da BIapp (biapp_dashboard.py): um servidor envia as atualizações por SSE.
+SAIDA_DASHBOARD_ENDERECO: Final = "127.0.0.1"  # só este PC; "0.0.0.0" = toda a rede (sem login!)
+SAIDA_DASHBOARD_PORTA: Final = 8765
+SAIDA_DASHBOARD_INTERVALO_MS: Final = 1000  # de quanto em quanto tempo se vê se a base de dados mudou
+SAIDA_DASHBOARD_LIMPAR: Final = True  # botão "Limpar dados" no dashboard (apaga a base de dados!): só em testes
 # Depuração: para cada saco, uma pasta com a imagem de cada etapa de cada módulo,
 # um painel com tudo e o resultado em JSON (resultados/<data_hora>/depuracao/).
 # "nenhuma" | "nok" (só os sacos NOK, ERRO ou SEM_SACO) | "todas". Gasta tempo e

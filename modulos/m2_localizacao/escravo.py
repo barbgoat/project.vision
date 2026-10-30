@@ -2,8 +2,8 @@
 
 Liga as etapas pela ordem, um ficheiro cada:
 
-    fundo.py          1. modelo do fundo e diferença de cor ao fundo
-    segmentacao.py    2. limiar, arestas, limpeza, maior região, contorno
+    segmentadores/    1. separar o saco do fundo (ΔE, SAM 3 ou os dois)
+    segmentacao.py    2. contorno subpíxel (e o limiar, arestas e limpeza do ΔE)
     medicao.py        3. ângulo, comprimento e largura
     normalizacao.py   4. rodar, recortar, zona útil
 """
@@ -11,16 +11,15 @@ Liga as etapas pela ordem, um ficheiro cada:
 from __future__ import annotations
 
 import math
-from pathlib import Path
+from dataclasses import replace
 
 import cv2
 import numpy as np
 
-from modulos.m2_localizacao import fundo, medicao, normalizacao, segmentacao
+from modulos.m2_localizacao import folha, marcadores, medicao, normalizacao, segmentacao, segmentadores
 from nucleo import defines as D
-from nucleo.config import RAIZ, Config
+from nucleo.config import Config
 from nucleo.contrato import Saco, SemSaco
-from nucleo.imagens import ler_imagem
 
 
 class Localizador:
@@ -29,23 +28,54 @@ class Localizador:
     nome = "localizacao"
     pergunta = "Onde está o saco? Está completo?"
 
-    def __init__(self, cfg: Config) -> None:
-        """Prepara o M2; se houver fundo_referencia, lê-a já (erro claro logo no arranque)."""
+    def __init__(self, cfg: Config, segmentador: segmentadores.Segmentador | None = None) -> None:
+        """Prepara o M2 e o segmentador (com o ΔE e fundo_referencia, lê-a já: erro claro no arranque).
+
+        segmentador: para usar outro que não o de cfg.localizacao.segmentador (testes).
+        """
         self.cfg = cfg
         self.medidas: dict[str, float] = {}  # valores da última chamada (limiar usado, escala...)
         self.intermedios: dict[str, np.ndarray] = {}  # imagens da última chamada, se pedidas
-        self._referencia: np.ndarray | None = None
-        self._sigma_px = 1.0  # suavização em px da imagem reduzida (calculada em cada chamada)
-        self._referencia_lab: dict[tuple[int, int], np.ndarray] = {}  # por tamanho da imagem reduzida
+        self.segmentador = segmentador or segmentadores.criar(cfg)
 
-        caminho = cfg.localizacao.fundo_referencia
-        if caminho:
-            caminho_abs = Path(caminho) if Path(caminho).is_absolute() else RAIZ / caminho
-            if not caminho_abs.is_file():
-                raise FileNotFoundError(f"localizacao.fundo_referencia não encontrada: {caminho_abs}")
-            self._referencia = ler_imagem(caminho_abs)
-            if self._referencia is None:
-                raise ValueError(f"localizacao.fundo_referencia não é uma imagem válida: {caminho_abs}")
+    def retificar(self, img: np.ndarray) -> np.ndarray:
+        """Etapa 0, só com localizacao.referencia: a foto endireitada pela folha (folha.py) ou
+        pelos marcadores ArUco (marcadores.py); com "auto", os marcadores se houver algum, senão a folha.
+
+        O Mestre usa a imagem devolvida em vez da original. Levanta SemSaco se
+        a referência não aparecer inteira.
+        """
+        referencia = self.cfg.localizacao.referencia
+        if referencia == "folha":
+            return folha.retificar(img, self.cfg)
+        try:
+            return marcadores.retificar(img, self.cfg)
+        except marcadores.SemMarcadores:
+            if referencia == "marcadores":
+                raise
+        try:
+            return folha.retificar(img, self.cfg)
+        except SemSaco:
+            raise SemSaco("sem referência (nem marcadores nem folha na foto)") from None
+
+    def localizar_sem_escala(self, img: np.ndarray, guardar_intermedios: bool = False) -> tuple[Saco, float]:
+        """O saco numa foto sem referência: (Saco, px por "mm" provisório).
+
+        Sem a referência não há mm; a foto é tratada como tendo M2_SEM_ESCALA_CAMPO_MM de
+        lado maior, só para os tamanhos internos do M2 (fecho, margens), com limites de
+        tamanho largos. As medidas do Saco × o valor devolvido dão as medidas em px.
+        """
+        ppm = max(img.shape[:2]) / D.M2_SEM_ESCALA_CAMPO_MM
+        campo = D.M2_SEM_ESCALA_CAMPO_MM
+        loc = replace(self.cfg.localizacao, referencia="nenhuma",
+                      comprimento_min_mm=D.M2_SEM_ESCALA_COMPRIMENTO_MIN * campo,
+                      comprimento_max_mm=D.M2_SEM_ESCALA_MAX * campo,
+                      largura_min_mm=D.M2_SEM_ESCALA_LARGURA_MIN * campo, largura_max_mm=D.M2_SEM_ESCALA_MAX * campo)
+        provisorio = Localizador(replace(self.cfg, geral=replace(self.cfg.geral, px_por_mm=ppm), localizacao=loc))
+        try:
+            return provisorio.localizar(img, guardar_intermedios), ppm
+        finally:
+            self.medidas, self.intermedios = provisorio.medidas, provisorio.intermedios
 
     def localizar(self, img: np.ndarray, guardar_intermedios: bool = False) -> Saco:
         """Encontra o saco na imagem e normaliza a sua pose.
@@ -63,42 +93,29 @@ class Localizador:
         p = self.cfg.localizacao
         self.medidas, self.intermedios = {}, {}
 
-        # 1. Segmentação numa versão reduzida da imagem (rápido)
-        escala = min(1.0, p.resolucao_px_por_mm / self.cfg.geral.px_por_mm)
-        pequena = img if escala == 1.0 else cv2.resize(img, None, fx=escala, fy=escala, interpolation=cv2.INTER_AREA)
-        px_mm = self.cfg.geral.px_por_mm * pequena.shape[1] / img.shape[1]  # px/mm na imagem reduzida
-        self._sigma_px = D.M2_SUAVIZACAO_MM * px_mm
-        lab = fundo.lab(pequena, self._sigma_px)
-        faixa = fundo.faixa_da_borda(lab.shape[:2], max(2, round(p.faixa_fundo_mm * px_mm)))
-        modelo_fundo = self._fundo(lab, faixa, img.shape[:2])
-        diferenca = fundo.diferenca(lab, modelo_fundo, p.peso_luminosidade)
-
-        limiar = p.limiar_delta_e or max(segmentacao.otsu(diferenca), p.delta_e_min)
-        mascara = (diferenca > limiar).astype(np.uint8) * 255
-        fecho_px, abertura_px = p.fecho_mm * px_mm, p.abertura_mm * px_mm
-        regiao = segmentacao.maior_regiao(segmentacao.limpar(mascara, fecho_px, abertura_px))
-        # As arestas só entram se a cor não chegar (sacos transparentes): somá-las
-        # sempre "engorda" o contorno e estraga as medidas dos sacos opacos.
-        usou_arestas = False
-        if p.usar_arestas and not self._parece_saco(regiao, px_mm):
-            arestas = segmentacao.arestas(lab, faixa, p.arestas_fator).astype(np.uint8) * 255
-            com_arestas = segmentacao.maior_regiao(segmentacao.limpar(mascara | arestas, fecho_px, abertura_px))
-            if com_arestas is not None:
-                regiao, usou_arestas = com_arestas, True
-        self.medidas.update(limiar_delta_e=limiar, diferenca_max=float(diferenca.max()),
-                            usou_arestas=float(usou_arestas), escala=escala)
-        if guardar_intermedios:
-            self.intermedios.update(diferenca=diferenca, segmentacao=regiao if regiao is not None else mascara)
-        if regiao is None:
-            raise SemSaco(f"nada difere do fundo (diferença máxima ΔE {diferenca.max():.1f}, limiar {limiar:.1f})")
+        # 1. Segmentação (o backend de localizacao.segmentador: ΔE, SAM 3 ou os dois)
+        try:
+            seg = self.segmentador.segmentar(img, self.cfg.geral.px_por_mm, guardar_intermedios)
+        except SemSaco as erro:  # o ΔE junta o diagnóstico (limiar, mapa) ao motivo
+            self.medidas.update(getattr(erro, "medidas", {}))
+            self.intermedios.update(getattr(erro, "intermedios", {}))
+            raise
+        self.medidas.update(seg.medidas, score_segmentacao=seg.score, tempo_segmentacao_ms=seg.tempo_ms)
+        self.intermedios.update(seg.intermedios)
+        regiao = seg.mascara.astype(np.uint8) * 255
         if p.rejeitar_borda and segmentacao.toca_na_borda(regiao):
             raise SemSaco("o saco toca na borda da imagem (incompleto)")
 
         # 2. Contorno na resolução original
-        contorno = segmentacao.contorno_original(regiao, img.shape[:2])
+        # e cada ponto na aresta verdadeira (subpíxel), seja qual for o limiar
+        arestas, normais = segmentacao.afinar_contorno(segmentacao.contorno_original(regiao, img.shape[:2]),
+                                                       seg.mapa_aresta, img.shape[:2])
+        # Centros dos píxeis de borda (meio píxel por dentro da aresta): o que o fillPoly e o desenho esperam
+        borda = (arestas - 0.5 * normais).reshape(-1, 1, 2).astype(np.float32)
+        contorno = np.round(borda).astype(np.int32)
 
         # 3. Orientação e medidas
-        centro, angulo, comprimento_px, largura_px = medicao.pose(contorno)
+        centro, angulo, comprimento_px, largura_px = medicao.pose(arestas)
         ppm = self.cfg.geral.px_por_mm
         comprimento_mm, largura_mm = comprimento_px / ppm, largura_px / ppm
         if not (p.comprimento_min_mm <= comprimento_mm <= p.comprimento_max_mm
@@ -114,7 +131,7 @@ class Localizador:
         recorte = cv2.warpAffine(img, matriz, tamanho, flags=cv2.INTER_LINEAR,
                                  borderMode=cv2.BORDER_CONSTANT, borderValue=0)
         mascara_recorte = np.zeros((tamanho[1], tamanho[0]), np.uint8)
-        contorno_recorte = cv2.transform(contorno.astype(np.float32), matriz)
+        contorno_recorte = cv2.transform(borda, matriz)
         cv2.fillPoly(mascara_recorte, [np.round(contorno_recorte).astype(np.int32)], 255)
         mascara_util = normalizacao.zona_util(mascara_recorte, comprimento_px,
                                   p.margem_borda_mm * ppm, p.margem_extremidades_mm * ppm)
@@ -136,31 +153,3 @@ class Localizador:
             mascara=mascara_recorte,
             mascara_util=mascara_util,
         )
-
-    def _parece_saco(self, regiao: np.ndarray | None, px_mm: float) -> bool:
-        """A região tem dimensões de saco e forma quase retangular (não é um pedaço de saco)?"""
-        if regiao is None:
-            return False
-        p = self.cfg.localizacao
-        contornos, _ = cv2.findContours(regiao, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        (_, _), (lado1, lado2), _ = cv2.minAreaRect(contornos[0])
-        comprimento, largura = max(lado1, lado2) / px_mm, min(lado1, lado2) / px_mm
-        retangularidade = cv2.contourArea(contornos[0]) / max(lado1 * lado2, 1)
-        return (p.comprimento_min_mm <= comprimento <= p.comprimento_max_mm
-                and p.largura_min_mm <= largura <= p.largura_max_mm
-                and retangularidade >= D.M2_RETANGULARIDADE_SO_COR)
-
-    def _fundo(self, lab: np.ndarray, faixa: np.ndarray, forma_original: tuple[int, int]) -> np.ndarray:
-        """Cor esperada do fundo em cada píxel: a foto de referência ou o modelo da faixa da borda."""
-        if self._referencia is None:
-            return fundo.modelar_fundo(lab, faixa)
-        if self._referencia.shape[:2] != forma_original:
-            raise ValueError(
-                f"localizacao.fundo_referencia tem {self._referencia.shape[1]}x{self._referencia.shape[0]} px, "
-                f"mas a imagem tem {forma_original[1]}x{forma_original[0]} px: tem de ser tirada com a mesma câmara"
-            )
-        altura, largura = lab.shape[:2]
-        if (altura, largura) not in self._referencia_lab:
-            ref = cv2.resize(self._referencia, (largura, altura), interpolation=cv2.INTER_AREA)
-            self._referencia_lab[(altura, largura)] = fundo.lab(ref, self._sigma_px)
-        return self._referencia_lab[(altura, largura)]

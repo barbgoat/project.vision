@@ -7,7 +7,7 @@ import pytest
 
 import mestre as m
 from nucleo.contrato import Estado, TipoDefeito
-from testes.apoio import CORES, FORMAS, cena_forma, config_teste
+from testes.apoio import CORES, FORMAS, cena_forma, config_teste, cortar_canto, retangulo_arredondado
 
 CFG = config_teste(geral={"px_por_mm": 5.0})
 
@@ -74,3 +74,104 @@ def test_medidas_e_imagem_intermedia(resultados):
     for medida in ("comprimento_mm", "largura_mm", "retangularidade", "falta_mm2", "sobra_mm2"):
         assert medida in relatorio.medidas
     assert "forma" in relatorio.intermedios
+
+
+
+# Cantos arredondados (raio 10 mm). Com o raio no config, a forma certa é a do produto
+# e a folga e a área mínima podem ser apertadas sem falsos alarmes.
+ESTRITO = {"forma_folga_mm": 0.5, "forma_area_min_mm2": 10.0}
+CFG_SEM_RAIO = config_teste(geral={"px_por_mm": 5.0}, dimensoes=ESTRITO)
+CFG_RAIO = config_teste(geral={"px_por_mm": 5.0}, dimensoes={**ESTRITO, "forma_raio_canto_mm": 10.0})
+
+
+def _forma(cfg, poligono, angulo=25):
+    r = m.Mestre(cfg, apenas=["dimensoes"]).inspecionar(cena_forma(np.random.default_rng(11), poligono, angulo=angulo))
+    return r.estado, _descricoes(r)
+
+
+def test_cantos_redondos_sem_raio_dao_falsos_alarmes():
+    estado, descricoes = _forma(CFG_SEM_RAIO, retangulo_arredondado(10.0))
+    assert estado is Estado.NOK and len(descricoes) == 4 and all("falta material num canto" in d for d in descricoes)
+
+
+@pytest.mark.parametrize("angulo", [0, 20, -35, 45, 89])
+def test_cantos_redondos_com_raio_sem_falsos_alarmes(angulo):
+    estado, descricoes = _forma(CFG_RAIO, retangulo_arredondado(10.0), angulo)
+    assert estado is Estado.OK, descricoes
+
+
+def test_canto_dobrado_num_saco_de_cantos_redondos():
+    estado, descricoes = _forma(CFG_RAIO, cortar_canto(retangulo_arredondado(10.0), corte=15.0))
+    assert estado is Estado.NOK and len(descricoes) == 1 and "canto dobrado" in descricoes[0], descricoes
+
+
+def test_cantos_vivos_quando_deviam_ser_redondos():
+    estado, descricoes = _forma(CFG_RAIO, FORMAS["certo"])
+    assert estado is Estado.NOK and len(descricoes) == 4 and all("material a mais num canto" in d for d in descricoes)
+
+
+# Geometria: esquadria das pontas e paralelismo dos lados (ângulos, independentes da escala).
+def _c4(dx=0.0):
+    return 75.0 + dx
+
+
+def _l4(dy=0.0):
+    return 27.5 + dy
+
+
+TORTO_4MM = [(-_c4(), -_l4()), (_c4(), -_l4()), (_c4(-4), _l4()), (-_c4(), _l4())]  # 4,16°: pequeno demais para a área
+TRAPEZIO = [(-_c4(), -_l4()), (_c4(), -_l4(-3.9)), (_c4(), _l4(-3.9)), (-_c4(), _l4())]  # lados a 2,98°
+
+
+@pytest.mark.parametrize("angulo", [0, 25, -60])
+def test_saco_certo_em_esquadria(mestre, angulo):
+    md = mestre.inspecionar(cena_forma(np.random.default_rng(11), FORMAS["certo"], angulo=angulo)).relatorio("dimensoes").medidas
+    for chave in ("esquadria_esquerda_graus", "esquadria_direita_graus", "paralelismo_graus", "canto_desvio_max_graus"):
+        assert abs(md[chave]) < 0.2, (chave, md[chave])
+
+
+@pytest.mark.parametrize("angulo", [0, 25, -60])
+def test_corte_torto_pequeno_apanhado_pelo_angulo(mestre, angulo):
+    r = mestre.inspecionar(cena_forma(np.random.default_rng(11), TORTO_4MM, angulo=angulo)).relatorio("dimensoes")
+    descricoes = [d.descricao for d in r.defeitos]
+    assert abs(abs(r.medidas["esquadria_direita_graus"]) - 4.16) < 0.15, r.medidas
+    assert len(descricoes) == 1 and "ponta direita fora de esquadria" in descricoes[0], descricoes
+
+
+def test_corte_torto_grande_e_um_so_defeito_de_forma(resultados):
+    descricoes = _descricoes(resultados["corte_torto"])
+    assert sum("corte torto?" in d for d in descricoes) == 1 and any("esquadria" in d for d in descricoes), descricoes
+
+
+def test_lados_nao_paralelos(mestre):
+    r = mestre.inspecionar(cena_forma(np.random.default_rng(11), TRAPEZIO, angulo=20)).relatorio("dimensoes")
+    assert abs(r.medidas["paralelismo_graus"] - 2.98) < 0.15, r.medidas
+    assert any("não paralelos" in d.descricao for d in r.defeitos)
+
+
+def test_canto_dobrado_nao_mexe_na_esquadria(resultados):
+    md = resultados["canto_dobrado"].relatorio("dimensoes").medidas
+    assert abs(md["esquadria_direita_graus"]) < 0.5 and abs(md["paralelismo_graus"]) < 0.5, md
+
+
+# Pontas com cantos diferentes (4 e 11 mm), com o saco virado para qualquer lado.
+CFG_DOIS_RAIOS = config_teste(geral={"px_por_mm": 5.0},
+                              dimensoes={**ESTRITO, "forma_raio_canto_mm": 4.0, "forma_raio_canto_outra_ponta_mm": 11.0})
+
+
+@pytest.mark.parametrize("angulo", [10, 190])
+def test_pontas_com_raios_diferentes_sem_falsos_alarmes(angulo):
+    poligono = retangulo_arredondado(11.0, raio_esquerda=4.0)
+    assert _forma(CFG_RAIO, poligono, angulo)[0] is Estado.NOK  # um só raio não serve
+    estado, descricoes = _forma(CFG_DOIS_RAIOS, poligono, angulo)
+    assert estado is Estado.OK, descricoes
+
+
+def test_entalhe_estreito_apanhado_pela_profundidade(mestre):
+    # 5 × 3 mm num lado: 7 mm2 depois da folga, longe dos 25 mm2, mas 3 mm de fundo
+    entalhe = [(-_c4(), -_l4()), (_c4(), -_l4()), (_c4(), _l4()), (2.5, _l4()), (2.5, _l4(-3)), (-2.5, _l4(-3)),
+               (-2.5, _l4()), (-_c4(), _l4())]
+    r = mestre.inspecionar(cena_forma(np.random.default_rng(11), entalhe, angulo=25)).relatorio("dimensoes")
+    descricoes = [d.descricao for d in r.defeitos]
+    assert len(descricoes) == 1 and "num lado" in descricoes[0] and r.defeitos[0].area_mm2 < 25, descricoes
+    assert abs(r.defeitos[0].intensidade - 3.0) < 0.4, r.defeitos[0].intensidade

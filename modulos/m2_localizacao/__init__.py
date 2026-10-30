@@ -12,8 +12,9 @@ o M2 recebe só a imagem e não sabe de onde ela veio (isso é com o M1). O que
 muda entre montagens (telemóvel, câmara) é a escala, por isso cada uma tem o
 seu px_por_mm.
 
-Como separa o saco do fundo (sacos de qualquer cor, opacos, translúcidos ou
-transparentes):
+Como separa o saco do fundo: com o segmentador de localizacao.segmentador
+(segmentadores/: "delta_e", "sam3" ou "duplo"). O ΔE, por omissão (sacos de qualquer
+cor, opacos, translúcidos ou transparentes):
     1. Modelo do fundo: uma foto do fundo vazio (fundo_referencia) ou, sem ela,
        uma superfície suave ajustada à faixa junto à borda da imagem, onde só
        há fundo; a superfície acompanha a luz rasante (um lado mais claro).
@@ -30,8 +31,11 @@ o motivo, que aparece no registo.
 Está partido por etapas, um ficheiro cada:
 
     escravo.py        o ponto de entrada que o Mestre chama (Localizador)
-    fundo.py          1. modelo do fundo e diferença de cor ao fundo
-    segmentacao.py    2. limiar, arestas, limpeza, maior região, contorno
+    folha.py          0. (opcional) endireitar a foto pela folha de referência
+    marcadores.py     0. (opcional) ou pelos 4 marcadores ArUco, em qualquer fundo
+    segmentadores/    1. separar o saco do fundo: ΔE (delta_e.py), SAM 3 (sam3.py), os dois
+    fundo.py             modelo do fundo e diferença de cor ao fundo (do ΔE)
+    segmentacao.py    2. contorno subpíxel (e o limiar, arestas e limpeza do ΔE)
     medicao.py        3. ângulo, comprimento e largura
     normalizacao.py   4. rodar, recortar, zona útil
 """

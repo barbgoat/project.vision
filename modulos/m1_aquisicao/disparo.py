@@ -30,6 +30,7 @@ from collections.abc import Iterable, Iterator
 import cv2
 import numpy as np
 
+from nucleo import defines as D
 from nucleo.config import Config
 from nucleo.contrato import Captura, Passagem
 
@@ -260,7 +261,7 @@ class BarreiraVirtual:
 def _pontuacao(diferente: np.ndarray) -> float | None:
     """Distância ao centro da imagem do objeto mais centrado (fração da meia-diagonal); inf se tocar na borda.
 
-    Só contam objetos com pelo menos 20 % da área do maior (o resto é ruído);
+    Só contam objetos com pelo menos M1_OBJETO_AREA_MIN (20 %) da área do maior (o resto é ruído);
     assim, a ponta do saco seguinte a entrar não é confundida com o saco.
     """
     n, _, estatisticas, centros = cv2.connectedComponentsWithStats(diferente.astype(np.uint8), connectivity=8)
@@ -269,7 +270,7 @@ def _pontuacao(diferente: np.ndarray) -> float | None:
     areas = estatisticas[1:, cv2.CC_STAT_AREA]
     altura, largura = diferente.shape
     centro_x, centro_y = (largura - 1) / 2, (altura - 1) / 2
-    objetos = [int(i) + 1 for i in np.nonzero(areas >= 0.2 * areas.max())[0]]
+    objetos = [int(i) + 1 for i in np.nonzero(areas >= D.M1_OBJETO_AREA_MIN * areas.max())[0]]
     escolhido = min(objetos, key=lambda i: math.hypot(centros[i][0] - centro_x, centros[i][1] - centro_y))
     x, y, w, h = estatisticas[escolhido, :4]
     if x == 0 or y == 0 or x + w >= largura or y + h >= altura:

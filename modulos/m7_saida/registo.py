@@ -1,7 +1,7 @@
 """M7 Saída, registo: os CSV e as imagens anotadas de cada execução.
 
 Para cada execução do main.py cria uma pasta resultados/<AAAAMMDD_HHMMSS>/ com:
-    registo.csv   uma linha por saco (passagem): estado final, imagens da passagem,
+    registo.csv   uma linha por saco (passagem): OF e produto, estado final, imagens da passagem,
                   estado + tempo de cada módulo, e a pasta de depuração (se houver)
     defeitos.csv  uma linha por defeito, com o mesmo número que aparece na imagem
     imagens/      imagens anotadas (conforme SAIDA_GUARDAR_IMAGENS)
@@ -30,7 +30,7 @@ from nucleo.imagens import guardar_imagem
 log = logging.getLogger(__name__)
 
 COLUNAS_DEFEITOS = [
-    "data_hora", "passagem", "origem", "numero", "modulo", "tipo", "x_mm", "y_mm", "comprimento_mm",
+    "data_hora", "of", "produto", "passagem", "origem", "numero", "modulo", "tipo", "x_mm", "y_mm", "comprimento_mm",
     "largura_mm", "area_mm2", "angulo_graus", "intensidade", "descricao",
 ]
 
@@ -68,9 +68,9 @@ class Saida:
         self._defeitos.writerow(COLUNAS_DEFEITOS)
 
     def colunas_registo(self) -> list[str]:
-        """Colunas do registo.csv: o saco (passagem), a decisão, e o estado e o tempo de cada módulo."""
+        """Colunas do registo.csv: a OF e o produto, o saco (passagem), a decisão, e o estado e o tempo de cada módulo."""
         return [
-            "data_hora", "passagem", "origem", "estado", "num_defeitos", "tipos", "tempo_ms",
+            "data_hora", "of", "produto", "passagem", "origem", "estado", "num_defeitos", "tipos", "tempo_ms",
             "imagens_passagem", "imagens_analisadas", "duracao_passagem_ms",
             *self.modulos,
             *(f"t_{m}_ms" for m in self.modulos),
@@ -120,7 +120,8 @@ class Saida:
             + ([f"disparo: {passagem.aviso}"] if passagem and passagem.aviso else [])
         )
         self._registo.writerow([
-            data_hora, numero_passagem, origem, resultado.estado, len(resultado.defeitos), tipos,
+            data_hora, resultado.of, resultado.produto, numero_passagem, origem, resultado.estado,
+            len(resultado.defeitos), tipos,
             self._numero(resultado.tempo_ms, 1),
             passagem.num_imagens if passagem else "", resultado.imagens_analisadas,
             self._numero(passagem.duracao_ms, 0) if passagem else "",
@@ -132,7 +133,7 @@ class Saida:
         ])
         for numero, d in enumerate(resultado.defeitos, start=1):
             self._defeitos.writerow([
-                data_hora, numero_passagem, origem, numero, d.modulo, d.tipo,
+                data_hora, resultado.of, resultado.produto, numero_passagem, origem, numero, d.modulo, d.tipo,
                 *(self._numero(v) for v in (d.x_mm, d.y_mm, d.comprimento_mm, d.largura_mm,
                                             d.area_mm2, d.angulo_graus, d.intensidade)),
                 d.descricao,

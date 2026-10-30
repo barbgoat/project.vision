@@ -3,5 +3,11 @@ opencv-python==5.0.0.93
 PySide6-Essentials==6.12.0  # interface gráfica (gui.py)
 pytest==8.4.2  # testes
 
+# Segmentação com o SAM 3 (opcional: localizacao.segmentador = "sam3"; ver o README).
+# Precisa de GPU NVIDIA (CUDA >= 12.6) e de acesso aos pesos em huggingface.co/facebook/sam3:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+#   git clone https://github.com/facebookresearch/sam3.git && pip install -e ./sam3 pillow
+# Anotação por cliques com o SAM 2 (opcional): pip install git+https://github.com/facebookresearch/sam2.git
+
 # Câmara (PySpin): não está no PyPI; instala-se da wheel do Spinnaker 4.4 (fora do git):
 #   pip install "instaladores\spinnaker_python-4.4.0.246-cp312-cp312-win_amd64\spinnaker_python-4.4.0.246-cp312-cp312-win_amd64.whl"

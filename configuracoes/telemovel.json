@@ -1,11 +1,22 @@
 {
   "geral": {
-    "px_por_mm": 12.4
+    "px_por_mm": 5.0
+  },
+  "localizacao": {
+    "referencia": "auto",
+    "limiar_delta_e": 8.0,
+    "peso_luminosidade": 0.0,
+    "comprimento_min_mm": 50.0,
+    "comprimento_max_mm": 280.0,
+    "largura_min_mm": 30.0,
+    "largura_max_mm": 200.0
+  },
+  "dimensoes": {
+    "forma_raio_canto_mm": 4.0,
+    "forma_raio_canto_outra_ponta_mm": 10.0,
+    "forma_profundidade_min_mm": 3.0
   },
   "cor": {
     "ativo": false
-  },
-  "disparo": {
-    "modo": "foto"
   }
 }

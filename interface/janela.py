@@ -1,10 +1,10 @@
 """Interface, janela: a barra de comandos, as duas vistas (Operador e Engenharia) e as janelas à parte.
 
-    [Ao vivo|Produção] [▶ Iniciar][■ Parar] [◀][▶][Congelar]  PRODUÇÃO · A CORRER  [Operador|Engenharia] [Histórico] [📷][⚙] [👤 admin ▾]
+    [⚙ ▾]              [ OF 1234 · PreVital ]              PARADO  [Ao vivo|Produção] [▶ Iniciar] [■ Parar]
 
     Engenharia                                         Operador
     ┌───────────────────────────┬──────────────┐       ┌──────────────────────────────┐
-    │                           │ NOK  saco 12 │       │        NOK   saco 12         │
+    │          [◀][▶][Congelar] │ NOK  saco 12 │       │        NOK   saco 12         │
     │  imagem anotada           │ tempos       │       │                              │
     │  (ou a etapa escolhida)   │ módulos      │       │        imagem anotada        │
     │                           │ defeitos     │       │                              │
@@ -13,12 +13,14 @@
     │ Etapas | Log                             │
     └──────────────────────────────────────────┘
 
+    O menu ⚙ tem o resto: definições, câmara, histórico, dashboard, a vista e a conta.
     Janelas à parte:  Revisão     um saco não OK: descartar ou NOK (a produção espera)
+                      OF          a ordem de fabrico e o produto em uso (interface/ordens.py)
+                      Dashboard   OFs e produtos, contagens e evolução de cada OF
                       Histórico   os últimos sacos e os contadores
                       📷 Câmara    exposição, ganho, trigger (disparo), lente
                       ⚙ Definições perfil, fonte, parâmetros de inspeção e saída
-                      👤 conta     quem está a usar, mudar de utilizador, contas e permissões
-    Atalhos: F5 inicia, Shift+F5 para. O operador só vê a vista Operador.
+    Atalhos: F5 inicia, Shift+F5 para. O operador só vê a vista Operador e indica a OF a cada início.
 
 Parâmetros: ao vivo entram logo; em produção, cada alteração é pré-visualizada
 no saco que está no ecrã (que fica congelado) e só passa aos sacos seguintes
@@ -35,7 +37,7 @@ from collections import Counter
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, QSize, Qt, QTimer
-from PySide6.QtGui import QCloseEvent, QIcon, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QSizePolicy, QSplitter,
     QStackedWidget, QStyle, QTabWidget, QToolButton, QVBoxLayout, QWidget,
@@ -46,22 +48,24 @@ from interface.estilo import AZUL, CORES_ESTADO, NOME_APP, icone
 from interface.janela_conta import Conta
 from interface.janela_parametros import Parametros
 from interface.janelas import JanelaHistorico, JanelaRevisao
+from interface.ordens import Ordens
 from interface.paineis import (
     Contadores, Etapas, Faixa, PainelLog, RegistoQt, TabelaDefeitos, TabelaModulos, VistaImagem,
 )
 from interface.registos import registar_revisao
 from nucleo.config import CAMINHO_POR_OMISSAO, Config
 from nucleo.contrato import CLASSES_DATASET, Estado
+from nucleo.especificacoes import ErroRepositorio, Escolha, Repositorio
 
 
 log = logging.getLogger("interface")
 
 SEM_IMAGEM = "Carrega em ▶ Iniciar"
-# Cor do indicador do estado (ao centro da barra): parado, ao vivo a correr, produção a correr.
+# Cor do indicador do estado (à direita da barra): parado, ao vivo a correr, produção a correr.
 CORES_INDICADOR = {None: "#78909c", "ao_vivo": AZUL, "producao": "#2e7d32"}
 
 
-class Janela(Conta, Parametros, QMainWindow):
+class Janela(Conta, Parametros, Ordens, QMainWindow):
     def __init__(self, args: argparse.Namespace, utilizador: str = "admin", memoria: QSettings | None = None) -> None:
         """args: os de gui.py; memoria: onde lembrar o perfil, a fonte e a pasta (None = não lembrar)."""
         super().__init__()
@@ -76,6 +80,11 @@ class Janela(Conta, Parametros, QMainWindow):
         self._perfil = Path(args.config or (lembrado if lembrado and Path(lembrado).exists() else CAMINHO_POR_OMISSAO))
         self._cfg_perfil = Config()  # como está no ficheiro do perfil
         self._cfg_edicao = Config()  # como está nos editores (definições e câmara): é a que se usa
+        self._cfg_base = Config()  # o perfil com o produto e a OF por cima ("Repor" volta a esta)
+        self._ordem: Escolha | None = None  # a OF e o produto em uso (None = sem OF)
+        self._ensaio_sem_of = False  # o admin escolheu "Sem OF (ensaio)": não se volta a perguntar
+        self._repo: Repositorio | None = None
+        self.janela_dashboard = None  # criada quando se abre
         self._dataset = args.dataset
         self._ultimo: Visto | None = None  # o último que chegou do ciclo
         self._base: Visto | None = None  # o que está no ecrã (sem contar com a pré-visualização)
@@ -110,7 +119,7 @@ class Janela(Conta, Parametros, QMainWindow):
 
         self._carregar_perfil()
         (self.btn_producao if args.modo == "producao" else self.btn_ao_vivo).setChecked(True)
-        (self.btn_operador if args.vista == "operador" else self.btn_engenharia).setChecked(True)
+        (self.acao_operador if args.vista == "operador" else self.acao_engenharia).setChecked(True)
         self._definir_utilizador(utilizador)
 
     # --- Construção -------------------------------------------------------------------
@@ -138,15 +147,47 @@ class Janela(Conta, Parametros, QMainWindow):
         return botao
 
     def _criar_barra(self) -> QFrame:
+        """A barra: o menu (⚙) à esquerda, a OF ao centro, o estado, o modo, Iniciar e Parar à direita."""
+        # O menu: tudo o que não é do dia a dia (o que cada papel vê: _definir_utilizador).
+        self.btn_menu = QToolButton()
+        self.btn_menu.setIcon(icone("definicoes"))
+        self.btn_menu.setIconSize(QSize(30, 30))
+        self.btn_menu.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.btn_menu.setToolTip("Menu: definições, câmara, histórico, dashboard e conta")
+        menu = QMenu(self.btn_menu)
+        self.acao_utilizador = menu.addAction(icone("conta"), "")  # quem está a usar (só informação)
+        self.acao_utilizador.setEnabled(False)
+        menu.addSeparator()
+        self.acao_definicoes = _acao(menu, "Definições…", self.janela_definicoes.abrir, icone("definicoes"))
+        self.acao_camara = _acao(menu, "Câmara…", self.janela_camara.abrir, icone("camara"))
+        self.acao_historico = _acao(menu, "Histórico…", self.janela_historico.abrir,
+                                    self._icone_qt("SP_FileDialogDetailedView"))
+        self.acao_dashboard = _acao(menu, "Dashboard…", self._abrir_dashboard,
+                                    self._icone_qt("SP_FileDialogContentsView"))
+        menu.addSeparator()
+        vistas = QActionGroup(menu)
+        self.acao_operador = _acao(menu, "Vista Operador", self._mudar_vista, grupo=vistas)
+        self.acao_engenharia = _acao(menu, "Vista Engenharia", self._mudar_vista, grupo=vistas)
+        menu.addSeparator()
+        _acao(menu, "Mudar de utilizador…", self._terminar_sessao, icone("conta"))
+        self.acao_contas = _acao(menu, "Contas e permissões…", self._mostrar_contas)
+        _acao(menu, f"Sair do {NOME_APP}", self.close)
+        self.btn_menu.setMenu(menu)
+
+        self.btn_of = self._botao("Sem OF", icone_botao=self._icone_qt("SP_FileIcon"))
+        self.btn_of.setObjectName("of")  # largo, ao centro (ESTILO)
+        self.btn_of.clicked.connect(self._escolher_ordem)
+
+        self.indicador = QLabel()  # "PARADO", "A CORRER" ou "EM REVISÃO", com a cor do modo
+        self.indicador.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.indicador.setMinimumWidth(150)
         self.btn_ao_vivo = self._botao("Ao vivo", True, dica="Câmara em contínuo, sem trigger: centrar o saco, "
                                                              "acertar a luz e o foco, afinar. Não regista nada.")
         self.btn_producao = self._botao("Produção", True, dica="Com o trigger (disparo): uma decisão por saco, "
                                                                "registada em resultados/.")
-        self.btn_operador = self._botao("Operador", True, dica="O estado de cada saco em grande.")
-        self.btn_engenharia = self._botao("Engenharia", True, dica="Etapas, módulos, defeitos e log.")
+        self.btn_ao_vivo.setObjectName("segmento_esq")  # colados, como um interruptor
+        self.btn_producao.setObjectName("segmento_dir")
         self._grupo(self.btn_ao_vivo, self.btn_producao).idClicked.connect(self._mudar_modo)
-        self._grupo(self.btn_operador, self.btn_engenharia).idClicked.connect(self._mudar_vista)
-
         self.btn_iniciar = self._botao("Iniciar", icone_botao=self._icone_qt("SP_MediaPlay"),
                                        dica="Começar a inspeção (F5)")
         self.btn_parar = self._botao("Parar", icone_botao=self._icone_qt("SP_MediaStop"),
@@ -155,52 +196,23 @@ class Janela(Conta, Parametros, QMainWindow):
         self.btn_parar.setObjectName("parar")  # vermelho
         self.btn_iniciar.clicked.connect(self.iniciar)
         self.btn_parar.clicked.connect(self.parar)
-        self.btn_anterior = self._botao("", icone_botao=self._icone_qt("SP_MediaSkipBackward"),
-                                        dica="Ao vivo com uma pasta: imagem anterior")
-        self.btn_seguinte = self._botao("", icone_botao=self._icone_qt("SP_MediaSkipForward"),
-                                        dica="Ao vivo com uma pasta: imagem seguinte")
-        self.btn_anterior.clicked.connect(lambda: self.ciclo and self.ciclo.navegar(-1))
-        self.btn_seguinte.clicked.connect(lambda: self.ciclo and self.ciclo.navegar(+1))
-        self.btn_congelar = self._botao_icone(self._icone_qt("SP_MediaPause"),
-                                              "Congelar. Ao vivo: ficar nesta imagem para afinar nela.\n"
-                                              "Produção: o ecrã fica neste saco (a linha continua e é registada).")
-        self.btn_congelar.setCheckable(True)
-        self.btn_congelar.toggled.connect(self._congelar)
-        self.indicador = QLabel()  # p.ex. "PRODUÇÃO · A CORRER", com a cor do modo
-        self.indicador.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.indicador.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.btn_historico = self._botao_icone(self._icone_qt("SP_FileDialogDetailedView"),
-                                               "Histórico: os últimos sacos e os contadores")
-        self.btn_historico.clicked.connect(self.janela_historico.abrir)
-        self.btn_camara = self._botao_icone(icone("camara"), "Câmara: exposição, ganho, trigger (disparo) e lente")
-        self.btn_camara.clicked.connect(self.janela_camara.abrir)
-        self.btn_definicoes = self._botao_icone(icone("definicoes"),
-                                                "Definições: perfil, fonte, parâmetros de inspeção e saída")
-        self.btn_definicoes.clicked.connect(self.janela_definicoes.abrir)
-        self.btn_conta = QToolButton()  # o menu é feito em _definir_utilizador
-        self.btn_conta.setIcon(icone("conta"))
-        self.btn_conta.setIconSize(QSize(26, 26))
-        self.btn_conta.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.btn_conta.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.btn_conta.setToolTip("A conta: mudar de utilizador, contas e permissões")
-
-        # Modo e vista: dois botões colados, como um interruptor.
-        for esquerdo, direito in ((self.btn_ao_vivo, self.btn_producao), (self.btn_operador, self.btn_engenharia)):
-            esquerdo.setObjectName("segmento_esq")
-            direito.setObjectName("segmento_dir")
 
         moldura = QFrame()
         moldura.setObjectName("barra")  # cartão branco (ESTILO)
         barra = QHBoxLayout(moldura)
         barra.setContentsMargins(8, 6, 8, 6)
         barra.setSpacing(6)
-        for item in (_par(self.btn_ao_vivo, self.btn_producao), 20, self.btn_iniciar, self.btn_parar, 20,
-                     self.btn_anterior, self.btn_seguinte, self.btn_congelar, 20):
-            _juntar(barra, item)
-        barra.addWidget(self.indicador, 1)
-        for item in (20, _par(self.btn_operador, self.btn_engenharia), 20, self.btn_historico, self.btn_camara,
-                     self.btn_definicoes, 20, self.btn_conta):
-            _juntar(barra, item)
+        # Os lados com o mesmo peso: a OF fica no centro da janela, não só do espaço livre.
+        esquerda, direita = QHBoxLayout(), QHBoxLayout()
+        esquerda.addWidget(self.btn_menu)
+        esquerda.addStretch()
+        direita.addStretch()
+        for item in (self.indicador, 12, _par(self.btn_ao_vivo, self.btn_producao), 12, self.btn_iniciar,
+                     self.btn_parar):
+            _juntar(direita, item)
+        barra.addLayout(esquerda, 1)
+        barra.addWidget(self.btn_of)
+        barra.addLayout(direita, 1)
         return moldura
 
     def _grupo(self, *botoes: QPushButton) -> QButtonGroup:
@@ -224,10 +236,25 @@ class Janela(Conta, Parametros, QMainWindow):
         self.titulo_imagem = QLabel()
         self.titulo_imagem.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.imagem_eng = VistaImagem(SEM_IMAGEM)
+        # Por cima da imagem: navegar na pasta (Ao vivo) e congelar o ecrã.
+        self.btn_anterior = self._botao("", icone_botao=self._icone_qt("SP_MediaSkipBackward"),
+                                        dica="Ao vivo com uma pasta: imagem anterior")
+        self.btn_seguinte = self._botao("", icone_botao=self._icone_qt("SP_MediaSkipForward"),
+                                        dica="Ao vivo com uma pasta: imagem seguinte")
+        self.btn_anterior.clicked.connect(lambda: self.ciclo and self.ciclo.navegar(-1))
+        self.btn_seguinte.clicked.connect(lambda: self.ciclo and self.ciclo.navegar(+1))
+        self.btn_congelar = self._botao("Congelar", True, self._icone_qt("SP_MediaPause"),
+                                        "Ao vivo: ficar nesta imagem para afinar nela.\n"
+                                        "Produção: o ecrã fica neste saco (a linha continua e é registada).")
+        self.btn_congelar.toggled.connect(self._congelar)
+        cabeca = QHBoxLayout()
+        cabeca.addWidget(self.titulo_imagem, 1)
+        for botao in (self.btn_anterior, self.btn_seguinte, self.btn_congelar):
+            cabeca.addWidget(botao)
         imagem = QWidget()
         coluna = QVBoxLayout(imagem)
         coluna.setContentsMargins(0, 0, 0, 0)
-        coluna.addWidget(self.titulo_imagem)
+        coluna.addLayout(cabeca)
         coluna.addWidget(self.imagem_eng, 1)
 
         self.faixa_eng = Faixa(20)
@@ -305,7 +332,7 @@ class Janela(Conta, Parametros, QMainWindow):
             self.iniciar()
 
     def _engenharia(self) -> bool:
-        return self.btn_engenharia.isChecked()
+        return self.acao_engenharia.isChecked()
 
     def _mudar_vista(self) -> None:
         self.vistas.setCurrentIndex(1 if self._engenharia() else 0)
@@ -326,12 +353,11 @@ class Janela(Conta, Parametros, QMainWindow):
             w.setEnabled(a_correr)
         for editor in (self.editor, self.editor_camara):
             editor.btn_aplicar.setEnabled(a_correr and self.ciclo.pedido.modo == "producao")
-        modo = "PRODUÇÃO" if producao else "AO VIVO"
         cor = CORES_INDICADOR[self.ciclo.pedido.modo if a_correr else None]
         estado = "A CORRER" if a_correr else "PARADO"
         if self._em_revisao is not None:
             cor, estado = CORES_ESTADO[Estado.ERRO], "EM REVISÃO"
-        self.indicador.setText(f"{modo} · {estado}")
+        self.indicador.setText(estado)
         self.indicador.setStyleSheet(f"background: {cor}; color: white; font-size: 14pt; font-weight: bold; "
                                      "border-radius: 6px; padding: 4px 12px;")
         self._atualizar_resumo()
@@ -343,7 +369,9 @@ class Janela(Conta, Parametros, QMainWindow):
         fonte, caminho = self.cb_fonte.currentText(), self.ed_caminho.text().strip()
         if caminho and self.cb_fonte.currentData() in ("pasta", "video"):
             fonte += f" ({Path(caminho).name})"
-        self.lbl_resumo.setText(f"Perfil: {self._perfil.stem}   ·   Fonte: {fonte}   ·   "
+        of, produto = self._identidade()
+        ordem = f"OF {of} · {produto}" if of else produto or "sem OF"
+        self.lbl_resumo.setText(f"{self.utilizador}   ·   {ordem}   ·   Perfil: {self._perfil.stem}   ·   Fonte: {fonte}   ·   "
                                 f"Disparo: {self._cfg_edicao.disparo.modo}")
 
     # --- Arrancar e parar --------------------------------------------------------------
@@ -361,13 +389,26 @@ class Janela(Conta, Parametros, QMainWindow):
                 self.janela_definicoes.abrir()
             return
         modo = self._modo()
+        # Sem OF as medidas são as do perfil (e dos defines), não as do produto na base de dados:
+        # quem não pode produzir sem OF indica-a a cada início; os outros, enquanto não houver uma.
+        perguntar = (modo == "producao" and not self._pode("producao_sem_of")) or             (self._ordem is None and not self._ensaio_sem_of)
+        if perguntar and not self._escolher_ordem():
+            return
         if modo == "producao":
             self._contagem.clear()
             self._tempos.clear()
             self.historico.limpar()
             self._atualizar_contadores()
         self._lembrar()
-        self.ciclo = Ciclo(Pedido(modo, tipo, caminho, self._cfg_edicao, Path(self.args.saida)))
+        repositorio = None
+        if modo == "producao":
+            try:
+                repositorio = self._repositorio()
+            except ErroRepositorio as erro:  # produz-se na mesma; o registo.csv tem tudo
+                log.warning("%s", erro)
+        of, produto = self._identidade()
+        self.ciclo = Ciclo(Pedido(modo, tipo, caminho, self._cfg_edicao, Path(self.args.saida), of, produto,
+                                  repositorio))
         self.ciclo.etapas = self._engenharia()
         self.ciclo.congelado = self.btn_congelar.isChecked()
         self.ciclo.registado.connect(self._registado)
@@ -375,7 +416,8 @@ class Janela(Conta, Parametros, QMainWindow):
         self.ciclo.mensagem.connect(self._mensagem)
         self.ciclo.finished.connect(self._terminou)
         self.ciclo.start()
-        log.info("%s com %s %s (perfil %s, %s)", modo, tipo, caminho or "", self._perfil.name, self.utilizador)
+        log.info("%s com %s %s (perfil %s, %s%s)", modo, tipo, caminho or "", self._perfil.name, self.utilizador,
+                 f", OF {of}" if of else f", produto {produto}" if produto else "")
         self._atualizar_botoes()
 
     def parar(self) -> None:
@@ -401,8 +443,9 @@ class Janela(Conta, Parametros, QMainWindow):
             self.ciclo.wait(5000)
         if self._previsao is not None:
             self._previsao.wait(5000)
-        for janela in (self.janela_historico, self.janela_definicoes, self.janela_camara):
-            janela.close()
+        for janela in (self.janela_historico, self.janela_definicoes, self.janela_camara, self.janela_dashboard):
+            if janela is not None:
+                janela.close()
         if self._memoria is not None:  # os tamanhos que o utilizador escolheu
             for chave, divisoria in self._divisorias.items():
                 self._memoria.setValue(chave, divisoria.saveState())
@@ -430,6 +473,12 @@ class Janela(Conta, Parametros, QMainWindow):
         self.historico.marcar_decisao(visto.numero, decisao)
         if self.ciclo is not None and self.ciclo.pasta_resultados is not None:
             registar_revisao(visto.resultado, visto.numero, decisao, self.ciclo.pasta_resultados)
+            if self.ciclo.pedido.repositorio is not None:
+                try:
+                    self.ciclo.pedido.repositorio.marcar_decisao(self.ciclo.pasta_resultados.name, visto.numero,
+                                                                 decisao)
+                except ErroRepositorio as erro:
+                    log.warning("%s", erro)
         self._em_revisao = None
         self._atualizar_contadores()
         self._atualizar_botoes()
@@ -480,7 +529,7 @@ class Janela(Conta, Parametros, QMainWindow):
         if visto is None:
             self._mensagem("As imagens desse saco já saíram da memória (ver a pasta de resultados).")
             return
-        self.btn_engenharia.setChecked(True)  # o detalhe do saco está na Engenharia
+        self.acao_engenharia.setChecked(True)  # o detalhe do saco está na Engenharia
         self._mudar_vista()
         self.btn_congelar.setChecked(True)
         self._mostrar(visto if visto.preparado else preparar(visto))
@@ -514,6 +563,20 @@ def _juntar(linha: QHBoxLayout, item: QWidget | QHBoxLayout | int) -> None:
         linha.addWidget(item)
 
 
+def _acao(menu: QMenu, texto: str, funcao, icone_acao: QIcon | None = None,
+          grupo: QActionGroup | None = None) -> QAction:
+    """Uma entrada do menu ⚙; num grupo, é uma de várias opções (p.ex. a vista)."""
+    acao = QAction(texto, menu)
+    if icone_acao is not None:
+        acao.setIcon(icone_acao)
+    if grupo is not None:
+        acao.setCheckable(True)
+        grupo.addAction(acao)
+    acao.triggered.connect(lambda *_: funcao())
+    menu.addAction(acao)
+    return acao
+
+
 def _par(esquerdo: QWidget, direito: QWidget) -> QHBoxLayout:
     """Dois botões colados (um interruptor)."""
     par = QHBoxLayout()
@@ -537,7 +600,10 @@ def _info(visto: Visto) -> str:
     ms = r.tempo_ms if visto.modo == "ao_vivo" or visto.previsao else visto.ciclo_ms
     cor = "#c62828" if ms > cfg.geral.orcamento_ms else "inherit"
     tempo = f"<span style='color:{cor}'>{ms:.0f} ms</span>"
-    if r.saco is not None:
+    medidas = r.relatorios[0].medidas if r.relatorios else {}
+    if "comprimento_px" in medidas:  # foto sem referência: sem mm
+        tempo += f"   ·   {medidas['comprimento_px']:.0f} × {medidas['largura_px']:.0f} px (sem escala)"
+    elif r.saco is not None:
         tempo += f"   ·   {r.saco.comprimento_mm:.1f} × {r.saco.largura_mm:.1f} mm"
     linhas.append(tempo)
     if r.mensagem:

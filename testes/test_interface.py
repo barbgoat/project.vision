@@ -6,6 +6,7 @@ import ast
 import dataclasses
 import json
 import os
+import threading
 import time
 
 import numpy as np
@@ -18,17 +19,25 @@ from PySide6.QtCore import QPoint, QPointF, QSettings, Qt  # noqa: E402
 from PySide6.QtGui import QPixmap, QWheelEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox  # noqa: E402
 
+import biapp_dashboard  # noqa: E402
 import gui  # noqa: E402
 from interface.editor import SECOES_CAMARA, SECOES_DEFINICOES, EditorParametros, ajudas  # noqa: E402
 from interface.estilo import ICONE, LOGO, icone  # noqa: E402
 from interface.janela import Janela  # noqa: E402
-from interface.login import JanelaLogin, verificar  # noqa: E402
+from interface.login import JanelaLogin, assinatura, pode, verificar  # noqa: E402
+from interface.ordens import DialogoEspecificacao, DialogoOrdem  # noqa: E402
 from interface.paineis import VistaImagem  # noqa: E402
+from interface import vista_dashboard  # noqa: E402
 from interface.registos import guardar_correcao, pasta_dataset  # noqa: E402
 from nucleo.config import RAIZ, Config, nome_define  # noqa: E402
 from nucleo.contrato import Captura, Estado, Resultado  # noqa: E402
+from nucleo.especificacoes import (  # noqa: E402
+    MEDIDAS, Especificacao, OrdemFabrico, Repositorio, resolver,
+)
 from nucleo.imagens import guardar_imagem  # noqa: E402
+from nucleo.servidor_dashboard import Servidor  # noqa: E402
 from testes.apoio import CORES, FORMAS, cena_forma, config_teste, correr, execucao, ler_csv, montagem  # noqa: E402
+from testes.test_especificacoes import _produto  # noqa: E402
 
 IMG = np.zeros((20, 30, 3), np.uint8)
 
@@ -59,6 +68,7 @@ def janela(app, tmp_path):
         "--saida", str(tmp_path / "res"), "--dataset", str(tmp_path / "dataset" / "blackfly"),
     ])
     j = Janela(args)
+    j._ensaio_sem_of = True  # ensaios sem OF, salvo se o teste escolher uma
     yield j
     j.close()  # para o ciclo e espera por ele
 
@@ -185,13 +195,13 @@ def test_zoom_da_imagem(app):
 
 
 def test_operador_so_ve_a_vista_operador(app, janela):
-    janela._definir_utilizador("operador")
-    escondidos = (janela.btn_engenharia, janela.btn_ao_vivo, janela.btn_historico, janela.btn_camara,
-                  janela.btn_definicoes, janela.btn_congelar)
-    assert all(w.isHidden() for w in escondidos) and not janela._engenharia()
-    assert janela._modo() == "producao" and not janela.btn_iniciar.isHidden()
+    janela._definir_utilizador("op")
+    so_admin = (janela.acao_engenharia, janela.acao_historico, janela.acao_camara, janela.acao_definicoes,
+                janela.acao_contas)  # entradas do menu ⚙
+    assert not any(a.isVisible() for a in so_admin) and janela.btn_ao_vivo.isHidden() and not janela._engenharia()
+    assert janela._modo() == "producao" and not janela.btn_iniciar.isHidden() and not janela.btn_menu.isHidden()
     janela._definir_utilizador("admin")
-    assert not any(w.isHidden() for w in escondidos)
+    assert all(a.isVisible() for a in so_admin) and not janela.btn_ao_vivo.isHidden()
 
 
 def test_tamanhos_das_divisorias_ficam_lembrados(app, janela, tmp_path):
@@ -300,3 +310,143 @@ def test_pre_visualizar_e_guardar_no_perfil(app, janela, tmp_path, monkeypatch):
     perfil = json.loads((tmp_path / "perfil.json").read_text(encoding="utf-8"))
     assert perfil["dimensoes"]["tolerancia_comprimento_mm"] == 9.0
     assert Config.carregar(tmp_path / "perfil.json").dimensoes.tolerancia_comprimento_mm == 9.0
+
+
+# --- Ordens de fabrico e produtos ------------------------------------------------------------
+
+def test_mudar_de_of_a_meio_nao_afeta_o_saco_em_analise(app, janela, tmp_path):
+    repo = janela._repositorio()
+    medidas = {c: getattr(janela._cfg_perfil.dimensoes, c) for c in MEDIDAS}
+    for produto, of in (("A", "OF-A"), ("B", "OF-B")):
+        repo.guardar(Especificacao(produto, **medidas, autor="admin"))
+        repo.guardar(OrdemFabrico(of, produto, autor="admin"))
+    assert janela._usar_ordem(resolver(repo, "OF-A", ""))
+    assert janela.btn_of.text() == "OF OF-A · A"
+    janela.iniciar()
+    esperar(app, lambda: janela._em_revisao is not None)  # o 1.º saco (canto_dobrado) à espera da decisão
+    assert janela._usar_ordem(resolver(repo, "OF-B", ""))  # a meio: só entra no saco seguinte
+    _producao_ate_ao_fim(app, janela, arrancar=False)
+    linhas = ler_csv(execucao(tmp_path / "res") / "registo.csv")
+    assert [linha["of"] for linha in linhas] == ["OF-A", "OF-B", "OF-B"]
+    assert [i.decisao for i in repo.historico("OF-A")] == ["NOK"]
+    assert [i.final for i in repo.historico("OF-B")] == ["OK", "NOK"]
+
+    janela._abrir_dashboard()
+    v = janela.janela_dashboard.vista
+    assert v.tabela_of.rowCount() == 2 and v.tabela_produtos.rowCount() == 2 and v.tabela_dias.rowCount() == 1
+    assert "OF OF-B" in v.resumo.text() and "taxa de NOK 50.0 %" in v.resumo.text()
+    assert v.grafico._evolucao and not v.grafico.grab().isNull()
+
+    v.tabela_of.selectRow(1)  # OF-A escolhida...
+    repo.registar(Resultado(None, Estado.OK, None, [], 1.0, of="OF-A", produto="A"), "outra", 1)
+    esperar(app, lambda: v.tabela_of.item(1, 3).text() == "2")  # ...chega um saco: atualiza-se sozinho
+    assert v.of_escolhida() == "OF-A", "a OF escolhida mantém-se"
+    v.procura_of.setText("of-b")
+    assert v.tabela_of.rowCount() == 1 and v.of_escolhida() == "OF-B"
+
+
+def test_dashboard_reiniciar_e_limpar_dados(app, janela, monkeypatch):
+    repo = janela._repositorio()
+    repo.guardar(_produto())
+    repo.guardar(OrdemFabrico("OF1", "PreVital"))
+    repo.registar(Resultado(None, Estado.OK, None, [], 1.0, of="OF1", produto="PreVital"), "s", 1)
+    janela._abrir_dashboard()
+    v = janela.janela_dashboard.vista
+    assert not v.btn_limpar.isHidden(), "SAIDA_DASHBOARD_LIMPAR: em testes, o botão está lá"
+
+    v.procura_of.setText("nada")
+    v.separadores.setCurrentIndex(2)
+    v.btn_reiniciar.click()
+    assert v.procura_of.text() == "" and v.separadores.currentIndex() == 0 and v.tabela_of.rowCount() == 1
+
+    monkeypatch.setattr(vista_dashboard, "perguntar_limpeza", lambda pai: None)  # Cancelar
+    v.btn_limpar.click()
+    assert len(repo.historico()) == 1, "cancelado: não apaga nada"
+    monkeypatch.setattr(vista_dashboard, "perguntar_limpeza", lambda pai: False)  # Só as inspeções
+    v.btn_limpar.click()
+    assert repo.historico() == [] and v.tabela_of.item(0, 3).text() == "0" and v.tabela_dias.rowCount() == 0
+    monkeypatch.setattr(vista_dashboard, "perguntar_limpeza", lambda pai: True)  # Tudo
+    v.btn_limpar.click()
+    assert v.tabela_of.rowCount() == 0 and v.tabela_produtos.rowCount() == 0
+
+    v.permitir_limpar(False)  # na linha: SAIDA_DASHBOARD_LIMPAR = False
+    assert v.btn_limpar.isHidden()
+
+
+def test_janela_do_biapp_dashboard_mostra_o_que_chega_por_sse(app, tmp_path):
+    repo = Repositorio(tmp_path / "bd.sqlite")
+    repo.guardar(_produto())
+    repo.guardar(OrdemFabrico("OF1", "PreVital"))
+    servidor = Servidor(repo, "127.0.0.1", 0, 0.05).iniciar()
+    recebidos, problemas = [], []
+    try:
+        threading.Thread(target=biapp_dashboard.receber, args=(servidor.url, recebidos.append, problemas.append),
+                         daemon=True).start()
+        esperar(app, lambda: recebidos, 10)
+        assert recebidos[0]["ordens"][0]["numero"] == "OF1"
+    finally:
+        servidor.parar()
+    esperar(app, lambda: problemas, 40)  # o servidor parou: o cliente avisa e volta a tentar
+
+
+def test_permissoes_das_ofs(app, janela, monkeypatch):
+    assert pode("admin", "dashboard") and not pode("operador", "dashboard") and pode("operador", "editar_of")
+    assert assinatura("admin", "admin") == "admin", "o admin não tem de se identificar"
+    with pytest.raises(ValueError, match="nome"):
+        assinatura("operador", "operador", "Ana", "")
+    assert assinatura("operador", "operador", " Ana ", "42") == "Ana (nº 42)"
+
+    janela._definir_utilizador("op")
+    assert not janela.acao_dashboard.isVisible() and not janela.btn_of.isHidden()
+    pedidos = []
+    monkeypatch.setattr(Janela, "_escolher_ordem", lambda self: pedidos.append(1) or False)
+    janela.iniciar()
+    assert pedidos == [1] and janela.ciclo is None, "o operador indica a OF a cada início"
+
+    janela._definir_utilizador("admin")
+    janela._ensaio_sem_of = False
+    janela.iniciar()
+    assert pedidos == [1, 1] and janela.ciclo is None, "o admin sem OF também é perguntado"
+
+
+def test_criar_produto_e_of_no_formulario_e_no_dialogo(app, janela):
+    repo = janela._repositorio()
+    form = DialogoEspecificacao(janela, janela, "novo", "admin", of=OrdemFabrico("OF9", "Novo"), nome="Novo")
+    assert form.medidas["comprimento_nominal_mm"].value() == 150.0, "começa nas medidas em uso"
+    form.medidas["tolerancia_comprimento_mm"].setValue(9.0)
+    form.ed_cor.setText("azul")
+    form.verniz.setChecked(True)
+    form._guardar()
+    assert form.result() == QDialog.DialogCode.Accepted, form.erro.text()
+    produto = repo.procurar_produto("novo")
+    assert (produto.tolerancia_comprimento_mm, produto.cor, produto.verniz) == (9.0, "azul", True)
+    assert repo.procurar_of("OF9").produto == "Novo"
+
+    form = DialogoEspecificacao(janela, janela, "of", "Ana (nº 7)", produto=produto, of=repo.procurar_of("OF9"))
+    assert form.ed_cor.text() == "azul"
+    form.medidas["tolerancia_largura_mm"].setValue(4.0)
+    form._guardar()
+    of = repo.procurar_of("OF9")
+    assert of.ajustes == {"tolerancia_largura_mm": 4.0} and of.autor == "Ana (nº 7)"
+
+    form = DialogoEspecificacao(janela, janela, "novo", "admin", nome="Enorme")
+    form.medidas["comprimento_nominal_mm"].setValue(900.0)
+    form._guardar()
+    assert "fora dos limites" in form.erro.text() and repo.procurar_produto("Enorme") is None
+
+    janela._definir_utilizador("op")
+    dialogo = DialogoOrdem(janela, repo)
+    dialogo.ed_of.setText("OF10")
+    dialogo.cb_produto.setCurrentText("Novo")
+    assert "OF nova" in dialogo.estado.text()
+    dialogo._continuar()
+    assert "nome" in dialogo.estado.text() and dialogo.result() != QDialog.DialogCode.Accepted
+    dialogo.ed_nome.setText("Ana")
+    dialogo.ed_numero.setText("7")
+    dialogo._continuar()
+    assert dialogo.result() == QDialog.DialogCode.Accepted
+    of10 = repo.procurar_of("OF10")
+    assert of10.autor == "Ana (nº 7)" and of10.ajustes == of.ajustes, "as últimas especificações usadas"
+    assert janela._usar_ordem(dialogo.escolha)
+    assert janela._cfg_edicao.dimensoes.tolerancia_largura_mm == 4.0
+    assert janela._cfg_edicao.dimensoes.tolerancia_comprimento_mm == 9.0

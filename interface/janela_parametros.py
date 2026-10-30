@@ -20,6 +20,7 @@ from interface.estilo import icone
 from interface.janelas import JanelaAuxiliar
 from interface.registos import guardar_correcao, pasta_dataset
 from nucleo.config import CAMINHO_POR_OMISSAO, RAIZ, Config, carregar_configuracao
+from nucleo.especificacoes import repor_medidas
 
 
 FONTES = {"Pasta": "pasta", "Vídeo": "video", "Webcam": "webcam", "Câmara": "spinnaker"}
@@ -103,9 +104,11 @@ class Parametros:
             self.cb_perfil.setCurrentIndex(self.cb_perfil.findData(str(self._perfil.resolve())))
             self.cb_perfil.blockSignals(False)
             return
-        self._perfil, self._cfg_perfil, self._cfg_edicao = caminho, cfg, cfg
+        self._perfil, self._cfg_perfil, self._cfg_edicao, self._cfg_base = caminho, cfg, cfg, cfg
         for editor in (self.editor, self.editor_camara):
             editor.definir(cfg, perfil=cfg, nome_perfil=caminho.name)
+        if self._ordem is not None:  # a OF em uso fica, por cima da montagem nova
+            self._usar_ordem(self._ordem)
         if self.args.dataset is None:
             self._dataset = pasta_dataset(caminho)
         self.btn_corrigir_eng.setToolTip(f"A classe real deste saco: a imagem vai para {self._dataset}\\<classe>\\")
@@ -173,10 +176,12 @@ class Parametros:
             self._mensagem("Parâmetros enviados: entram no próximo saco.")
 
     def _repor(self) -> None:
-        self._parametros_mudaram(self._cfg_perfil)
+        self._parametros_mudaram(self._cfg_base)
 
     def _guardar(self) -> None:
         cfg = self._cfg_edicao
+        if self._ordem is not None:  # as medidas são do produto: no perfil da montagem só entra a montagem
+            cfg = repor_medidas(cfg, self._cfg_perfil)
         mudancas = diferencas(self._cfg_perfil, cfg)
         if not mudancas:
             self._mensagem("Nada a guardar: os valores são os do perfil.")
@@ -191,8 +196,10 @@ class Parametros:
             QMessageBox.critical(self, "Guardar no perfil", str(erro))
             return
         self._cfg_perfil = cfg
+        if self._ordem is None:
+            self._cfg_base = cfg
         for editor in (self.editor, self.editor_camara):
-            editor.definir(cfg, perfil=cfg)
+            editor.definir(self._cfg_edicao, perfil=self._cfg_base)
         self._mensagem(f"{len(mudancas)} valor(es) guardado(s) em {self._perfil.name}.")
 
     # --- Correções ---------------------------------------------------------------------

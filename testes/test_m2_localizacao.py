@@ -14,7 +14,8 @@ import mestre as m
 from modulos.m2_localizacao import Localizador
 from nucleo.contrato import Estado, SemSaco
 from nucleo.imagens import guardar_imagem
-from testes.apoio import CORES, alfa_retangulo, cena_saco, com_acentos, config_teste, diferenca_angulo, fundo
+from testes.apoio import (CORES, alfa_retangulo, cena_folha, cena_marcadores, cena_saco, com_acentos, config_teste, diferenca_angulo,
+                          fundo)
 
 PPM = 5.0
 CFG = config_teste(geral={"px_por_mm": PPM})
@@ -170,3 +171,278 @@ def test_tempo_numa_imagem_da_blackfly(rng):
         tempos.append((time.perf_counter() - inicio) * 1000)
     assert abs(saco.comprimento_mm - 150) < 1 and abs(saco.largura_mm - 55) < 1
     assert min(tempos) < 400, f"{min(tempos):.0f} ms"
+
+
+# --- Folha de referência (fotos à mão) ------------------------------------------------------
+
+CFG_FOLHA = config_teste(geral={"px_por_mm": PPM}, localizacao={
+    "referencia": "folha", "peso_luminosidade": 0.0, "limiar_delta_e": 8.0, "largura_max_mm": 150.0})
+# Cantos da folha na foto: de frente, em trapézio (telemóvel inclinado) e deitada e rodada.
+FOLHAS = {
+    "de_frente": [(250, 300), (1290, 300), (1290, 1771), (250, 1771)],
+    "trapezio": [(330, 280), (1210, 300), (1330, 1800), (190, 1770)],
+    "deitada": [(1400, 450), (1420, 1395), (90, 1420), (60, 480)],
+}
+
+
+@pytest.mark.parametrize("nome", FOLHAS)
+def test_folha_tira_a_perspetiva_e_da_os_mm(rng, nome):
+    img = cena_folha(rng, FOLHAS[nome], saco_mm=(120.0, 80.0), angulo=10.0)
+    r = m.Mestre(CFG_FOLHA, apenas=[]).inspecionar(img).relatorio("localizacao")
+    assert r.estado is Estado.OK, r.mensagem
+    medidas = r.medidas
+    assert abs(medidas["comprimento_mm"] - 120) < 0.6 and abs(medidas["largura_mm"] - 80) < 0.6, medidas
+    # O ângulo do saco na folha (10°) só é o mesmo se a folha estiver ao alto na imagem endireitada
+    if nome != "deitada":
+        assert diferenca_angulo(medidas["angulo_graus"], 10.0) < 0.5, medidas["angulo_graus"]
+
+
+def test_sem_folha_diz_porque(rng):
+    img, _ = cena_saco(rng, comprimento=150, largura=55, textura=True)
+    r = m.Mestre(CFG_FOLHA, apenas=[]).inspecionar(img)
+    assert r.estado is Estado.ERRO and "folha" in r.mensagem and "sem escala" in r.mensagem, r.mensagem
+
+
+def test_folha_cortada_pela_borda(rng):
+    cantos = [(-40, 300), (1290, 300), (1290, 1771), (-40, 1771)]
+    r = m.Mestre(CFG_FOLHA, apenas=[]).inspecionar(cena_folha(rng, cantos))
+    assert r.estado is Estado.ERRO and "folha" in r.mensagem and "sem escala" in r.mensagem, r.mensagem
+
+
+# --- Marcadores ArUco (fotos à mão, qualquer fundo) -----------------------------------------
+
+CFG_MARCADORES = config_teste(geral={"px_por_mm": PPM}, localizacao={
+    "referencia": "marcadores", "peso_luminosidade": 0.0, "limiar_delta_e": 8.0, "largura_max_mm": 150.0})
+# Cantos do plano (280 × 220 mm) na foto: de frente, em trapézio e rodado.
+PLANOS = {
+    "de_frente": [(200, 250), (1800, 250), (1800, 1507), (200, 1507)],
+    "trapezio": [(300, 230), (1700, 280), (1880, 1450), (120, 1480)],
+    "rodado": [(420, 120), (1890, 520), (1560, 1500), (90, 1100)],
+}
+
+
+@pytest.mark.parametrize("nome", PLANOS)
+@pytest.mark.parametrize("fundo", [(40, 90, 30), (20, 20, 20), (60, 160, 230)])
+def test_marcadores_tiram_a_perspetiva_e_dao_os_mm(rng, nome, fundo):
+    img = cena_marcadores(rng, PLANOS[nome], saco_mm=(120.0, 80.0), angulo=10.0, fundo=fundo)
+    r = m.Mestre(CFG_MARCADORES, apenas=[]).inspecionar(img).relatorio("localizacao")
+    assert r.estado is Estado.OK, r.mensagem
+    medidas = r.medidas
+    assert abs(medidas["comprimento_mm"] - 120) < 0.4 and abs(medidas["largura_mm"] - 80) < 0.4, medidas
+    # Os eixos da imagem endireitada são os do retângulo dos marcadores: o saco fica a 10° deles
+    assert diferenca_angulo(medidas["angulo_graus"], 10.0) < 0.5, medidas["angulo_graus"]
+
+
+def test_marcador_em_falta_diz_qual(rng):
+    img = cena_marcadores(rng, PLANOS["de_frente"])
+    img[200:700, 150:700] = 30  # tapa o marcador 0
+    r = m.Mestre(CFG_MARCADORES, apenas=[]).inspecionar(img)
+    assert r.estado is Estado.ERRO and "faltam os marcadores 0" in r.mensagem, r.mensagem
+
+
+def test_folha_dos_marcadores_para_imprimir():
+    from modulos.m2_localizacao import marcadores
+    folha = marcadores.folha_para_imprimir(40.0)
+    assert folha.shape == (3508, 2480)
+    cantos = marcadores.detetar(cv2.cvtColor(folha, cv2.COLOR_GRAY2BGR))
+    lado_px = np.linalg.norm(cantos[:, 1] - cantos[:, 0], axis=1)
+    assert np.allclose(lado_px, 40 / 25.4 * 300, atol=2), lado_px
+
+
+def test_referencia_auto_e_foto_sem_referencia(rng):
+    """auto: marcadores ou folha, o que houver; sem nenhum, a região e as medidas em px, e ERRO."""
+    cfg = dataclasses.replace(CFG_MARCADORES, localizacao=dataclasses.replace(CFG_MARCADORES.localizacao,
+                                                                              referencia="auto"))
+    mestre = m.Mestre(cfg, apenas=[])
+    for img in (cena_marcadores(rng, PLANOS["trapezio"]), cena_folha(rng, FOLHAS["trapezio"])):
+        medidas = mestre.inspecionar(img).relatorio("localizacao").medidas
+        assert abs(medidas["comprimento_mm"] - 120) < 0.6, medidas
+
+    img, _ = cena_saco(rng, comprimento=150, largura=55, ppm=5.0, textura=True)
+    r = mestre.inspecionar(img)
+    assert r.estado is Estado.ERRO and r.saco is not None and "sem escala" in r.mensagem, r.mensagem
+    medidas = r.relatorio("localizacao").medidas
+    assert abs(medidas["comprimento_px"] - 750) < 5 and abs(medidas["largura_px"] - 275) < 5, medidas
+    assert "comprimento_mm" not in medidas, "sem referência não há mm"
+
+
+# --- Segmentadores (ΔE, SAM 3, duplo) -------------------------------------------------------
+
+from modulos.m2_localizacao import fundo as fundo_m2, segmentadores  # noqa: E402
+from modulos.m2_localizacao.segmentadores import ResultadoSegmentacao, SegmentacaoIncerta  # noqa: E402
+from modulos.m2_localizacao.segmentadores import sam3 as seg_sam3  # noqa: E402
+from modulos.m2_localizacao.segmentadores.delta_e import SegmentadorDeltaE  # noqa: E402
+
+
+class _Fixo(segmentadores.Segmentador):
+    """Um segmentador que devolve sempre a mesma máscara (e o mapa de cor, como o SAM 3)."""
+
+    def __init__(self, mascara: np.ndarray, score: float = 0.9, nome: str = "fixo", mapa=None) -> None:
+        self.mascara, self.score, self.nome, self.mapa = mascara, score, nome, mapa
+
+    def segmentar(self, img, px_por_mm, guardar_intermedios=False):
+        mapa = self.mapa if self.mapa is not None else fundo_m2.lab(img, 1.0)
+        return ResultadoSegmentacao(self.mascara, self.score, self.nome, 0.0, mapa)
+
+
+def _verdade(rng, **kw):
+    """Uma cena com o saco de 150 × 55 mm e a sua máscara verdadeira (à resolução da imagem)."""
+    img, (cx, cy) = cena_saco(rng, comprimento=150, largura=55, **kw)
+    return img, alfa_retangulo(*img.shape[:2], cx, cy, 150 * PPM, 55 * PPM, kw.get("angulo", 23.0)) > 0.5
+
+
+def test_o_segmentador_por_omissao_e_o_delta_e(rng):
+    seg = segmentadores.criar(CFG)
+    assert isinstance(seg, SegmentadorDeltaE) and CFG.localizacao.segmentador == "delta_e"
+    img, verdade = _verdade(rng)
+    r = seg.segmentar(img, PPM)
+    assert r.backend == "delta_e" and r.mascara.dtype == bool and 0.5 < r.score <= 1 and r.tempo_ms > 0
+    assert segmentadores.iou(r.mascara, verdade) > 0.97, "a máscara reduzida, comparada na resolução total"
+
+
+def test_contorno_subpixel_com_o_mapa_de_cor(rng):
+    """Com o mapa CIELAB (o do SAM 3) as medidas saem tão certas como com o ΔE, mesmo com uma
+    máscara grosseira (2 px a mais em cada lado)."""
+    img, verdade = _verdade(rng, cor=CORES["azul"])
+    grosseira = cv2.dilate(verdade.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+    saco = Localizador(CFG, segmentador=_Fixo(grosseira)).localizar(img)
+    assert abs(saco.comprimento_mm - 150) < 0.3 and abs(saco.largura_mm - 55) < 0.3, \
+        (saco.comprimento_mm, saco.largura_mm)
+
+
+def test_sam3_escolhe_a_maior_mascara_confiante_e_completa():
+    def retangulo(x0, y0, x1, y1):
+        m = np.zeros((100, 120), bool)
+        m[y0:y1, x0:x1] = True
+        return m
+    pequena, grande, na_borda, incerta = (retangulo(10, 10, 30, 30), retangulo(20, 20, 100, 80),
+                                         retangulo(0, 10, 110, 90), retangulo(5, 5, 115, 95))
+    mascaras, scores = np.array([pequena, grande, na_borda, incerta]), np.array([0.95, 0.8, 0.9, 0.3])
+    mascara, score = seg_sam3.escolher(mascaras, scores, 0.5, rejeitar_borda=True)
+    assert np.array_equal(mascara, grande) and score == 0.8
+    assert np.array_equal(seg_sam3.escolher(mascaras, scores, 0.5, rejeitar_borda=False)[0], na_borda)
+    assert seg_sam3.escolher(mascaras, scores, 0.99, rejeitar_borda=True) is None
+    assert seg_sam3.escolher(np.zeros((0, 100, 120), bool), np.zeros(0), 0.5, True) is None
+
+
+def test_sam3_com_fake_mede_e_sem_confianca_da_erro(rng, monkeypatch):
+    img, verdade = _verdade(rng, cor=CORES["verde"])
+    cfg = config_teste(geral={"px_por_mm": PPM}, localizacao={"segmentador": "sam3"})
+    monkeypatch.setattr(seg_sam3, "mascaras_por_texto", lambda im, texto: (verdade[None], np.array([0.92])))
+    r = m.Mestre(cfg, apenas=[]).inspecionar(img)
+    medidas = r.relatorio("localizacao").medidas
+    assert r.relatorio("localizacao").estado is Estado.OK and medidas["score_segmentacao"] == 0.92
+    assert abs(medidas["comprimento_mm"] - 150) < 0.3 and abs(medidas["largura_mm"] - 55) < 0.3, medidas
+
+    monkeypatch.setattr(seg_sam3, "mascaras_por_texto", lambda im, texto: (verdade[None], np.array([0.2])))
+    r = m.Mestre(cfg, apenas=[]).inspecionar(img)
+    assert r.estado is Estado.ERRO and "segmentação incerta" in r.mensagem, r.mensagem
+    monkeypatch.setattr(seg_sam3, "mascaras_por_texto", lambda im, texto: (np.zeros((0, *img.shape[:2]), bool),
+                                                                            np.zeros(0)))
+    assert m.Mestre(cfg, apenas=[]).inspecionar(img).estado is Estado.ERRO, "sem máscara: nunca OK"
+
+
+def test_sam3_sem_fecho_nao_tapa_entalhes():
+    saco = np.zeros((200, 300), bool)
+    saco[50:150, 50:250] = True
+    saco[50:80, 140:146] = False  # entalhe de 6 px de largura, 30 de fundo
+    assert not seg_sam3.limpar(saco, 0.0)[60, 143], "sem fecho o entalhe fica"
+    assert seg_sam3.limpar(saco, 15.0)[60, 143], "um fecho largo tapa-o"
+
+
+@pytest.mark.parametrize("campo, valor", [("segmentador", "yolo"), ("sam3_score_min", 1.5), ("sam3_prompt", " "),
+                                          ("sam3_fecho_mm", -1.0), ("duplo_iou_min", 0.0),
+                                          ("aprendido_score_min", 1.5), ("aprendido_modelo", " ")])
+def test_opcoes_do_segmentador_sao_validadas(campo, valor):
+    with pytest.raises(ValueError, match=campo):
+        config_teste(localizacao={campo: valor})
+
+
+def test_duplo_aceita_quando_coincidem_e_manda_rever_quando_nao(rng, tmp_path):
+    img, verdade = _verdade(rng)
+    torta = np.roll(verdade, 40, axis=1)
+    duplo = segmentadores.SegmentadorDuplo(_Fixo(verdade, nome="a"), _Fixo(verdade, 0.9, "b"), 0.95, tmp_path / "rev")
+    r = duplo.segmentar(img, PPM)
+    assert r.medidas["iou_duplo"] == 1.0 and r.score == 0.9 and r.backend == "b+a"
+    saco = Localizador(CFG, segmentador=duplo).localizar(img)
+    assert abs(saco.comprimento_mm - 150) < 0.3
+
+    duplo = segmentadores.SegmentadorDuplo(_Fixo(verdade, nome="a"), _Fixo(torta, nome="b"), 0.95, tmp_path / "rev")
+    with pytest.raises(SegmentacaoIncerta, match="duvidosa"):
+        duplo.segmentar(img, PPM)
+    assert len(list((tmp_path / "rev").glob("*.png"))) == 1, "a foto fica para rever"
+
+
+@pytest.mark.skipif(not seg_sam3.disponivel(), reason="SAM 3 não instalado (ver o README)")
+def test_sam3_real_numa_foto():
+    import torch
+    from pathlib import Path
+    from nucleo.imagens import ler_imagem
+    if not torch.cuda.is_available():
+        pytest.skip("SAM 3 sem GPU: lento demais para os testes")
+    fotos = sorted(Path("dataset/telemovel").rglob("*.jp*g"))
+    if not fotos:
+        pytest.skip("sem fotos em dataset/telemovel")
+    try:
+        mascaras, scores = seg_sam3.mascaras_por_texto(ler_imagem(fotos[0]), "plastic bag")
+    except Exception as erro:  # sem acesso aos pesos no Hugging Face
+        pytest.skip(f"SAM 3 não carregou: {erro}")
+    assert mascaras.shape[0] == len(scores) and (len(scores) == 0 or mascaras.shape[1:] == ler_imagem(fotos[0]).shape[:2])
+
+
+# --- Segmentador aprendido (o modelo das fotos anotadas) ---------------------------------------
+
+from modulos.m2_localizacao.segmentadores.aprendido import Modelo, reduzir  # noqa: E402
+
+
+def _riscas(rng, angulo: float, cx: float, cy: float):
+    """Saco vermelho de 150 × 55 mm (5 px/mm) num fundo às riscas de duas cores, e a sua máscara."""
+    altura, largura = 1000, 1250
+    risca = ((np.arange(largura) // 40) % 2)[None, :, None] == 0
+    img = np.where(risca, np.float32((110, 115, 105)), np.float32((150, 95, 50))) + rng.normal(0, 3, (altura, largura, 3))
+    a = alfa_retangulo(altura, largura, cx, cy, 150 * PPM, 55 * PPM, angulo)[..., None]
+    img = img * (1 - a) + np.float32(CORES["vermelho"]) * a
+    return np.clip(img, 0, 255).astype(np.uint8), a[..., 0] > 0.5
+
+
+@pytest.fixture
+def modelo_riscas(rng, tmp_path):
+    """Um modelo que aprendeu uma foto anotada do fundo às riscas (como o anotar.py faz)."""
+    img, saco = _riscas(rng, 23.0, 640, 480)
+    pequena = reduzir(img)
+    modelo = Modelo()
+    modelo.aprender(pequena, cv2.resize(saco.astype(np.uint8), pequena.shape[1::-1], interpolation=cv2.INTER_NEAREST) > 0)
+    modelo.guardar(tmp_path)
+    return tmp_path / "modelo.npz"
+
+
+def test_aprendido_mede_o_saco_noutra_foto(rng, modelo_riscas):
+    img, _ = _riscas(rng, -30.0, 600, 520)
+    cfg = config_teste(geral={"px_por_mm": PPM}, localizacao={"segmentador": "aprendido",
+                                                              "aprendido_modelo": str(modelo_riscas)})
+    loc = m.Mestre(cfg, apenas=[]).inspecionar(img).relatorio("localizacao")
+    assert loc.estado is Estado.OK, loc.mensagem
+    medidas = loc.medidas
+    assert abs(medidas["comprimento_mm"] - 150) < 0.4 and abs(medidas["largura_mm"] - 55) < 0.4, medidas
+    assert diferenca_angulo(medidas["angulo_graus"], -30.0) < 0.3 and medidas["score_segmentacao"] > 0.9
+
+
+def test_aprendido_incerto_da_erro_e_sem_modelo_diz_como_criar(rng, modelo_riscas, tmp_path):
+    img, _ = _riscas(rng, 10.0, 620, 500)
+    cfg = config_teste(geral={"px_por_mm": PPM}, localizacao={"segmentador": "aprendido", "aprendido_score_min": 1.0,
+                                                              "aprendido_modelo": str(modelo_riscas)})
+    r = m.Mestre(cfg, apenas=[]).inspecionar(img)
+    assert r.estado is Estado.ERRO and "segmentação incerta" in r.mensagem, r.mensagem
+    sem = config_teste(localizacao={"segmentador": "aprendido", "aprendido_modelo": str(tmp_path / "nao.npz")})
+    with pytest.raises(FileNotFoundError, match="ferramentas.anotar"):
+        m.Mestre(sem)
+
+
+def test_limites_sem_escala_vem_dos_defines(rng, monkeypatch):
+    from modulos.m2_localizacao import escravo
+    cfg = config_teste(geral={"px_por_mm": PPM}, localizacao={"referencia": "marcadores"})
+    img, _ = cena_saco(rng, comprimento=150, largura=55)
+    assert m.Mestre(cfg, apenas=[]).inspecionar(img).estado is Estado.ERRO, "sem marcadores: px e ERRO"
+    monkeypatch.setattr(escravo.D, "M2_SEM_ESCALA_MAX", 0.1)  # nenhum saco cabe em 10 % do campo
+    r = m.Mestre(cfg, apenas=[]).inspecionar(img)
+    assert r.estado is Estado.SEM_SACO, r.mensagem

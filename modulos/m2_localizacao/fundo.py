@@ -17,7 +17,7 @@ from nucleo import defines as D
 def lab(img: np.ndarray, sigma_px: float) -> np.ndarray:
     """BGR uint8 → CIELAB float32 (L* 0–100, a*, b* com sinal), ligeiramente suavizada."""
     lab = cv2.cvtColor(img.astype(np.float32) / 255, cv2.COLOR_BGR2Lab)
-    return cv2.GaussianBlur(lab, (0, 0), max(sigma_px, 0.3))
+    return cv2.GaussianBlur(lab, (0, 0), max(sigma_px, D.M2_SUAVIZACAO_MIN_PX))
 
 
 def faixa_da_borda(forma: tuple[int, int], largura: int) -> np.ndarray:

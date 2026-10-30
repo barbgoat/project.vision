@@ -11,7 +11,9 @@
     └───────────────────────────────────────────────────────────────────────┘
 
 Cada conta tem um papel: "admin" faz tudo; "operador" só vê a vista Operador
-(iniciar/parar a produção, contadores, decidir os sacos em revisão).
+(iniciar/parar a produção, contadores, decidir os sacos em revisão) e escolhe,
+cria ou edita a ordem de fabrico (OF), identificando-se com o nome e o nº.
+O que cada papel pode fazer com as OFs e os produtos está em ACESSOS.
 
 As palavras-passe não estão no código em texto: só o seu SHA-256. Para mudar
 uma, calcular o novo valor e substituí-lo em CONTAS:
@@ -44,13 +46,25 @@ class Conta(NamedTuple):
 
 CONTAS = {
     "admin": Conta("admin", "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"),  # "admin"
-    "operador": Conta("operador", "e257b110509437aaceddbd342bc63d05e74221d6bac056ed279d752ff8d3afcb"),  # "operador"
+    "op": Conta("operador", "037aeaeaf4bbf26ddabe7256a8294dc52da48d575a1247b5c2598c47de7aebab"),  # "op"
 }
 # O que cada papel pode fazer (mostrado no menu da conta).
 PERMISSOES = {
-    "admin": "tudo: Ao vivo e Produção, Engenharia, histórico, definições, câmara",
-    "operador": "vista Operador: iniciar e parar a produção, contadores, decidir os sacos em revisão",
+    "admin": "tudo: Ao vivo e Produção, Engenharia, histórico, definições, câmara, dashboard, produtos e OFs",
+    "operador": "vista Operador: iniciar e parar a produção, contadores, decidir os sacos em revisão, "
+                "criar e editar a OF (com o nome e o nº)",
 }
+# Ordens de fabrico e produtos: o que cada papel pode fazer. Para dar ou tirar uma permissão, mudar aqui.
+#   producao_sem_of  iniciar a produção sem OF (ensaios); quem não pode escolhe a OF a cada início
+#   criar_of         criar uma OF e, se o produto for novo, a sua especificação
+#   editar_of        mudar os parâmetros de uma OF (só dessa OF)
+#   editar_produto   mudar ou duplicar a especificação de um produto que já existe
+#   dashboard        ver o dashboard: OFs, produtos, contagens
+ACESSOS = {
+    "admin": {"producao_sem_of", "criar_of", "editar_of", "editar_produto", "dashboard"},
+    "operador": {"criar_of", "editar_of"},
+}
+IDENTIFICAR = {"operador"}  # papéis que escrevem o nome e o nº de identificação ao criar ou editar uma OF
 
 LOGO_ALTURA_PX = 250  # altura do logótipo no cartão
 
@@ -102,6 +116,22 @@ def verificar(utilizador: str, palavra_passe: str) -> bool:
     conta = CONTAS.get(utilizador.strip())
     obtido = hashlib.sha256(palavra_passe.encode("utf-8")).hexdigest()
     return conta is not None and hmac.compare_digest(conta.sha256, obtido)
+
+
+def pode(papel: str, acao: str) -> bool:
+    """True se o papel tem a permissão (ACESSOS), p.ex. pode("operador", "dashboard") → False."""
+    return acao in ACESSOS.get(papel, set())
+
+
+def assinatura(papel: str, utilizador: str, nome: str = "", numero: str = "") -> str:
+    """Quem fica como autor de uma OF ou de um produto: o utilizador ou, se o papel tem de se
+    identificar, "Nome (nº 123)". ValueError se falta o nome ou o nº."""
+    if papel not in IDENTIFICAR:
+        return utilizador
+    nome, numero = nome.strip(), numero.strip()
+    if not nome or not numero:
+        raise ValueError("Escreve o teu nome e o teu nº de identificação.")
+    return f"{nome} (nº {numero})"
 
 
 def _rotulo(texto: str, nome: str) -> QLabel:

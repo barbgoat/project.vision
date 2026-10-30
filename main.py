@@ -5,6 +5,7 @@ Exemplos (na raiz do projeto, com o .venv ativo):
     python main.py --fonte video --video "D:\Vídeos\linha.mp4" --disparo virtual
     python main.py --fonte spinnaker --disparo sensor --guardar nok
     python main.py --pasta dataset\telemovel --config configuracoes\telemovel.json --depurar nok
+    python main.py --pasta dataset\telemovel --config configuracoes\telemovel.json --of 2026-0412 --produto PreVital
 
 Ciclo:
     M1 Aquisição (thread própria): fonte → disparo → passagens (uma por saco)
@@ -28,6 +29,7 @@ from mestre import Mestre
 from modulos.m1_aquisicao import AquisicaoEmParalelo, criar_disparo, criar_fonte
 from modulos.m7_saida import Saida
 from nucleo.config import CAMINHO_POR_OMISSAO, RAIZ, carregar_configuracao
+from nucleo.especificacoes import ErroRepositorio, Repositorio, caminho_base_dados, compor, resolver
 from nucleo.contrato import Estado, Resultado
 
 log = logging.getLogger("main")
@@ -69,6 +71,9 @@ def construir_parser() -> argparse.ArgumentParser:
         help="guardar a pasta de depuração (imagem de cada etapa, painel, JSON) dos sacos NOK/ERRO "
              "ou de todos (omissão: SAIDA_DEPURAR nos defines)",
     )
+    parser.add_argument("--of", default="", help="ordem de fabrico: usa a especificação guardada (base de dados)")
+    parser.add_argument("--produto", default="",
+                        help="produto (saco): usa a sua especificação; com uma --of nova, associa-lhe a OF")
     parser.add_argument("--mostrar", action="store_true", help="mostrar cada saco anotado numa janela")
     parser.add_argument("--detalhe", action="store_true", help="mostrar também o traceback completo dos erros")
     return parser
@@ -123,8 +128,19 @@ def main(argv: list[str] | None = None) -> int:
             cfg = dataclasses.replace(cfg, saida=dataclasses.replace(cfg.saida, guardar_imagens=args.guardar))
         if args.disparo:
             cfg = dataclasses.replace(cfg, disparo=dataclasses.replace(cfg.disparo, modo=args.disparo))
-        mestre = Mestre(cfg)
-    except (ValueError, FileNotFoundError) as erro:  # p.ex. localizacao.fundo_referencia em falta
+        repositorio, of, produto = None, "", ""
+        if args.of or args.produto:  # montagem → produto → OF
+            repositorio = Repositorio(caminho_base_dados(cfg, args.saida))
+            escolha = resolver(repositorio, args.of, args.produto)
+            if escolha.produto is None:
+                raise ValueError(f"O produto '{args.produto or '?'}' não tem especificação: cria-a na BIapp.")
+            if escolha.nova and escolha.of is not None:
+                repositorio.guardar(dataclasses.replace(escolha.of, autor="main.py"))
+            cfg = compor(cfg, escolha.produto, escolha.of)
+            of, produto = escolha.of.numero if escolha.of else "", escolha.produto.produto
+            log.info("Produto %s%s", produto, f", OF {of}" if of else "")
+        mestre = Mestre(cfg, of=of, produto=produto)
+    except (ValueError, FileNotFoundError, ErroRepositorio) as erro:  # p.ex. localizacao.fundo_referencia em falta
         log.error("%s", erro)
         return 2
     log.info("Módulos ativos: %s | disparo: %s", ", ".join(mestre.nomes), cfg.disparo.modo)
@@ -163,6 +179,11 @@ def main(argv: list[str] | None = None) -> int:
                 # Os módulos só produzem as imagens das etapas se forem precisas para a depuração.
                 resultado = mestre.inspecionar_passagem(passagem, guardar_intermedios=saida.depuracao is not None)
                 saida.registar(resultado)
+                if repositorio is not None:
+                    try:
+                        repositorio.registar(resultado, saida.pasta.name, estados.total() + 1, cfg)
+                    except ErroRepositorio as erro:  # a inspeção continua; o registo.csv tem tudo
+                        log.warning("%s", erro)
                 # O registo (CSV, imagens, depuração) também gasta tempo do saco seguinte.
                 ciclo_ms = (perf_counter() - inicio) * 1000
                 estados[resultado.estado] += 1

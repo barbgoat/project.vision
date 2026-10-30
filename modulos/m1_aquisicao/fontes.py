@@ -22,6 +22,7 @@ from typing import ClassVar, Literal, Self
 
 import cv2
 
+from modulos.m1_aquisicao.preprocessamento import carregar_calibracao
 from nucleo.config import Config
 from nucleo.contrato import Captura
 from nucleo.imagens import ler_imagem
@@ -164,7 +165,7 @@ class FontePasta(FonteImagem):
             imagem = ler_imagem(caminho)
             if imagem is not None:
                 instante = self._inicio + indice / self.fps if self.fps else time.time()
-                return Captura(imagem, str(caminho), instante)
+                return Captura(imagem, str(caminho), instante, fonte="pasta")
             log.warning("Ficheiro ignorado (não é uma imagem válida): %s", caminho)
         return None
 
@@ -210,7 +211,7 @@ class FonteVideo(FonteImagem):
         self._contador += 1
         # Instante do vídeo (não do relógio): as durações das passagens ficam as reais.
         instante = self._inicio + (self._contador - 1) / self.fps
-        return Captura(imagem, f"{self.caminho.name}#{self._contador}", instante)
+        return Captura(imagem, f"{self.caminho.name}#{self._contador}", instante, fonte="video")
 
     def fechar(self) -> None:
         if self._video is not None:
@@ -322,7 +323,8 @@ class FonteSpinnaker(FonteImagem):
         self._sistema = None  # PySpin.System
         self._lista = None  # PySpin.CameraList
         self._camara = None  # PySpin.CameraPtr
-        self._processador = None  # PySpin.ImageProcessor (Bayer -> BGR)
+        # A calibração da montagem (lente + plano do tapete), se o perfil a indicar: erro claro já
+        self.calibracao = carregar_calibracao(cfg.aquisicao.calibracao) if cfg.aquisicao.calibracao else None
         self._abrir()
 
     def _abrir(self) -> None:
@@ -381,8 +383,9 @@ class FonteSpinnaker(FonteImagem):
                StreamBufferCountManual ≈ 2 × fps: a aquisição corre numa
                thread própria (ver em_paralelo.py) que esvazia o buffer
                depressa, por isso não se deve perder nenhuma imagem.
-            6. processador = PySpin.ImageProcessor() com
-               SPINNAKER_COLOR_PROCESSING_ALGORITHM_HQ_LINEAR; câmara.BeginAcquisition().
+            6. câmara.BeginAcquisition(). (O debayer não é feito pelo SDK: a imagem
+               BayerRG8 bruta vai para preprocessamento.preparar, o mesmo caminho da
+               FonteSimulada.)
         """
         import PySpin  # só aqui: o resto do projeto não depende do Spinnaker SDK
 
@@ -400,8 +403,11 @@ class FonteSpinnaker(FonteImagem):
                com trigger (ninguém carregou no botão, não passou nenhum saco):
                tentar outra vez, sem erro, a não ser que self.parada (o
                programa está a terminar): então devolver None.
-            2. bgr = processador.Convert(img, PySpin.PixelFormat_BGR8).GetNDArray().copy()
-               (copy: o array aponta para memória gerida pelo SDK).
+            2. bruta = img.GetNDArray().copy() (copy: o array aponta para memória gerida
+               pelo SDK); bgr = preprocessamento.preparar(bruta, camara.formato_pixel,
+               self.calibracao): debayer, sem distorção da lente e no plano do tapete.
+               Captura(bgr, origem, instante, sensor, fonte="spinnaker",
+               px_por_mm=calibracao.px_por_mm, calibracao_id=calibracao.id).
             3. Sensor:
                - "sensor" + "janela": bit 0 (Line0) de
                  img.GetChunkData().GetExposureEndLineStatusAll() (já com o

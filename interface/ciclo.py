@@ -6,9 +6,11 @@
                imagem escolhida (◀ ▶). Um parâmetro mudado entra logo na análise
                seguinte. Não regista nada.
     Produção   como o main.py: fonte → disparo (trigger) → uma decisão por saco
-               → M7 (registo.csv, imagens). Os parâmetros mudados só entram
-               entre sacos, com aplicar(). Um saco não OK para a inspeção até
-               a janela decidir (descartar ou NOK) e chamar prosseguir().
+               → M7 (registo.csv, imagens) e a base de dados das OFs. Os
+               parâmetros e a OF mudados só entram entre sacos, com aplicar():
+               um saco já em análise acaba com a OF com que começou. Um saco
+               não OK para a inspeção até a janela decidir (descartar ou NOK)
+               e chamar prosseguir().
 
 A janela recebe cada saco duas vezes:
     registado  logo a seguir à decisão (Produção): para os contadores e o histórico;
@@ -38,6 +40,7 @@ from modulos.m1_aquisicao.fontes import FonteImagem, TipoFonte
 from modulos.m7_saida import Depuracao, Saida
 from nucleo.config import RAIZ, Config
 from nucleo.contrato import Captura, Estado, Resultado
+from nucleo.especificacoes import ErroRepositorio, Repositorio
 from nucleo.imagens import ler_imagem
 
 
@@ -56,8 +59,11 @@ class Pedido:
     modo: Modo
     fonte: TipoFonte
     caminho: Path | None  # a pasta ou o vídeo
-    cfg: Config
+    cfg: Config  # já com o produto e a OF por cima da montagem
     saida: Path  # pasta dos resultados (Produção)
+    of: str = ""  # a ordem de fabrico e o produto ("" = sem OF)
+    produto: str = ""
+    repositorio: Repositorio | None = None  # onde registar cada saco (Produção)
 
 
 @dataclass
@@ -138,6 +144,7 @@ class Ciclo(QThread):
         self._acordar = threading.Event()  # imagem nova, parâmetros novos, navegar ou parar
         self._parar = threading.Event()
         self._cfg_nova: Config | None = None
+        self._ordem_nova: tuple[str, str] | None = None  # (of, produto)
         self._captura: Captura | None = None  # Ao vivo: a imagem mais recente
         self._passo = 0  # Ao vivo com pasta: imagens a avançar
         self._fonte: FonteImagem | None = None
@@ -147,10 +154,12 @@ class Ciclo(QThread):
         self._fim = threading.Event()  # o ciclo acabou: a preparação despacha o que falta e termina
 
     # --- Comandos (chamados pela janela) -------------------------------------------------
-    def aplicar(self, cfg: Config) -> None:
-        """Parâmetros novos: ao vivo, na análise seguinte; em produção, a partir do próximo saco."""
+    def aplicar(self, cfg: Config, of: str | None = None, produto: str | None = None) -> None:
+        """Parâmetros novos (e a OF, se dada): ao vivo, na análise seguinte; em produção, a partir do próximo saco."""
         with self._trinco:
             self._cfg_nova = cfg
+            if of is not None:
+                self._ordem_nova = (of, produto or "")
         self._acordar.set()
 
     def navegar(self, passo: int) -> None:
@@ -218,7 +227,8 @@ class Ciclo(QThread):
 
     def _producao(self) -> None:
         p, cfg = self.pedido, self.pedido.cfg
-        mestre = Mestre(cfg)
+        ordem = (p.of, p.produto)
+        mestre = Mestre(cfg, of=p.of, produto=p.produto)
         self._fonte = criar_fonte(p.fonte, cfg, pasta=p.caminho, video=p.caminho)
         aquisicao = AquisicaoEmParalelo(self._fonte, criar_disparo(cfg), cfg.disparo.fila_max)
         with aquisicao, Saida(cfg, p.saida, mestre.nomes) as saida:
@@ -227,8 +237,9 @@ class Ciclo(QThread):
             for numero, passagem in enumerate(aquisicao, start=1):
                 with self._trinco:
                     nova, self._cfg_nova = self._cfg_nova, None
+                    ordem_nova, self._ordem_nova = self._ordem_nova, None
                 if nova is not None:
-                    cfg, mestre = self._trocar(cfg, mestre, nova)
+                    cfg, mestre, ordem = self._trocar(cfg, mestre, nova, ordem, ordem_nova or ordem)
                     # O desenho e o registo também usam a configuração (px_por_mm).
                     saida.cfg = cfg
                     if saida.depuracao is not None:
@@ -237,6 +248,11 @@ class Ciclo(QThread):
                 intermedios = self.etapas or saida.depuracao is not None
                 resultado = mestre.inspecionar_passagem(passagem, guardar_intermedios=intermedios)
                 saida.registar(resultado)
+                if p.repositorio is not None:
+                    try:
+                        p.repositorio.registar(resultado, saida.pasta.name, numero, cfg)
+                    except ErroRepositorio as erro:  # sem base de dados a linha continua: o registo.csv tem tudo
+                        log.warning("%s", erro)
                 ciclo_ms = _ms_desde(inicio)
                 self.descartadas = aquisicao.descartadas
                 rever = self.rever and resultado.estado is not Estado.OK
@@ -277,7 +293,7 @@ class Ciclo(QThread):
                 nova, self._cfg_nova = self._cfg_nova, None
                 passo, self._passo = self._passo, 0
             if nova is not None:
-                cfg, mestre = self._trocar(cfg, mestre, nova)
+                cfg, mestre, _ = self._trocar(cfg, mestre, nova)
             if ficheiros and passo:
                 indice = (indice + passo) % len(ficheiros)
                 self._carregar(ficheiros, indice)
@@ -327,16 +343,20 @@ class Ciclo(QThread):
             self._erro_leitura = erro
             self._acordar.set()
 
-    def _trocar(self, cfg: Config, mestre: Mestre, nova: Config) -> tuple[Config, Mestre]:
-        """Os parâmetros novos, se o Mestre os aceitar; senão fica tudo como estava."""
+    def _trocar(self, cfg: Config, mestre: Mestre, nova: Config, ordem: tuple[str, str] = ("", ""),
+                ordem_nova: tuple[str, str] = ("", "")) -> tuple[Config, Mestre, tuple[str, str]]:
+        """Os parâmetros (e a OF) novos, se o Mestre os aceitar; senão fica tudo como estava."""
         try:
-            novo = Mestre(nova)
+            novo = Mestre(nova, of=ordem_nova[0], produto=ordem_nova[1])
         except (ValueError, FileNotFoundError) as erro:  # p.ex. localizacao.fundo_referencia em falta
             self.mensagem.emit(f"Parâmetros não aplicados: {erro}")
-            return cfg, mestre
+            return cfg, mestre, ordem
         if self.pedido.modo == "producao":
-            self.mensagem.emit("Parâmetros aplicados a partir deste saco.")
-        return nova, novo
+            if ordem_nova != ordem:
+                self.mensagem.emit(f"{f'OF {ordem_nova[0]}' if ordem_nova[0] else 'Sem OF'} a partir deste saco.")
+            else:
+                self.mensagem.emit("Parâmetros aplicados a partir deste saco.")
+        return nova, novo, ordem_nova
 
 
 class Previsao(QThread):

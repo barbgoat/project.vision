@@ -53,6 +53,20 @@ OK, NOK, ERRO ou SEM_SACO.
 - Gralhas e valores incoerentes dão erro ao arrancar; o que o perfil muda aparece no log.
 - `python -m nucleo.config --config <perfil>` mostra todos os valores em uso.
 
+### Produto e OF
+
+Por cima do perfil da montagem entram a **especificação do produto** e os **ajustes da OF**
+(`nucleo/especificacoes.py`, `compor`). Só mudam o comprimento e a largura nominais e as
+tolerâncias (`MEDIDAS`); o resto é da montagem. O resultado é validado pela `Config` como qualquer perfil.
+A aplicação só fala com a base de dados pelo `Repositorio` (`procurar_of`, `procurar_produto`,
+`guardar`, `historico`): hoje SQLite local; um servidor REST ou o ERP/PLC entram com outra
+classe com os mesmos métodos. O Mestre leva a OF e o produto para cada `Resultado`; mudar de
+OF é criar outro Mestre entre sacos, por isso um saco em análise nunca muda de OF. O dashboard está
+separado: `nucleo/dashboard.py` tem os dados (`estado`: tudo em JSON) e a criação e alteração de
+produtos e OFs; `nucleo/servidor_dashboard.py` envia o estado por SSE sempre que a base de dados muda
+(`Repositorio.versao`); `interface/vista_dashboard.py` mostra-o, na BIapp (com os botões de editar,
+`interface/ordens.py`) e na janela do `biapp_dashboard.py`.
+
 ## Acrescentar um módulo
 
 1. `modulos/m8_<nome>/escravo.py`: classe que deriva de `Escravo` (`nome`, `pergunta`, `analisar`).
