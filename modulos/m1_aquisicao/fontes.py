@@ -387,7 +387,7 @@ class FonteSpinnaker(FonteImagem):
                BayerRG8 bruta vai para preprocessamento.preparar, o mesmo caminho da
                FonteSimulada.)
         """
-        import PySpin  # só aqui: o resto do projeto não depende do Spinnaker SDK
+        import PySpin  # noqa: F401  só aqui: o resto do projeto não depende do Spinnaker SDK
 
         raise NotImplementedError("FonteSpinnaker ainda não implementada (ver ferramentas/testar_camara.py).")
 

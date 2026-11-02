@@ -40,6 +40,6 @@ Está partido por etapas, um ficheiro cada:
     normalizacao.py   4. rodar, recortar, zona útil
 """
 
-from modulos.m2_localizacao.escravo import Localizador
+from modulos.m2_localizacao.escravo import Diagnostico, Localizador
 
-__all__ = ["Localizador"]
+__all__ = ["Diagnostico", "Localizador"]

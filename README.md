@@ -52,6 +52,7 @@ python biapp_dashboard.py                                                       
 python -m ferramentas.testar_modulo dimensoes <imagem ou pasta> --config configuracoes\telemovel.json
 python -m nucleo.config --config configuracoes\telemovel.json                                 # valores em uso
 python -m pytest
+python -m ruff check .                                                                        # verificação do código
 ```
 
 Resultados em `resultados/<data_hora>/`: `registo.csv` (um saco por linha, com

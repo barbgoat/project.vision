@@ -447,8 +447,8 @@ def test_dividir_sem_repetir_sacos():
     fotos = {f"{s}_{k}": {"saco": s, "tipo_saco": "B" if s == "s9" else "A", "fundo": "inox" if k == 0 else "preto"}
              for s in (f"s{i}" for i in range(10)) for k in range(3)}
     divisao = dividir(fotos, semente=1)
-    for saco in {m["saco"] for m in fotos.values()}:
-        assert len({divisao[n] for n, m in fotos.items() if m["saco"] == saco}) == 1, saco
+    for saco in {meta["saco"] for meta in fotos.values()}:
+        assert len({divisao[n] for n, meta in fotos.items() if meta["saco"] == saco}) == 1, saco
     assert {c: list(divisao.values()).count(c) for c in ("treino", "validacao", "teste")} == \
         {"treino": 21, "validacao": 6, "teste": 3}
     fora = dividir(fotos, fora_fundo="inox")

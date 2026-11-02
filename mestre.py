@@ -11,8 +11,8 @@ Para cada saco (uma passagem do M1, com as suas melhores imagens):
     4. junta os relatórios e decide o estado do saco.
 
 Tempo real: cada relatório traz o tempo do módulo (e o registo.csv também). Um escravo
-com <secção>.timeout_ms > 0 que demore mais fica com ERRO (a thread acaba sozinha em
-segundo plano: em Python não se interrompe uma thread). Com geral.paralelo, os escravos
+com <secção>.timeout_ms > 0 que demore mais fica com ERRO (a sua thread, daemon e só deste
+saco, acaba sozinha em segundo plano: em Python não se interrompe uma thread). Com geral.paralelo, os escravos
 correm ao mesmo tempo em threads (o OpenCV e o NumPy libertam o GIL); são sem estado,
 e o Saco, a Captura e a configuração são imutáveis.
 
@@ -30,10 +30,11 @@ sistema um módulo de cada vez.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import traceback
 from collections.abc import Callable, Iterable
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future
 from concurrent.futures import TimeoutError as TempoEsgotado
 from dataclasses import replace
 from pathlib import Path
@@ -43,7 +44,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from modulos.m2_localizacao import Localizador
+from modulos.m2_localizacao import Diagnostico, Localizador
 from modulos.m3_dimensoes import Dimensoes
 from modulos.m4_cor import Cor
 from modulos.m5_relevo import Relevo
@@ -96,7 +97,6 @@ class Mestre:
             classes = [e for e in ESCRAVOS if e.nome in pedidos]
         self.escravos: list[Escravo] = [classe() for classe in classes]
         self._avisados: set[str] = set()
-        self._threads: ThreadPoolExecutor | None = None  # só com paralelo ou timeouts
 
     @staticmethod
     def disponiveis() -> list[str]:
@@ -151,11 +151,12 @@ class Mestre:
             img.flags.writeable = False
 
         # 1. M2 Localização
+        diag = Diagnostico()
         saco, rel_localizacao = self._executar(
-            Localizador.nome, lambda: self.localizador.localizar(img, guardar_intermedios)
+            Localizador.nome, lambda: self.localizador.localizar(img, guardar_intermedios, diag)
         )
         rel_localizacao = replace(rel_localizacao, tempo_ms=rel_localizacao.tempo_ms + ms_folha,
-                                  medidas=self.localizador.medidas, intermedios=self.localizador.intermedios)
+                                  medidas=diag.medidas, intermedios=diag.intermedios)
         if rel_localizacao.estado is Estado.OK:
             if saco is None:
                 rel_localizacao = replace(rel_localizacao, estado=Estado.SEM_SACO,
@@ -188,9 +189,10 @@ class Mestre:
         Localiza-o à mesma, para se ver a região e as medidas em px, e dá ERRO (nunca é
         aprovado). Se nem assim houver saco, SEM_SACO com o motivo da referência.
         """
+        diag = Diagnostico()
         devolvido, rel = self._executar(
-            Localizador.nome, lambda: self.localizador.localizar_sem_escala(img, guardar_intermedios))
-        rel = replace(rel, tempo_ms=rel.tempo_ms + rel_referencia.tempo_ms, intermedios=self.localizador.intermedios)
+            Localizador.nome, lambda: self.localizador.localizar_sem_escala(img, guardar_intermedios, diag))
+        rel = replace(rel, tempo_ms=rel.tempo_ms + rel_referencia.tempo_ms, intermedios=diag.intermedios)
         if rel.estado is not Estado.OK or devolvido is None:
             return Resultado(img, Estado.SEM_SACO, None, [replace(rel_referencia, tempo_ms=rel.tempo_ms)],
                              _ms_desde(inicio), f"{Localizador.nome}: {rel_referencia.mensagem}")
@@ -257,13 +259,10 @@ class Mestre:
         paralelo = self.cfg.geral.paralelo
         if not paralelo and not any(self._limite_ms(e) for e in self.escravos):  # o caso simples: sem threads
             return [self._concluir(e, *self._executar(e.nome, chamada)) for e, chamada in chamadas]
-        if self._threads is None:
-            self._threads = ThreadPoolExecutor(max_workers=max(2, 2 * len(self.escravos)),
-                                               thread_name_prefix="escravo")
         inicio = perf_counter()
         futuros: dict[int, Future] = {}
         if paralelo:  # todos ao mesmo tempo; cada um conta o seu tempo limite desde o início
-            futuros = {i: self._threads.submit(self._executar, e.nome, c) for i, (e, c) in enumerate(chamadas)}
+            futuros = {i: self._em_thread(e.nome, c) for i, (e, c) in enumerate(chamadas)}
         relatorios = []
         for i, (escravo, chamada) in enumerate(chamadas):
             limite = self._limite_ms(escravo)
@@ -272,7 +271,7 @@ class Mestre:
                     relatorios.append(self._concluir(escravo, *self._executar(escravo.nome, chamada)))
                     continue
                 inicio = perf_counter()
-                futuros[i] = self._threads.submit(self._executar, escravo.nome, chamada)
+                futuros[i] = self._em_thread(escravo.nome, chamada)
             espera = None if not limite else max(0.0, limite / 1000 - (perf_counter() - inicio))
             try:
                 relatorios.append(self._concluir(escravo, *futuros[i].result(timeout=espera)))
@@ -282,6 +281,20 @@ class Mestre:
                                             mensagem=f"excedeu o tempo limite de {limite:g} ms "
                                                      f"({escravo.nome}.timeout_ms)"))
         return relatorios
+
+    def _em_thread(self, nome: str, chamada: Callable[[], Any]) -> Future:
+        """Corre _executar numa thread daemon nova, só deste saco: um escravo encravado não ocupa
+        o lugar dos sacos seguintes nem impede o programa de fechar."""
+        futuro: Future = Future()
+
+        def correr() -> None:
+            try:
+                futuro.set_result(self._executar(nome, chamada))
+            except BaseException as erro:
+                futuro.set_exception(erro)
+
+        threading.Thread(target=correr, name=f"escravo-{nome}", daemon=True).start()
+        return futuro
 
     def _limite_ms(self, escravo: Escravo) -> float:
         """O tempo limite do escravo (secção.timeout_ms); 0 = sem limite."""

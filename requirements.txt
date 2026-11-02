@@ -2,6 +2,7 @@ numpy==2.5.4
 opencv-python==5.0.0.93
 PySide6-Essentials==6.12.0  # interface gráfica (gui.py)
 pytest==8.4.2  # testes
+ruff==0.17.3  # verificação do código: python -m ruff check .
 
 # Segmentação com o SAM 3 (opcional: localizacao.segmentador = "sam3"; ver o README).
 # Precisa de GPU NVIDIA (CUDA >= 12.6) e de acesso aos pesos em huggingface.co/facebook/sam3:

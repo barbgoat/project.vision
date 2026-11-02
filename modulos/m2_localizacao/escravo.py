@@ -11,7 +11,7 @@ Liga as etapas pela ordem, um ficheiro cada:
 from __future__ import annotations
 
 import math
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 
 import cv2
 import numpy as np
@@ -22,8 +22,20 @@ from nucleo.config import Config
 from nucleo.contrato import Saco, SemSaco
 
 
+@dataclass
+class Diagnostico:
+    """Os valores (limiar usado, escala...) e as imagens das etapas de uma chamada ao M2.
+
+    É de quem chama, não do Localizador (sem estado entre chamadas); vai sendo preenchido,
+    por isso também mostra até onde o M2 chegou quando não encontra o saco ou falha.
+    """
+
+    medidas: dict[str, float] = field(default_factory=dict)
+    intermedios: dict[str, np.ndarray] = field(default_factory=dict)
+
+
 class Localizador:
-    """O escravo M2. Usa a secção localizacao da configuração."""
+    """O escravo M2. Usa a secção localizacao da configuração. Sem estado entre chamadas."""
 
     nome = "localizacao"
     pergunta = "Onde está o saco? Está completo?"
@@ -34,8 +46,6 @@ class Localizador:
         segmentador: para usar outro que não o de cfg.localizacao.segmentador (testes).
         """
         self.cfg = cfg
-        self.medidas: dict[str, float] = {}  # valores da última chamada (limiar usado, escala...)
-        self.intermedios: dict[str, np.ndarray] = {}  # imagens da última chamada, se pedidas
         self.segmentador = segmentador or segmentadores.criar(cfg)
 
     def retificar(self, img: np.ndarray) -> np.ndarray:
@@ -58,7 +68,8 @@ class Localizador:
         except SemSaco:
             raise SemSaco("sem referência (nem marcadores nem folha na foto)") from None
 
-    def localizar_sem_escala(self, img: np.ndarray, guardar_intermedios: bool = False) -> tuple[Saco, float]:
+    def localizar_sem_escala(self, img: np.ndarray, guardar_intermedios: bool = False,
+                             diagnostico: Diagnostico | None = None) -> tuple[Saco, float]:
         """O saco numa foto sem referência: (Saco, px por "mm" provisório).
 
         Sem a referência não há mm; a foto é tratada como tendo M2_SEM_ESCALA_CAMPO_MM de
@@ -72,36 +83,35 @@ class Localizador:
                       comprimento_max_mm=D.M2_SEM_ESCALA_MAX * campo,
                       largura_min_mm=D.M2_SEM_ESCALA_LARGURA_MIN * campo, largura_max_mm=D.M2_SEM_ESCALA_MAX * campo)
         provisorio = Localizador(replace(self.cfg, geral=replace(self.cfg.geral, px_por_mm=ppm), localizacao=loc))
-        try:
-            return provisorio.localizar(img, guardar_intermedios), ppm
-        finally:
-            self.medidas, self.intermedios = provisorio.medidas, provisorio.intermedios
+        return provisorio.localizar(img, guardar_intermedios, diagnostico), ppm
 
-    def localizar(self, img: np.ndarray, guardar_intermedios: bool = False) -> Saco:
+    def localizar(self, img: np.ndarray, guardar_intermedios: bool = False,
+                  diagnostico: Diagnostico | None = None) -> Saco:
         """Encontra o saco na imagem e normaliza a sua pose.
 
         Recebe:
             img: imagem original, BGR uint8 (Captura.imagem), só de leitura.
-            guardar_intermedios: se True, guarda em self.intermedios o mapa de
+            guardar_intermedios: se True, guarda em diagnostico.intermedios o mapa de
                 diferenças ao fundo, a máscara da segmentação e o recorte com a
                 zona útil contornada a amarelo.
+            diagnostico: se dado, recebe os valores e as imagens das etapas (ver Diagnostico).
 
         Devolve:
             O Saco com o recorte normalizado. Se não houver um saco completo e
             com dimensões plausíveis, levanta SemSaco com o motivo.
         """
         p = self.cfg.localizacao
-        self.medidas, self.intermedios = {}, {}
+        diag = diagnostico if diagnostico is not None else Diagnostico()
 
         # 1. Segmentação (o backend de localizacao.segmentador: ΔE, SAM 3 ou os dois)
         try:
             seg = self.segmentador.segmentar(img, self.cfg.geral.px_por_mm, guardar_intermedios)
         except SemSaco as erro:  # o ΔE junta o diagnóstico (limiar, mapa) ao motivo
-            self.medidas.update(getattr(erro, "medidas", {}))
-            self.intermedios.update(getattr(erro, "intermedios", {}))
+            diag.medidas.update(getattr(erro, "medidas", {}))
+            diag.intermedios.update(getattr(erro, "intermedios", {}))
             raise
-        self.medidas.update(seg.medidas, score_segmentacao=seg.score, tempo_segmentacao_ms=seg.tempo_ms)
-        self.intermedios.update(seg.intermedios)
+        diag.medidas.update(seg.medidas, score_segmentacao=seg.score, tempo_segmentacao_ms=seg.tempo_ms)
+        diag.intermedios.update(seg.intermedios)
         regiao = seg.mascara.astype(np.uint8) * 255
         if p.rejeitar_borda and segmentacao.toca_na_borda(regiao):
             raise SemSaco("o saco toca na borda da imagem (incompleto)")
@@ -140,7 +150,7 @@ class Localizador:
             vista = recorte.copy()
             zona, _ = cv2.findContours(mascara_util, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             cv2.drawContours(vista, zona, -1, (0, 255, 255), max(1, round(ppm / 4)))
-            self.intermedios["recorte"] = vista
+            diag.intermedios["recorte"] = vista
 
         return Saco(
             contorno=contorno,

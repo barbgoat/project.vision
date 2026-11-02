@@ -42,7 +42,7 @@ def construir_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = construir_parser().parse_args(argv)
+    args = construir_parser().parse_args(argv)  # noqa: F841  (usado quando a ferramenta for feita)
 
     # Fluxo previsto:
     # 1. cfg = carregar_configuracao(args.config); img = nucleo.imagens.ler_imagem(args.imagem)

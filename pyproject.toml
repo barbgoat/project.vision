@@ -1,3 +1,10 @@
 [tool.pytest.ini_options]
 testpaths = ["testes"]
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F"]  # erros reais (pyflakes) e o estilo básico; python -m ruff check .
+ignore = ["E501", "E741"]  # linhas um pouco acima de 120 e a variável "l" (largura) são aceites
