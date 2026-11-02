@@ -1,18 +1,17 @@
 r"""BIapp, a interface gráfica: ver tudo o que a inspeção faz, corrigir vereditos e afinar parâmetros.
 
-Exemplos (na raiz do projeto, com o .venv ativo):
+Exemplos (na raiz do projeto, com o .venv ativo e a câmara ligada):
     python gui.py
-    python gui.py --pasta dataset\telemovel --config configuracoes\telemovel.json
-    python gui.py --fonte video --video "D:\Vídeos\linha.mp4" --config configuracoes\linha.json --modo ao_vivo
+    python gui.py --config configuracoes\linha.json --modo trigger
 
-Modos (na barra de cima; pode-se trocar a correr):
-    Ao vivo     câmara/vídeo em contínuo, sem trigger: centrar o saco, luz, foco e afinar
-    Produção    com o trigger (disparo): uma decisão por saco, registada como no main.py
+Modos (na barra de cima; pode-se trocar a correr). Nos dois, uma decisão por saco, registada
+como no main.py:
+    Ao vivo     a câmara capta em contínuo e a barreira virtual separa os sacos
+    Trigger     a câmara só capta com o sinal do botão ou do sensor: um saco por sinal
 Vistas: Operador (o estado em grande) e Engenharia (etapas, log). Janelas à parte, pelos ícones:
-histórico, câmara (exposição, ganho, trigger), definições (perfil, fonte, parâmetros) e conta.
+histórico, câmara (exposição, ganho, trigger), definições (perfil, parâmetros) e conta.
 Abre com login (interface/login.py): admin faz tudo; operador só vê a vista Operador.
-O perfil, a fonte e a pasta escolhem-se nas definições e ficam lembrados; os argumentos só dão os
-valores iniciais.
+O perfil escolhe-se nas definições e fica lembrado; os argumentos só dão os valores iniciais.
 """
 
 from __future__ import annotations
@@ -27,21 +26,16 @@ from nucleo.config import CAMINHO_POR_OMISSAO, RAIZ
 
 def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="BIapp: interface gráfica da inspeção de sacos.")
-    parser.add_argument("--fonte", choices=["pasta", "video", "webcam", "spinnaker"],
-                        help="origem das imagens (omissão: a da última vez, senão pasta)")
-    parser.add_argument("--pasta", type=Path, help="pasta com as imagens, para --fonte pasta")
-    parser.add_argument("--video", type=Path, help="ficheiro de vídeo, para --fonte video")
     parser.add_argument("--config", type=Path,
                         help=f"perfil inicial (omissão: o da última vez, senão {CAMINHO_POR_OMISSAO.name})")
-    parser.add_argument("--modo", choices=["ao_vivo", "producao"], default="producao",
-                        help="modo inicial (omissão: %(default)s)")
+    parser.add_argument("--modo", choices=["ao_vivo", "trigger"],
+                        help="modo inicial (omissão: disparo.modo do perfil)")
     parser.add_argument("--vista", choices=["operador", "engenharia"], default="engenharia",
                         help="vista inicial (omissão: %(default)s)")
     parser.add_argument("--saida", type=Path, default=RAIZ / "resultados",
                         help="pasta para os resultados e o correcoes.csv (omissão: resultados/)")
     parser.add_argument("--dataset", type=Path,
-                        help="montagem do dataset para as correções (omissão: dataset/telemovel com o perfil "
-                             "telemovel, senão dataset/blackfly)")
+                        help="pasta do dataset para as correções (omissão: dataset/<nome do perfil>)")
     return parser
 
 
@@ -74,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     utilizador = pedir_login()
     if utilizador is None:
         return 0
-    janela = Janela(args, utilizador, QSettings(NOME_APP, NOME_APP))  # lembra o perfil, a fonte e a pasta
+    janela = Janela(args, utilizador, QSettings(NOME_APP, NOME_APP))  # lembra o perfil
     janela.showMaximized()
     return app.exec()
 

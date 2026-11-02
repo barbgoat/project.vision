@@ -14,7 +14,7 @@ import mestre as m
 from modulos.m2_localizacao import Localizador
 from nucleo.contrato import Estado, SemSaco
 from nucleo.imagens import guardar_imagem
-from testes.apoio import (CORES, alfa_retangulo, cena_folha, cena_marcadores, cena_saco, com_acentos, config_teste, diferenca_angulo,
+from testes.apoio import (CORES, alfa_retangulo, cena_saco, com_acentos, config_teste, diferenca_angulo,
                           fundo)
 
 PPM = 5.0
@@ -173,99 +173,6 @@ def test_tempo_numa_imagem_da_blackfly(rng):
     assert min(tempos) < 400, f"{min(tempos):.0f} ms"
 
 
-# --- Folha de referência (fotos à mão) ------------------------------------------------------
-
-CFG_FOLHA = config_teste(geral={"px_por_mm": PPM}, localizacao={
-    "referencia": "folha", "peso_luminosidade": 0.0, "limiar_delta_e": 8.0, "largura_max_mm": 150.0})
-# Cantos da folha na foto: de frente, em trapézio (telemóvel inclinado) e deitada e rodada.
-FOLHAS = {
-    "de_frente": [(250, 300), (1290, 300), (1290, 1771), (250, 1771)],
-    "trapezio": [(330, 280), (1210, 300), (1330, 1800), (190, 1770)],
-    "deitada": [(1400, 450), (1420, 1395), (90, 1420), (60, 480)],
-}
-
-
-@pytest.mark.parametrize("nome", FOLHAS)
-def test_folha_tira_a_perspetiva_e_da_os_mm(rng, nome):
-    img = cena_folha(rng, FOLHAS[nome], saco_mm=(120.0, 80.0), angulo=10.0)
-    r = m.Mestre(CFG_FOLHA, apenas=[]).inspecionar(img).relatorio("localizacao")
-    assert r.estado is Estado.OK, r.mensagem
-    medidas = r.medidas
-    assert abs(medidas["comprimento_mm"] - 120) < 0.6 and abs(medidas["largura_mm"] - 80) < 0.6, medidas
-    # O ângulo do saco na folha (10°) só é o mesmo se a folha estiver ao alto na imagem endireitada
-    if nome != "deitada":
-        assert diferenca_angulo(medidas["angulo_graus"], 10.0) < 0.5, medidas["angulo_graus"]
-
-
-def test_sem_folha_diz_porque(rng):
-    img, _ = cena_saco(rng, comprimento=150, largura=55, textura=True)
-    r = m.Mestre(CFG_FOLHA, apenas=[]).inspecionar(img)
-    assert r.estado is Estado.ERRO and "folha" in r.mensagem and "sem escala" in r.mensagem, r.mensagem
-
-
-def test_folha_cortada_pela_borda(rng):
-    cantos = [(-40, 300), (1290, 300), (1290, 1771), (-40, 1771)]
-    r = m.Mestre(CFG_FOLHA, apenas=[]).inspecionar(cena_folha(rng, cantos))
-    assert r.estado is Estado.ERRO and "folha" in r.mensagem and "sem escala" in r.mensagem, r.mensagem
-
-
-# --- Marcadores ArUco (fotos à mão, qualquer fundo) -----------------------------------------
-
-CFG_MARCADORES = config_teste(geral={"px_por_mm": PPM}, localizacao={
-    "referencia": "marcadores", "peso_luminosidade": 0.0, "limiar_delta_e": 8.0, "largura_max_mm": 150.0})
-# Cantos do plano (280 × 220 mm) na foto: de frente, em trapézio e rodado.
-PLANOS = {
-    "de_frente": [(200, 250), (1800, 250), (1800, 1507), (200, 1507)],
-    "trapezio": [(300, 230), (1700, 280), (1880, 1450), (120, 1480)],
-    "rodado": [(420, 120), (1890, 520), (1560, 1500), (90, 1100)],
-}
-
-
-@pytest.mark.parametrize("nome", PLANOS)
-@pytest.mark.parametrize("fundo", [(40, 90, 30), (20, 20, 20), (60, 160, 230)])
-def test_marcadores_tiram_a_perspetiva_e_dao_os_mm(rng, nome, fundo):
-    img = cena_marcadores(rng, PLANOS[nome], saco_mm=(120.0, 80.0), angulo=10.0, fundo=fundo)
-    r = m.Mestre(CFG_MARCADORES, apenas=[]).inspecionar(img).relatorio("localizacao")
-    assert r.estado is Estado.OK, r.mensagem
-    medidas = r.medidas
-    assert abs(medidas["comprimento_mm"] - 120) < 0.4 and abs(medidas["largura_mm"] - 80) < 0.4, medidas
-    # Os eixos da imagem endireitada são os do retângulo dos marcadores: o saco fica a 10° deles
-    assert diferenca_angulo(medidas["angulo_graus"], 10.0) < 0.5, medidas["angulo_graus"]
-
-
-def test_marcador_em_falta_diz_qual(rng):
-    img = cena_marcadores(rng, PLANOS["de_frente"])
-    img[200:700, 150:700] = 30  # tapa o marcador 0
-    r = m.Mestre(CFG_MARCADORES, apenas=[]).inspecionar(img)
-    assert r.estado is Estado.ERRO and "faltam os marcadores 0" in r.mensagem, r.mensagem
-
-
-def test_folha_dos_marcadores_para_imprimir():
-    from modulos.m2_localizacao import marcadores
-    folha = marcadores.folha_para_imprimir(40.0)
-    assert folha.shape == (3508, 2480)
-    cantos = marcadores.detetar(cv2.cvtColor(folha, cv2.COLOR_GRAY2BGR))
-    lado_px = np.linalg.norm(cantos[:, 1] - cantos[:, 0], axis=1)
-    assert np.allclose(lado_px, 40 / 25.4 * 300, atol=2), lado_px
-
-
-def test_referencia_auto_e_foto_sem_referencia(rng):
-    """auto: marcadores ou folha, o que houver; sem nenhum, a região e as medidas em px, e ERRO."""
-    cfg = dataclasses.replace(CFG_MARCADORES, localizacao=dataclasses.replace(CFG_MARCADORES.localizacao,
-                                                                              referencia="auto"))
-    mestre = m.Mestre(cfg, apenas=[])
-    for img in (cena_marcadores(rng, PLANOS["trapezio"]), cena_folha(rng, FOLHAS["trapezio"])):
-        medidas = mestre.inspecionar(img).relatorio("localizacao").medidas
-        assert abs(medidas["comprimento_mm"] - 120) < 0.6, medidas
-
-    img, _ = cena_saco(rng, comprimento=150, largura=55, ppm=5.0, textura=True)
-    r = mestre.inspecionar(img)
-    assert r.estado is Estado.ERRO and r.saco is not None and "sem escala" in r.mensagem, r.mensagem
-    medidas = r.relatorio("localizacao").medidas
-    assert abs(medidas["comprimento_px"] - 750) < 5 and abs(medidas["largura_px"] - 275) < 5, medidas
-    assert "comprimento_mm" not in medidas, "sem referência não há mm"
-
-
 # --- Segmentadores (ΔE, SAM 3, duplo) -------------------------------------------------------
 
 from modulos.m2_localizacao import fundo as fundo_m2, segmentadores  # noqa: E402
@@ -380,9 +287,10 @@ def test_sam3_real_numa_foto():
     from nucleo.imagens import ler_imagem
     if not torch.cuda.is_available():
         pytest.skip("SAM 3 sem GPU: lento demais para os testes")
-    fotos = sorted(Path("dataset/telemovel").rglob("*.jp*g"))
+    from nucleo.imagens import listar_imagens
+    fotos = listar_imagens("dataset") if Path("dataset").is_dir() else []
     if not fotos:
-        pytest.skip("sem fotos em dataset/telemovel")
+        pytest.skip("sem imagens em dataset/")
     try:
         mascaras, scores = seg_sam3.mascaras_por_texto(ler_imagem(fotos[0]), "plastic bag")
     except Exception as erro:  # sem acesso aos pesos no Hugging Face
@@ -438,16 +346,6 @@ def test_aprendido_incerto_da_erro_e_sem_modelo_diz_como_criar(rng, modelo_risca
         m.Mestre(sem)
 
 
-def test_limites_sem_escala_vem_dos_defines(rng, monkeypatch):
-    from modulos.m2_localizacao import escravo
-    cfg = config_teste(geral={"px_por_mm": PPM}, localizacao={"referencia": "marcadores"})
-    img, _ = cena_saco(rng, comprimento=150, largura=55)
-    assert m.Mestre(cfg, apenas=[]).inspecionar(img).estado is Estado.ERRO, "sem marcadores: px e ERRO"
-    monkeypatch.setattr(escravo.D, "M2_SEM_ESCALA_MAX", 0.1)  # nenhum saco cabe em 10 % do campo
-    r = m.Mestre(cfg, apenas=[]).inspecionar(img)
-    assert r.estado is Estado.SEM_SACO, r.mensagem
-
-
 # --- Espaço métrico canónico ---------------------------------------------------------------
 
 def test_imagem_de_outra_escala_e_reamostrada_para_a_do_perfil(rng):
@@ -461,6 +359,6 @@ def test_imagem_de_outra_escala_e_reamostrada_para_a_do_perfil(rng):
     assert r.imagem.shape[:2] == (1000, 1250), "a imagem analisada está à escala do perfil"
     assert mestre.inspecionar(img).estado is Estado.SEM_SACO, "sem a escala, 300 mm: fora dos limites"
     captura = Captura(img, "camara#1", 0.0, px_por_mm=10.0, fonte="spinnaker")
-    r = mestre.inspecionar_passagem(Passagem(1, [captura], [0.0], 1, 0.0, 0.0, "foto"))
+    r = mestre.inspecionar_passagem(Passagem(1, [captura], [0.0], 1, 0.0, 0.0, "trigger"))
     assert abs(r.relatorio("localizacao").medidas["comprimento_mm"] - 150) < 0.3
     assert m.no_espaco_metrico(img, 5.0, 5.0) is img and m.no_espaco_metrico(img, None, 5.0) is img

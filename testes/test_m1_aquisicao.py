@@ -1,10 +1,11 @@
-"""M1 Aquisição: fontes (pasta, vídeo), disparo (foto/botão, sensor, barreira virtual) e aquisição em paralelo."""
+"""M1 Aquisição: a câmara (Basler emulada), o disparo (ao vivo e trigger) e a aquisição em paralelo."""
 
 from __future__ import annotations
 
 import dataclasses
 import json
 import math
+import threading
 import time
 
 import cv2
@@ -13,16 +14,15 @@ import pytest
 
 import main as programa
 import mestre as m
-from modulos.m1_aquisicao import AquisicaoEmParalelo, FonteVideo, criar_disparo, criar_fonte
-from modulos.m1_aquisicao.disparo import DisparoFoto, DisparoSensor, DisparoVirtual
+from modulos.m1_aquisicao import AquisicaoEmParalelo, criar_disparo, criar_fonte
+from modulos.m1_aquisicao.disparo import DisparoAoVivo, DisparoTrigger
 from modulos.m1_aquisicao.fontes import FonteImagem
 from nucleo.contrato import Captura, Estado, Passagem
 from nucleo.imagens import guardar_imagem, ler_imagem
-from testes.apoio import COMPRIMENTO, LARGURA, Linha, com_acentos, config_teste, montagem
+from testes.apoio import COMPRIMENTO, LARGURA, CamaraSimulada, Linha, com_acentos, com_camara, config_teste, montagem
 
 PPM, FPS, VEL = Linha.PPM, Linha.FPS, Linha.VELOCIDADE
-CFG_VIRTUAL = config_teste(geral={"px_por_mm": PPM}, disparo={"modo": "virtual", "fps": FPS})
-CFG_SENSOR = config_teste(geral={"px_por_mm": PPM}, disparo={"modo": "sensor", "fps": FPS})
+CFG_VIRTUAL = config_teste(geral={"px_por_mm": PPM}, disparo={"modo": "ao_vivo", "fps": FPS})
 
 
 @pytest.fixture(scope="module")
@@ -39,7 +39,7 @@ def gravacao(linha):
 
 @pytest.fixture(scope="module")
 def passagens_virtuais(gravacao):
-    return list(DisparoVirtual(CFG_VIRTUAL).passagens(gravacao[0]))
+    return list(DisparoAoVivo(CFG_VIRTUAL).passagens(gravacao[0]))
 
 
 # --- Fontes -------------------------------------------------------------------------------
@@ -54,36 +54,42 @@ def test_ler_e_guardar_imagem_com_acentos(tmp_path):
     assert np.array_equal(ler_imagem(caminho), IMAGEM)
 
 
-def test_fonte_pasta_le_subpastas_e_salta_imagens_corrompidas(tmp_path):
-    pasta = com_acentos(tmp_path)
-    guardar_imagem(pasta / "ok" / "saco ã 1.png", IMAGEM)
-    guardar_imagem(pasta / "rugas" / "saco é 2.png", IMAGEM)
-    (pasta / "rugas" / "corrompida.jpg").write_bytes(b"xx")
-    with criar_fonte("pasta", config_teste(), pasta=pasta) as fonte:
-        n, capturas = len(fonte), list(fonte)
-    assert n == 3 and len(capturas) == 2
-    assert all(np.array_equal(c.imagem, IMAGEM) for c in capturas)
-
-
-def test_fonte_video_com_acentos(tmp_path):
-    temporario = tmp_path / "v.mp4"  # o VideoWriter não aceita acentos
-    escritor = cv2.VideoWriter(str(temporario), cv2.VideoWriter_fourcc(*"mp4v"), 24, (64, 48))
-    for k in range(10):
-        escritor.write(np.full((48, 64, 3), 20 * k, np.uint8))
-    escritor.release()
-    video = com_acentos(tmp_path) / "vídeo linha ç.mp4"
-    temporario.rename(video)
-    fonte = FonteVideo(video)
+def test_basler_emulada_repoe_a_camara_partilhada(monkeypatch):
+    """A FonteBasler com a câmara emulada do pylon (PYLON_CAMEMU): ao vivo dá imagens; com trigger e sem
+    sinal fica à espera até parar(); ao fechar, a exposição, o ganho e o trigger voltam aos originais."""
+    pytest.importorskip("pypylon")
+    monkeypatch.setenv("PYLON_CAMEMU", "1")
+    cfg = config_teste(camara={"serial": "0815-0000", "formato_pixel": "Mono8"},
+                       aquisicao={"exposicao_us": 5000.0, "ganho_raw": 300}, disparo={"modo": "ao_vivo"})
+    with criar_fonte(cfg) as fonte:
+        camara = fonte._camara
+        originais = dict(fonte._originais)
+        assert camara.ExposureTimeAbs.GetValue() == 5000.0 and camara.GainRaw.GetValue() == 300
+        capturas = [fonte.ler() for _ in range(2)]
+    assert all(c.imagem.ndim == 3 and c.sensor is None and c.origem.startswith("basler:0815-0000#") for c in capturas)
+    camara.Open()
     try:
-        assert sum(1 for _ in fonte) == 10
+        assert camara.ExposureTimeAbs.GetValue() == originais["ExposureTimeAbs"]
+        assert camara.GainRaw.GetValue() == originais["GainRaw"]
+    finally:
+        camara.Close()
+
+    fonte = criar_fonte(dataclasses.replace(cfg, disparo=dataclasses.replace(cfg.disparo, modo="trigger")))
+    try:
+        assert fonte._camara.TriggerMode.GetValue() == "On" and fonte._camara.TriggerSource.GetValue() == "Line1"
+        threading.Timer(0.5, fonte.parar).start()
+        assert fonte.ler() is None
     finally:
         fonte.fechar()
+    fonte.fechar()  # duas vezes não faz mal
+    with pytest.raises(RuntimeError, match="não encontrada"):
+        criar_fonte(config_teste(camara={"serial": "999"}))
 
 
-@pytest.mark.parametrize("tipo", ["webcam", "spinnaker"])
-def test_fontes_por_implementar(tipo):
-    with pytest.raises(NotImplementedError):
-        criar_fonte(tipo, config_teste())
+def test_basler_sem_numero_de_serie_diz_o_que_falta():
+    pytest.importorskip("pypylon")
+    with pytest.raises(RuntimeError, match="camara.serial"):
+        criar_fonte(config_teste())
 
 
 # --- Barreira virtual ---------------------------------------------------------------------
@@ -108,7 +114,7 @@ def test_m2_encontra_o_saco_inteiro_na_primeira_candidata(passagens_virtuais):
 
 def test_virtual_sacos_encostados_nao_sao_aprovados(linha):
     imagens, _ = linha.gerar(n_sacos=2, encostados=True)
-    passagens = list(DisparoVirtual(CFG_VIRTUAL).passagens(linha.capturas(imagens, prefixo="c")))
+    passagens = list(DisparoAoVivo(CFG_VIRTUAL).passagens(linha.capturas(imagens, prefixo="c")))
     assert len(passagens) == 1, "inseparáveis por uma barreira (como com um sensor físico)"
     r = m.Mestre(CFG_VIRTUAL, apenas=[]).inspecionar_passagem(passagens[0])
     assert r.estado is Estado.ERRO and ("fora dos limites" in r.mensagem or "nenhuma" in r.mensagem)
@@ -117,47 +123,18 @@ def test_virtual_sacos_encostados_nao_sao_aprovados(linha):
 def test_virtual_saco_parado_da_aviso(linha):
     vazio = [Captura(linha.imagem([]), f"v#{i}", 1000 - (10 - i) / FPS) for i in range(10)]
     parado = [Captura(linha.imagem([(125, 100, 0, Linha.CORES[0])]), f"p#{i}", 1000 + i / FPS) for i in range(80)]
-    passagens = list(DisparoVirtual(CFG_VIRTUAL).passagens(vazio + parado))
+    passagens = list(DisparoAoVivo(CFG_VIRTUAL).passagens(vazio + parado))
     assert passagens and "mais de" in passagens[0].aviso
 
 
 def test_virtual_falha_de_imagens_a_meio(gravacao):
     capturas = gravacao[0]
     com_falha = capturas[:40] + [dataclasses.replace(c, instante=c.instante + 1.0) for c in capturas[40:]]
-    passagens = list(DisparoVirtual(CFG_VIRTUAL).passagens(com_falha))
+    passagens = list(DisparoAoVivo(CFG_VIRTUAL).passagens(com_falha))
     assert any("faltaram imagens" in p.aviso for p in passagens) or len(passagens) == 6
 
 
-# --- Sensor -------------------------------------------------------------------------------
-
-def test_sensor_janela(gravacao):
-    capturas, sensor = gravacao
-    com_sensor = [dataclasses.replace(c, sensor=s) for c, s in zip(capturas, sensor)]
-    passagens = list(DisparoSensor(CFG_SENSOR).passagens(com_sensor))
-    assert len(passagens) == 6
-    assert all(abs(p.duracao_ms - COMPRIMENTO / VEL * 1000) < 80 for p in passagens)
-    assert all(p.pontuacoes[0] is not None and p.pontuacoes[0] < 0.1 for p in passagens)
-
-
-def test_sensor_rajada(linha):
-    rajadas = []
-    for n in range(6):
-        t0 = 1001 + n * 0.5
-        for k in range(5):
-            img = linha.imagem([(Linha.CAMPO[0] / 2 + (k - 2) * VEL / FPS, 100, 0, Linha.CORES[n])])
-            rajadas.append(Captura(img, f"rajada{n + 1}#{k + 1}", t0 + k / FPS, sensor=True))
-    passagens = list(DisparoSensor(CFG_SENSOR).passagens(rajadas))
-    assert len(passagens) == 6 and all(p.num_imagens == 5 for p in passagens)
-    assert all(p.candidatas[0].origem.endswith("#3") for p in passagens), \
-        "sem fundo conhecido, a 1.ª candidata é a do meio da rajada"
-
-
-def test_sensor_sem_sensor_na_fonte_da_erro_claro(gravacao):
-    with pytest.raises(ValueError, match="virtual"):
-        list(DisparoSensor(CFG_SENSOR).passagens(gravacao[0][:3]))
-
-
-# --- Foto e botão -------------------------------------------------------------------------
+# --- Trigger (botão ou sensor) -----------------------------------------------------------
 
 IMG = np.zeros((4, 4, 3), np.uint8)
 
@@ -166,20 +143,20 @@ def test_botao_com_saltos_conta_uma_vez():
     # Dois toques no botão (t = 0 s e t = 2 s), cada um com saltos nos primeiros 15 ms.
     instantes = [0.000, 0.004, 0.009, 0.015, 2.000, 2.003, 2.011]
     capturas = [Captura(IMG, f"cam#{i}", 100 + t, sensor=True) for i, t in enumerate(instantes)]
-    disparo = DisparoFoto(config_teste())
+    disparo = DisparoTrigger(config_teste())
     assert [p.candidatas[0].origem for p in disparo.passagens(capturas)] == ["cam#0", "cam#4"]
     assert disparo.ignoradas == 5
 
 
-def test_fotos_de_uma_pasta_nunca_sao_ignoradas():
-    fotos = [Captura(IMG, f"foto{i}.jpg", 100 + i * 0.001) for i in range(5)]
-    disparo = DisparoFoto(config_teste())
-    assert len(list(disparo.passagens(fotos))) == 5 and disparo.ignoradas == 0
+def test_dois_sinais_afastados_contam_os_dois():
+    sinais = [Captura(IMG, "a", 100.0, sensor=True), Captura(IMG, "b", 100.5, sensor=True)]
+    passagens = list(DisparoTrigger(config_teste()).passagens(sinais))
+    assert len(passagens) == 2 and all(p.modo == "trigger" and p.num_imagens == 1 for p in passagens)
 
 
-def test_dois_toques_afastados_contam_os_dois():
-    toques = [Captura(IMG, "a", 100.0, sensor=True), Captura(IMG, "b", 100.5, sensor=True)]
-    assert len(list(DisparoFoto(config_teste()).passagens(toques))) == 2
+def test_trigger_com_a_camara_em_continuo_da_erro_claro(gravacao):
+    with pytest.raises(ValueError, match="ao_vivo"):
+        list(DisparoTrigger(config_teste()).passagens(gravacao[0][:3]))
 
 
 # --- Mestre: uma decisão por saco ---------------------------------------------------------
@@ -193,40 +170,18 @@ def test_mestre_analisa_a_primeira_candidata(passagens_virtuais):
 
 def test_mestre_nenhuma_candidata_com_o_saco_inteiro_da_erro(gravacao):
     capturas = gravacao[0]
-    cortadas = Passagem(99, [capturas[k] for k in (18, 19, 20)], [math.inf] * 3, 3, 0, 0.1, "virtual")
+    cortadas = Passagem(99, [capturas[k] for k in (18, 19, 20)], [math.inf] * 3, 3, 0, 0.1, "ao_vivo")
     r = m.Mestre(CFG_VIRTUAL, apenas=[]).inspecionar_passagem(cortadas)
     assert r.estado is Estado.ERRO and r.imagens_analisadas == 3 and "nenhuma das 3" in r.mensagem
 
 
 def test_mestre_passagem_descartada_da_erro_sem_imagem():
-    descartada = Passagem(100, [], [], 12, 0, 0.3, "sensor", aviso="não analisada: teste", descartada=True)
+    descartada = Passagem(100, [], [], 12, 0, 0.3, "ao_vivo", aviso="não analisada: teste", descartada=True)
     r = m.Mestre(CFG_VIRTUAL, apenas=[]).inspecionar_passagem(descartada)
     assert r.estado is Estado.ERRO and r.imagem is None and "teste" in r.mensagem
 
 
 # --- Aquisição em paralelo ----------------------------------------------------------------
-
-class CamaraSimulada(FonteImagem):
-    """Entrega as imagens ao ritmo real, sem esperar pela análise (como uma câmara)."""
-
-    ao_vivo = True
-
-    def __init__(self, capturas, avaria_em: int | None = None):
-        self.capturas, self.i, self.avaria_em = capturas, 0, avaria_em
-
-    def ler(self):
-        if self.i == self.avaria_em:
-            raise RuntimeError("câmara desligada")
-        if self.i >= len(self.capturas):
-            return None
-        time.sleep(1 / FPS)
-        c = self.capturas[self.i]
-        self.i += 1
-        return dataclasses.replace(c, instante=time.time())
-
-    def fechar(self):
-        self.i = len(self.capturas)
-
 
 def _receber(fonte, cfg, segundos_por_saco):
     recebidas = []
@@ -238,20 +193,20 @@ def _receber(fonte, cfg, segundos_por_saco):
 
 
 def test_paralelo_analise_a_tempo_nao_perde_nada(gravacao):
-    recebidas, descartadas = _receber(CamaraSimulada(gravacao[0]), CFG_VIRTUAL, 0.15)
+    recebidas, descartadas = _receber(CamaraSimulada(gravacao[0], intervalo_s=1 / FPS), CFG_VIRTUAL, 0.15)
     assert len(recebidas) == 6 and descartadas == 0
 
 
 def test_paralelo_analise_lenta_descarta_mas_regista(gravacao):
-    cfg = config_teste(geral={"px_por_mm": PPM}, disparo={"modo": "virtual", "fps": FPS, "fila_max": 1})
-    recebidas, descartadas = _receber(CamaraSimulada(gravacao[0]), cfg, 0.9)  # 0,9 s por saco, para 2 sacos/s
+    cfg = config_teste(geral={"px_por_mm": PPM}, disparo={"modo": "ao_vivo", "fps": FPS, "fila_max": 1})
+    recebidas, descartadas = _receber(CamaraSimulada(gravacao[0], intervalo_s=1 / FPS), cfg, 0.9)  # 0,9 s por saco, para 2 sacos/s
     assert len(recebidas) == 6, "nunca se perde um saco em silêncio"
     assert descartadas > 0 and any(p.descartada for p in recebidas)
 
 
 def test_paralelo_erro_na_thread_chega_ao_programa(gravacao):
     with pytest.raises(RuntimeError, match="câmara desligada"):
-        _receber(CamaraSimulada(gravacao[0], avaria_em=20), CFG_VIRTUAL, 0)
+        _receber(CamaraSimulada(gravacao[0], intervalo_s=1 / FPS, avaria_em=20), CFG_VIRTUAL, 0)
 
 
 class CamaraSemSacos(FonteImagem):
@@ -280,10 +235,10 @@ def test_paralelo_sair_sem_sacos_a_passar_liberta_a_camara():
 
 
 def test_main_camara_que_desliga_a_meio_mostra_o_resumo(gravacao, tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(programa, "criar_fonte", lambda *a, **k: CamaraSimulada(gravacao[0], avaria_em=60))
+    com_camara(monkeypatch, programa, lambda cfg: CamaraSimulada(gravacao[0], intervalo_s=1 / FPS, avaria_em=60))
     perfil = tmp_path / "montagem.json"
     perfil.write_text(json.dumps(montagem(geral={"px_por_mm": PPM}, disparo={"fps": FPS})), encoding="utf-8")
-    codigo = programa.main(["--fonte", "webcam", "--disparo", "virtual", "--config", str(perfil),
+    codigo = programa.main(["--disparo", "ao_vivo", "--config", str(perfil),
                             "--saida", str(tmp_path / "resultados")])
     consola = capsys.readouterr().out
     assert codigo == 1, "a câmara falhou: não pode acabar como se estivesse tudo bem"
@@ -313,7 +268,7 @@ def test_captura_com_iluminacoes_e_compativel():
     c = Captura(difusa, "x.png", 1.0)
     assert c.imagens == {"difusa": difusa} and c.imagem is difusa, "Captura(imagem, ...) continua a funcionar"
     assert c.imagem_para("rasante") is difusa, "sem a rasante, a difusa"
-    c2 = Captura({"difusa": difusa, "rasante": rasante}, "x", 1.0, px_por_mm=7.9, calibracao_id="linha1", fonte="spinnaker")
+    c2 = Captura({"difusa": difusa, "rasante": rasante}, "x", 1.0, px_por_mm=7.9, calibracao_id="linha1", fonte="basler")
     assert c2.imagem_para("rasante") is rasante and c2.px_por_mm == 7.9 and c2.calibracao_id == "linha1"
     with pytest.raises(dataclasses.FrozenInstanceError):
         c.origem = "outra"
@@ -326,14 +281,8 @@ def test_captura_com_iluminacoes_e_compativel():
 
 def test_passagem_da_o_id_do_saco_as_candidatas():
     img = np.zeros((4, 6, 3), np.uint8)
-    p = Passagem(7, [Captura(img, "a", 0.0), Captura(img, "b", 0.1)], [0.1, 0.2], 2, 0.0, 0.1, "foto")
+    p = Passagem(7, [Captura(img, "a", 0.0), Captura(img, "b", 0.1)], [0.1, 0.2], 2, 0.0, 0.1, "ao_vivo")
     assert [c.id_saco for c in p.candidatas] == [7, 7]
-
-
-def test_fontes_dizem_quem_sao(tmp_path):
-    guardar_imagem(tmp_path / "a.png", np.zeros((8, 8, 3), np.uint8))
-    with criar_fonte("pasta", config_teste(), pasta=tmp_path) as fonte:
-        assert fonte.ler().fonte == "pasta"
 
 
 def test_debayer_bayer_rg8_recupera_as_cores():
@@ -347,6 +296,8 @@ def test_debayer_bayer_rg8_recupera_as_cores():
     assert pre.debayer(bgr, "BGR8") is bgr
     with pytest.raises(ValueError, match="BayerRG12p"):
         pre.debayer(bgr, "BayerRG12p")
+    for formato in ("BayerBG8", "BayerGB8", "BayerGR8", "Mono8"):
+        assert pre.debayer(np.zeros((8, 8), np.uint8), formato).shape == (8, 8, 3)
 
 
 def test_calibracao_tira_a_distorcao_da_lente(tmp_path):
@@ -382,5 +333,5 @@ def test_calibracao_com_homografia_e_erros_claros(tmp_path):
         pre.carregar_calibracao(tmp_path / "nao.npz")
     with pytest.raises(ValueError, match="calibracao"):
         config_teste(aquisicao={"calibracao": "cal.txt"})
-    with pytest.raises(FileNotFoundError, match="aquisicao.calibracao"):  # a câmara carrega-a logo ao abrir
-        criar_fonte("spinnaker", config_teste(aquisicao={"calibracao": str(tmp_path / "nao.npz")}))
+    with pytest.raises(FileNotFoundError, match="aquisicao.calibracao"):  # a câmara carrega-a antes de abrir
+        criar_fonte(config_teste(aquisicao={"calibracao": str(tmp_path / "nao.npz")}))

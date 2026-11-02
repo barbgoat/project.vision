@@ -44,7 +44,7 @@ _LINHA_PX = 22  # altura de cada linha de texto do resumo
 
 
 def nome_curto(origem: str) -> str:
-    """Parte da origem que serve para nome de ficheiro, p.ex. "saco_007" ou "webcam0_17"."""
+    """Parte da origem que serve para nome de ficheiro, p.ex. "saco_007" ou "basler_24350001_17"."""
     return re.sub(r"[^\w\-]+", "_", Path(origem).stem)[:60] or "imagem"
 
 
@@ -102,7 +102,7 @@ class Depuracao:
             except Exception:
                 log.exception("Depuração: o desenho falhou.")
         passagem = resultado.passagem
-        if passagem is not None and passagem.modo != "foto":
+        if passagem is not None and len(passagem.candidatas) > 1:
             for i, captura in enumerate(passagem.candidatas, start=1):
                 etapas.append((f"disparo_candidata_{i}", captura.imagem))
         for relatorio in resultado.relatorios:
@@ -165,7 +165,7 @@ class Depuracao:
         if resultado.mensagem:
             linhas.append(f"   {resultado.mensagem}")
         p = resultado.passagem
-        if p is not None and p.modo != "foto":
+        if p is not None:
             linhas.append(f"disparo ({p.modo}): passagem {p.numero}, {p.num_imagens} imagens em {p.duracao_ms:.0f} ms; "
                           f"analisada a candidata {resultado.imagens_analisadas}" + (f"; AVISO: {p.aviso}" if p.aviso else ""))
         for r in resultado.relatorios:

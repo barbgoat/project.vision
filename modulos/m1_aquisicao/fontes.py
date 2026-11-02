@@ -1,37 +1,32 @@
-"""M1 Aquisição, fontes: de onde vêm as imagens.
+"""M1 Aquisição, fontes: de onde vêm as imagens. Só câmaras.
+
+    FonteBasler     câmara Basler acA1300-30gm (GigE legacy, partilhada), através do pypylon
+    (Blackfly)      câmara FLIR Blackfly S, através do PySpin: comentada no fim deste
+                    ficheiro, para ligar mais tarde
 
 Todas as fontes têm a mesma interface (FonteImagem) e entregam Capturas, uma
-imagem de cada vez. Quem junta as imagens em passagens de sacos é o disparo
-(disparo.py).
+imagem de cada vez, em BGR uint8 (a convenção do OpenCV). Quem junta as imagens
+em passagens de sacos é o disparo (disparo.py). A câmara é configurada conforme
+disparo.modo: "ao_vivo" (contínuo, a disparo.fps) ou "trigger" (uma imagem por
+cada sinal na entrada disparo.trigger_linha).
 
-As imagens são sempre entregues em BGR uint8 (a convenção do OpenCV).
-O PySpin só é importado dentro de FonteSpinnaker, para que o resto do projeto
-funcione em máquinas sem o Spinnaker SDK.
+O pypylon só é importado dentro da FonteBasler: o resto do projeto (e os testes)
+funcionam numa máquina sem ele.
 """
 
 from __future__ import annotations
 
 import logging
-import shutil
-import tempfile
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
-from pathlib import Path
-from typing import ClassVar, Literal, Self
+from typing import Any, ClassVar, Self
 
-import cv2
-
-from modulos.m1_aquisicao.preprocessamento import carregar_calibracao
+from modulos.m1_aquisicao.preprocessamento import carregar_calibracao, preparar
 from nucleo.config import Config
 from nucleo.contrato import Captura
-from nucleo.imagens import ler_imagem
 
 log = logging.getLogger(__name__)
-
-EXTENSOES_IMAGEM = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
-
-TipoFonte = Literal["pasta", "video", "webcam", "spinnaker"]
 
 
 class FonteImagem(ABC):
@@ -43,9 +38,8 @@ class FonteImagem(ABC):
     mesmo que haja uma exceção.
     """
 
-    # True nas fontes ao vivo (câmaras): as imagens chegam ao ritmo da linha e
-    # não se pode esperar por elas; False nas gravadas (pasta, vídeo).
-    ao_vivo: ClassVar[bool] = False
+    # True nas câmaras: as imagens chegam ao ritmo da linha e não se pode esperar por elas.
+    ao_vivo: ClassVar[bool] = True
     # Posto a True por parar(), noutra thread. Uma fonte que espera por imagens
     # (câmara com trigger, sem nenhum saco a passar) verifica-o entre esperas.
     parada: bool = False
@@ -55,9 +49,9 @@ class FonteImagem(ABC):
         """Adquire a imagem seguinte.
 
         Devolve:
-            A Captura seguinte, ou None quando a fonte terminou (fim da pasta,
-            câmara desligada, fonte fechada). Falhas pontuais (p.ex. uma imagem
-            incompleta da câmara) devem ser resolvidas cá dentro, tentando de novo.
+            A Captura seguinte, ou None quando a fonte terminou (câmara desligada,
+            fonte fechada). Falhas pontuais (p.ex. uma imagem incompleta) devem ser
+            resolvidas cá dentro, tentando de novo.
         """
 
     @abstractmethod
@@ -84,352 +78,250 @@ class FonteImagem(ABC):
         self.fechar()
 
 
-def criar_fonte(
-    tipo: TipoFonte,
-    cfg: Config,
-    pasta: str | Path | None = None,
-    video: str | Path | None = None,
-    indice: int = 0,
-    numero_serie: str | None = None,
-) -> FonteImagem:
-    """Cria a fonte pedida pelo Mestre.
+def criar_fonte(cfg: Config, numero_serie: str | None = None) -> FonteImagem:
+    """A câmara, já aberta e configurada para cfg.disparo.modo.
 
-    Recebe:
-        tipo: "pasta", "video", "webcam" ou "spinnaker".
-        cfg: configuração (usa as secções aquisicao e disparo).
-        pasta: para "pasta", a pasta com as imagens (inclui subpastas).
-        video: para "video", o ficheiro de vídeo.
-        indice: para "webcam", o número da câmara no sistema.
-        numero_serie: para "spinnaker", o nº de série (None = a primeira).
-    Devolve:
-        A fonte, já aberta.
+    numero_serie: o da câmara a usar (None = a primeira encontrada).
+    Para passar à Blackfly: descomentar a FonteSpinnaker (no fim deste ficheiro) e devolvê-la aqui.
     """
-    if tipo == "pasta":
-        if pasta is None:
-            raise ValueError("A fonte 'pasta' precisa do caminho da pasta.")
-        # Com fotos soltas o instante não importa; numa sequência (modos sensor/virtual)
-        # as imagens ficam espaçadas como se tivessem sido tiradas a disparo.fps.
-        fps = None if cfg.disparo.modo == "foto" else cfg.disparo.fps
-        return FontePasta(pasta, fps=fps)
-    if tipo == "video":
-        if video is None:
-            raise ValueError("A fonte 'video' precisa do caminho do ficheiro de vídeo.")
-        return FonteVideo(video)
-    if tipo == "webcam":
-        return FonteWebcam(indice)
-    if tipo == "spinnaker":
-        return FonteSpinnaker(cfg, numero_serie)
-    raise ValueError(f"Tipo de fonte desconhecido: {tipo!r}")
+    return FonteBasler(cfg, numero_serie)
 
 
-# --- Pasta de fotografias ----------------------------------------------------------
+# --- Câmara Basler acA1300-30gm (pypylon) ------------------------------------------------
 
-class FontePasta(FonteImagem):
-    """Imagens de uma pasta (e subpastas), por ordem alfabética do caminho.
+class FonteBasler(FonteImagem):
+    """Câmara Basler GigE legacy (acA1300-30gm) através do pypylon. A câmara é PARTILHADA.
 
-    Captura.origem é o caminho do ficheiro; no dataset, o nome da pasta-mãe
-    (ok, risco, rugas...) é a classe real da imagem.
+    Abre-se pelo nº de série (camara.serial); se não aparecer na procura e houver camara.ip,
+    liga-se por esse IP e confirma o nº de série. Muda só a exposição (ExposureTimeAbs), o
+    ganho (GainRaw) e o trigger, guardando antes o valor original de cada um, e repõe-os ao
+    fechar (o trigger primeiro). Nunca grava nem carrega User Sets.
+
+    Modos (cfg.disparo.modo):
+        "ao_vivo"  TriggerMode = Off; a câmara capta em contínuo e ler() dá a imagem mais
+                   recente (GrabStrategy_LatestImageOnly). Captura.sensor = None.
+        "trigger"  TriggerMode = On na entrada disparo.trigger_linha: uma imagem por sinal, pela
+                   ordem (GrabStrategy_OneByOne). Captura.sensor = True e Captura.instante pelo
+                   relógio da câmara, para o disparo ignorar os ressaltos do botão.
     """
 
-    def __init__(self, pasta: str | Path, recursiva: bool = True, fps: float | None = None) -> None:
-        """Lista as imagens da pasta.
+    def __init__(self, cfg: Config, numero_serie: str | None = None) -> None:
+        self.cfg = cfg
+        self.numero_serie = numero_serie or cfg.camara.serial
+        self.trigger = cfg.disparo.modo == "trigger"
+        self.calibracao = carregar_calibracao(cfg.aquisicao.calibracao) if cfg.aquisicao.calibracao else None
+        self._camara: Any = None  # pylon.InstantCamera
+        self._originais: list[tuple[str, Any]] = []  # (parâmetro, valor antes de o mudar), pela ordem
+        self._relogio: tuple[int, float] | None = None  # (1.º timestamp da câmara, time.time() nesse momento)
+        self._frequencia: float | None = None  # ticks por segundo do relógio da câmara (None = usar o do PC)
+        self._abrir()
 
-        Recebe:
-            pasta: a pasta.
-            recursiva: incluir as subpastas.
-            fps: se dado, as imagens são tratadas como uma sequência filmada a
-                esta cadência (Captura.instante = início + n/fps), para testar
-                o disparo com imagens tiradas de um vídeo.
-        """
-        self.pasta = Path(pasta)
-        if not self.pasta.is_dir():
-            raise FileNotFoundError(f"Pasta não encontrada: {self.pasta}")
-        padrao = "**/*" if recursiva else "*"
-        self.ficheiros = sorted(
-            p for p in self.pasta.glob(padrao) if p.suffix.lower() in EXTENSOES_IMAGEM and p.is_file()
-        )
-        if not self.ficheiros:
-            log.warning("Nenhuma imagem (%s) em %s", " ".join(EXTENSOES_IMAGEM), self.pasta)
-        self.fps = fps
-        self._inicio = time.time()
-        self._seguinte = 0
+    def _abrir(self) -> None:
+        try:
+            from pypylon import genicam, pylon
+        except ImportError as erro:
+            raise RuntimeError("Câmara Basler: falta o pypylon (pip install pypylon).") from erro
+        if not self.numero_serie:
+            raise RuntimeError("Câmara Basler: falta o nº de série no perfil (camara.serial).")
+        fabrica = pylon.TlFactory.GetInstance()
+        info = next((d for d in fabrica.EnumerateDevices() if d.GetSerialNumber() == self.numero_serie), None)
+        if info is None and self.cfg.camara.ip:  # p.ex. noutra sub-rede: ligar diretamente pelo IP
+            info = pylon.DeviceInfo()
+            info.SetDeviceClass("BaslerGigE")
+            info.SetIpAddress(self.cfg.camara.ip)
+        if info is None:
+            raise RuntimeError(f"Câmara Basler {self.numero_serie} não encontrada (cabo, alimentação, IP da placa de "
+                               "rede; ou pôr o IP da câmara em camara.ip).")
+        try:
+            self._camara = pylon.InstantCamera(fabrica.CreateDevice(info))
+            self._camara.Open()
+        except genicam.GenericException as erro:
+            self._camara = None
+            raise RuntimeError(f"Câmara Basler {self.numero_serie}: não abriu; está em uso por outra aplicação "
+                               f"(p.ex. o pylon Viewer) ou inacessível ({erro}).") from erro
+        serie = self._camara.GetDeviceInfo().GetSerialNumber()
+        if serie != self.numero_serie:  # pelo IP respondeu outra câmara
+            self.fechar()
+            raise RuntimeError(f"Câmara Basler: em {self.cfg.camara.ip} está a {serie}, não a {self.numero_serie}.")
+        try:
+            self._configurar()
+            tick = self._camara.GetNodeMap().GetNode("GevTimestampTickFrequency")
+            self._frequencia = tick.GetValue() if genicam.IsReadable(tick) else None  # ticks por segundo
+            self._camara.StartGrabbing(pylon.GrabStrategy_OneByOne if self.trigger
+                                       else pylon.GrabStrategy_LatestImageOnly)
+        except genicam.GenericException as erro:
+            self.fechar()
+            raise RuntimeError(f"Câmara Basler {self.numero_serie}: {erro}") from erro
+        log.info("Câmara Basler %s (nº %s), modo %s", self._camara.GetDeviceInfo().GetModelName(),
+                 self.numero_serie, self.cfg.disparo.modo)
 
-    def __len__(self) -> int:
-        return len(self.ficheiros)
+    def _mudar(self, nome: str, valor: Any) -> None:
+        """Muda um parâmetro da câmara, guardando antes o valor original (reposto em fechar())."""
+        no = getattr(self._camara, nome)
+        self._originais.append((nome, no.GetValue()))
+        no.SetValue(valor)
+
+    def _configurar(self) -> None:
+        """Exposição, ganho e trigger (nomes do modelo legacy). Nunca User Sets: a câmara é partilhada."""
+        c, a, d = self._camara, self.cfg.aquisicao, self.cfg.disparo
+        if c.TriggerMode.GetValue() == "On":
+            log.warning("A câmara %s já vinha com TriggerMode=On (deixado por outra aplicação?).", self.numero_serie)
+        self._mudar("ExposureTimeAbs", float(a.exposicao_us))
+        if a.ganho_raw >= 0:
+            self._mudar("GainRaw", int(a.ganho_raw))
+        self._mudar("TriggerSelector", "FrameStart")
+        if self.trigger:
+            self._mudar("TriggerSource", d.trigger_linha)
+            self._mudar("TriggerActivation", d.trigger_ativacao)
+            self._mudar("TriggerMode", "On")
+        else:
+            self._mudar("TriggerMode", "Off")  # ao vivo: a captar em contínuo
+
+    def adquirir(self) -> Captura | None:
+        """Uma só imagem (GrabOne), p.ex. para ver se a câmara responde; None se não chegar a tempo.
+        Para a aquisição contínua (é para uma imagem solta, não para usar com ler())."""
+        from pypylon import pylon
+
+        self._camara.StopGrabbing()
+        resultado = self._camara.GrabOne(self.cfg.aquisicao.timeout_ms, pylon.TimeoutHandling_Return)
+        try:
+            return self._captura(resultado) if resultado.IsValid() and resultado.GrabSucceeded() else None
+        finally:
+            resultado.Release()
 
     def ler(self) -> Captura | None:
-        while self._seguinte < len(self.ficheiros):
-            caminho = self.ficheiros[self._seguinte]
-            indice = self._seguinte
-            self._seguinte += 1
-            imagem = ler_imagem(caminho)
-            if imagem is not None:
-                instante = self._inicio + indice / self.fps if self.fps else time.time()
-                return Captura(imagem, str(caminho), instante, fonte="pasta")
-            log.warning("Ficheiro ignorado (não é uma imagem válida): %s", caminho)
+        """A imagem seguinte. Com trigger, espera pelo sinal (sem erro) até parar()."""
+        from pypylon import genicam, pylon
+
+        while not self.parada and self._camara is not None and self._camara.IsGrabbing():
+            try:
+                resultado = self._camara.RetrieveResult(self.cfg.aquisicao.timeout_ms, pylon.TimeoutHandling_Return)
+            except genicam.GenericException as erro:  # a câmara desligou-se
+                log.error("Câmara Basler: %s", erro)
+                return None
+            if not resultado.IsValid():
+                continue  # nada no tempo limite: normal com trigger (não passou nenhum saco)
+            try:
+                if resultado.GrabSucceeded():
+                    return self._captura(resultado)
+                log.warning("Câmara Basler: imagem incompleta (%s)", resultado.GetErrorDescription())
+            finally:
+                resultado.Release()
         return None
 
-    def fechar(self) -> None:
-        # Não há nada aberto; basta terminar a iteração.
-        self._seguinte = len(self.ficheiros)
-
-
-# --- Vídeo ---------------------------------------------------------------------------
-
-class FonteVideo(FonteImagem):
-    """Um ficheiro de vídeo, imagem a imagem (p.ex. sacos filmados com o telemóvel).
-
-    Serve para testar o disparo antes de haver câmara: filmar os sacos a passar
-    e usar o modo "virtual". No telemóvel, filmar em H.264 ("Mais compatível"
-    no iPhone): o OpenCV pode não ler vídeos HEVC.
-    """
-
-    def __init__(self, caminho: str | Path) -> None:
-        self.caminho = Path(caminho)
-        if not self.caminho.is_file():
-            raise FileNotFoundError(f"Vídeo não encontrado: {self.caminho}")
-        self._copia: Path | None = None
-        self._video = cv2.VideoCapture(str(self.caminho))
-        if not self._video.isOpened() and not str(self.caminho).isascii():
-            # O OpenCV não abre vídeos com acentos no caminho, no Windows: usar uma cópia temporária.
-            self._copia = Path(tempfile.mkdtemp()) / f"video{self.caminho.suffix}"
-            shutil.copyfile(self.caminho, self._copia)
-            self._video = cv2.VideoCapture(str(self._copia))
-        if not self._video.isOpened():
-            self.fechar()
-            raise RuntimeError(f"Não foi possível abrir o vídeo (formato não suportado?): {self.caminho}")
-        self.fps = self._video.get(cv2.CAP_PROP_FPS) or 30.0
-        self._inicio = time.time()
-        self._contador = 0
-
-    def ler(self) -> Captura | None:
-        if self._video is None:
-            return None
-        ok, imagem = self._video.read()
-        if not ok:
-            return None
-        self._contador += 1
-        # Instante do vídeo (não do relógio): as durações das passagens ficam as reais.
-        instante = self._inicio + (self._contador - 1) / self.fps
-        return Captura(imagem, f"{self.caminho.name}#{self._contador}", instante, fonte="video")
+    def _captura(self, resultado: Any) -> Captura:
+        """A Captura de uma imagem da câmara, com o instante pelo relógio da câmara (se o tiver)."""
+        bruta = resultado.GetArray().copy()  # copy: o array aponta para memória do pylon
+        if self._frequencia is None:
+            instante = time.time()
+        else:
+            if self._relogio is None:
+                self._relogio = (resultado.GetTimeStamp(), time.time())
+            instante = self._relogio[1] + (resultado.GetTimeStamp() - self._relogio[0]) / self._frequencia
+        cal = self.calibracao
+        return Captura(preparar(bruta, self.cfg.camara.formato_pixel, cal),
+                       f"basler:{self.numero_serie}#{resultado.GetBlockID()}", instante,
+                       sensor=True if self.trigger else None, fonte="basler",
+                       px_por_mm=cal.px_por_mm if cal else None, calibracao_id=cal.id if cal else None)
 
     def fechar(self) -> None:
-        if self._video is not None:
-            self._video.release()
-            self._video = None
-        if self._copia is not None:
-            shutil.rmtree(self._copia.parent, ignore_errors=True)
-            self._copia = None
+        """Para a aquisição e repõe os parâmetros pela ordem inversa (o trigger primeiro, o
+        TriggerSelector no fim dele); cada um com o seu try. Pode ser chamado várias vezes."""
+        camara, self._camara = self._camara, None
+        if camara is None:
+            return
+        try:
+            camara.StopGrabbing()
+        except Exception as erro:
+            log.warning("Câmara Basler: ao parar: %s", erro)
+        while self._originais:
+            nome, valor = self._originais.pop()
+            try:
+                getattr(camara, nome).SetValue(valor)
+            except Exception as erro:
+                log.warning("Câmara Basler: não foi possível repor %s = %s: %s", nome, valor, erro)
+        try:
+            camara.Close()
+        except Exception as erro:
+            log.warning("Câmara Basler: ao fechar: %s", erro)
 
 
-# --- Webcam -------------------------------------------------------------------------
-
-class FonteWebcam(FonteImagem):
-    """Webcam USB, para testes de bancada, através de cv2.VideoCapture.
-
-    A webcam tem outra resolução e outra distância ao tapete: usar um
-    config.json próprio, com o px_por_mm calibrado para ela. Não tem entrada
-    para sensor: usar o disparo "virtual".
-    """
-
-    ao_vivo = True
-
-    def __init__(self, indice: int = 0, largura: int | None = None, altura: int | None = None) -> None:
-        """Abre a webcam.
-
-        Recebe:
-            indice: número da câmara no sistema (0 = a primeira).
-            largura, altura: resolução a pedir à câmara (None = manter a atual).
-        """
-        self.indice = indice
-        self.largura = largura
-        self.altura = altura
-        self._video: cv2.VideoCapture | None = None
-        self._contador = 0  # nº de imagens lidas, para a origem "webcam<índice>#<n>"
-        self._abrir()
-
-    def _abrir(self) -> None:
-        """Liga-se à webcam.
-
-        O que vai fazer:
-            1. cv2.VideoCapture(indice, cv2.CAP_DSHOW): no Windows, o DirectShow
-               abre muito mais depressa do que o backend por omissão (MSMF).
-            2. Se pedida, definir a resolução (CAP_PROP_FRAME_WIDTH/HEIGHT).
-            3. Se isOpened() for falso, levantar RuntimeError com o índice.
-        """
-        raise NotImplementedError("FonteWebcam ainda não implementada.")
-
-    def ler(self) -> Captura | None:
-        """Lê a imagem seguinte da webcam.
-
-        Devolve:
-            Captura com origem "webcam<índice>#<n>" (sensor = None), ou None se
-            a webcam deixar de responder.
-        O que vai fazer:
-            ok, imagem = self._video.read(); tolerar algumas falhas seguidas
-            antes de desistir e devolver None.
-        """
-        raise NotImplementedError("FonteWebcam ainda não implementada.")
-
-    def fechar(self) -> None:
-        """Liberta a webcam (self._video.release()), se estiver aberta."""
-        raise NotImplementedError("FonteWebcam ainda não implementada.")
-
-
-# --- Câmara FLIR Blackfly S (Spinnaker) --------------------------------------------
-
-class FonteSpinnaker(FonteImagem):
-    """Câmara FLIR Blackfly S BFS-PGE-50S5C-C (PoE GigE, 5 MP, cor, Sony IMX264) através do PySpin.
-
-    Ensaios: ver as fases (sem tapete, tapete parado, tapete a andar) em
-    modulos/m1_aquisicao/__init__.py. Enquanto não houver sensor de presença,
-    usar o disparo "virtual".
-
-    Rede (GigE, ~120 MB/s): a 24 FPS a resolução total ocupa a ligação toda.
-        - Uma placa de rede só para a câmara (sem switch partilhado), com
-          "Jumbo Packet" = 9014 nas propriedades da placa no Windows.
-        - Câmara e placa na mesma sub-rede: IP fixo na placa (p.ex. 169.254.0.1 /
-          255.255.0.0) e, no SpinView, "Auto Force IP" na câmara se ela aparecer
-          noutra sub-rede.
-        - Alimentação: por PoE (switch ou injetor PoE entre a câmara e o PC),
-          ou pelo conector GPIO.
-        - Ao depurar com pontos de paragem, a câmara desliga-se ao fim do
-          GevHeartbeatTimeout; aumentá-lo só durante a depuração.
-    Botão ou sensor de presença: liga-se à entrada opto-isolada Line0 do
-    conector GPIO (Hirose HR10 de 6 pinos). A entrada opto-isolada precisa de
-    uma fonte de tensão externa: botão normalmente aberto em série entre essa
-    fonte e a Line0, retorno no OPTO_GND. Ligar primeiro o OPTO_GND e só
-    depois aplicar tensão. Pinos, tensão máxima e resistência (se for precisa):
-    confirmar no guia de instalação da BFS-PGE antes de ligar. O botão de agora
-    e o sensor de mais tarde usam os mesmos fios.
-    Ligado à câmara, o sinal fica com a precisão do relógio da câmara; ligá-lo
-    a um PLC que depois avisa o PC acrescenta atrasos variáveis.
-    """
-
-    ao_vivo = True
-
-    def __init__(self, cfg: Config, numero_serie: str | None = None, timeout_ms: int = 1000) -> None:
-        """Abre e configura a câmara (incluindo o trigger) e inicia a aquisição.
-
-        Recebe:
-            cfg: configuração; usa as secções camara (características),
-                aquisicao (exposição, ganho) e disparo (modo, fps, sensor, rajada).
-            numero_serie: nº de série da câmara (None = a primeira encontrada).
-            timeout_ms: tempo máximo de espera por cada imagem em ler().
-        """
-        self.cfg = cfg
-        self.numero_serie = numero_serie
-        self.timeout_ms = timeout_ms
-        self._sistema = None  # PySpin.System
-        self._lista = None  # PySpin.CameraList
-        self._camara = None  # PySpin.CameraPtr
-        # A calibração da montagem (lente + plano do tapete), se o perfil a indicar: erro claro já
-        self.calibracao = carregar_calibracao(cfg.aquisicao.calibracao) if cfg.aquisicao.calibracao else None
-        self._abrir()
-
-    def _abrir(self) -> None:
-        """Liga-se à câmara, configura-a e começa a adquirir.
-
-        O que vai fazer:
-            1. sistema = PySpin.System.GetInstance(); lista = sistema.GetCameras();
-               câmara = lista.GetBySerial(nº) ou lista.GetByIndex(0); erro claro
-               se não houver nenhuma (lembrar a placa de rede e o IP). câmara.Init().
-               Registar DeviceModelName e DeviceSerialNumber e avisar se o
-               modelo não contiver camara.modelo ("BFS-PGE-50S5C") ou se
-               WidthMax × HeightMax não for camara.largura_px × altura_px
-               (câmara diferente da configurada).
-            1b. Rede GigE: GevSCPSPacketSize = camara.pacote_bytes (jumbo frames;
-               se a placa não os aceitar, as imagens chegam incompletas) e
-               DeviceLinkThroughputLimit no máximo.
-            2. Imagem (nós QuickSpin, p.ex. câmara.ExposureAuto.SetValue(PySpin.ExposureAuto_Off)):
-               - Width/Height = camara.largura_px/altura_px, OffsetX/Y = 0;
-               - ExposureAuto = Off, ExposureTime = aquisicao.exposicao_us
-                 (tem de caber em 1/fps);
-               - GainAuto = Off, Gain = aquisicao.ganho_db;
-               - BalanceWhiteAuto = Off (o M4 Cor precisa de cores estáveis);
-               - PixelFormat = camara.formato_pixel ("BayerRG8", o padrão de
-                 cor da BFS-PGE-50S5C-C; é o que permite os 24 FPS; a cor é
-                 reconstruída no PC no passo 6) e
-                 AdcBitDepth = Bit8 se o formato for de 8 bits;
-               - no fim, ler AcquisitionResultingFrameRate e avisar se for
-                 menor do que disparo.fps (exposição longa ou rede lenta).
-            3. Entrada do sensor: LineSelector = Line0, LineMode = Input,
-               LineInverter = disparo.sensor_invertido, LineFilterWidth =
-               disparo.sensor_filtro_us (ignora impulsos curtos).
-            4. Trigger, conforme disparo.modo (mudar TriggerMode para Off antes
-               de mexer no TriggerSelector/TriggerSource e só no fim pôr On):
-               - "sensor" + "janela": TriggerMode = Off (contínuo);
-                 AcquisitionFrameRateEnable = True, AcquisitionFrameRate = fps;
-                 chunk data para gravar o sensor em cada imagem:
-                 ChunkModeActive = True, ChunkSelector =
-                 ExposureEndLineStatusAll → ChunkEnable = True (e o mesmo para
-                 FrameID e Timestamp).
-               - "sensor" + "rajada": TriggerSelector = FrameBurstStart,
-                 TriggerSource = Line0, TriggerActivation = RisingEdge,
-                 TriggerDelay = rajada_atraso_us, AcquisitionBurstFrameCount =
-                 rajada_imagens, AcquisitionFrameRate = fps (espaçamento dentro
-                 da rajada), TriggerOverlap = ReadOut, TriggerMode = On.
-               - "foto" (botão ou sensor na Line0: uma imagem por disparo):
-                 TriggerSelector = FrameStart, TriggerSource = Line0,
-                 TriggerActivation = RisingEdge (botão normalmente aberto: o
-                 sinal sobe quando se carrega), TriggerDelay = rajada_atraso_us
-                 (0 com o botão), TriggerOverlap = Off (os saltos do botão
-                 durante a leitura da imagem são ignorados pela câmara; os
-                 restantes, pelo anti-ressalto do disparo), TriggerMode = On.
-                 Sem botão: TriggerSource = Software e
-                 câmara.TriggerSoftware.Execute() quando se carrega numa tecla.
-               - "virtual": TriggerMode = Off, contínuo a fps.
-            5. TLStream: StreamBufferHandlingMode = OldestFirst e
-               StreamBufferCountManual ≈ 2 × fps: a aquisição corre numa
-               thread própria (ver em_paralelo.py) que esvazia o buffer
-               depressa, por isso não se deve perder nenhuma imagem.
-            6. câmara.BeginAcquisition(). (O debayer não é feito pelo SDK: a imagem
-               BayerRG8 bruta vai para preprocessamento.preparar, o mesmo caminho da
-               FonteSimulada.)
-        """
-        import PySpin  # noqa: F401  só aqui: o resto do projeto não depende do Spinnaker SDK
-
-        raise NotImplementedError("FonteSpinnaker ainda não implementada (ver ferramentas/testar_camara.py).")
-
-    def ler(self) -> Captura | None:
-        """Adquire a imagem seguinte da câmara.
-
-        Devolve:
-            Captura com a imagem BGR, origem "spinnaker:<nº de série>#<FrameID>",
-            instante e o estado do sensor; ou None se a câmara deixar de responder.
-        O que vai fazer:
-            1. img = câmara.GetNextImage(timeout_ms); se img.IsIncomplete(),
-               img.Release() e tentar de novo. Um timeout é normal nos modos
-               com trigger (ninguém carregou no botão, não passou nenhum saco):
-               tentar outra vez, sem erro, a não ser que self.parada (o
-               programa está a terminar): então devolver None.
-            2. bruta = img.GetNDArray().copy() (copy: o array aponta para memória gerida
-               pelo SDK); bgr = preprocessamento.preparar(bruta, camara.formato_pixel,
-               self.calibracao): debayer, sem distorção da lente e no plano do tapete.
-               Captura(bgr, origem, instante, sensor, fonte="spinnaker",
-               px_por_mm=calibracao.px_por_mm, calibracao_id=calibracao.id).
-            3. Sensor:
-               - "sensor" + "janela": bit 0 (Line0) de
-                 img.GetChunkData().GetExposureEndLineStatusAll() (já com o
-                 LineInverter aplicado; confirmar no SpinView);
-               - "sensor" + "rajada" e "foto": True (só há imagens quando o
-                 botão/sensor dispara; o disparo usa isto para o anti-ressalto);
-               - "virtual": None.
-            4. Instante: img.GetChunkData().GetTimestamp() (relógio da câmara,
-               em ns) convertido para o relógio do PC, ou time.time().
-            5. Guardar img.GetFrameID() (saltos = imagens perdidas → aviso) e img.Release().
-            6. PySpin.SpinnakerException grave: registar no log e devolver None.
-        """
-        raise NotImplementedError("FonteSpinnaker ainda não implementada.")
-
-    def fechar(self) -> None:
-        """Termina a aquisição e liberta a câmara e o sistema Spinnaker.
-
-        O que vai fazer (a ordem importa, senão o ReleaseInstance falha):
-            câmara.EndAcquisition(); repor TriggerMode = Off; câmara.DeInit();
-            apagar todas as referências à câmara (self._camara = None);
-            lista.Clear(); sistema.ReleaseInstance(). Só desfazer os passos que
-            chegaram a ser feitos (a abertura pode ter falhado a meio) e aceitar
-            ser chamado duas vezes.
-        """
-        raise NotImplementedError("FonteSpinnaker ainda não implementada.")
+# --- Câmara FLIR Blackfly S (Spinnaker): para ligar mais tarde ------------------------------
+# Para a usar: instalar o PySpin (wheel do Spinnaker em instaladores\), descomentar esta classe
+# e devolvê-la em criar_fonte(). A Blackfly (BFS-PGE-50S5C-C) tem a entrada opto-isolada na
+# Line0 (disparo.trigger_linha = "Line0") e o padrão de cor BayerRG8.
+#
+# class FonteSpinnaker(FonteImagem):
+#     """Câmara FLIR Blackfly S (PoE GigE) através do PySpin."""
+#
+#     def __init__(self, cfg: Config, numero_serie: str | None = None) -> None:
+#         import PySpin
+#
+#         self.cfg, self.timeout_ms, self.parada = cfg, cfg.aquisicao.timeout_ms, False
+#         self.trigger = cfg.disparo.modo == "trigger"
+#         self.calibracao = carregar_calibracao(cfg.aquisicao.calibracao) if cfg.aquisicao.calibracao else None
+#         self._sistema = PySpin.System.GetInstance()
+#         self._lista = self._sistema.GetCameras()
+#         if self._lista.GetSize() == 0:
+#             self.fechar()
+#             raise RuntimeError("Blackfly: nenhuma câmara encontrada (placa de rede, IP).")
+#         self._camara = self._lista.GetBySerial(numero_serie) if numero_serie else self._lista.GetByIndex(0)
+#         self._camara.Init()
+#         c, a, d = self._camara, cfg.aquisicao, cfg.disparo
+#         c.TriggerMode.SetValue(PySpin.TriggerMode_Off)
+#         c.GevSCPSPacketSize.SetValue(cfg.camara.pacote_bytes)
+#         c.PixelFormat.SetValue(getattr(PySpin, f"PixelFormat_{cfg.camara.formato_pixel}"))
+#         c.ExposureAuto.SetValue(PySpin.ExposureAuto_Off)
+#         c.ExposureTime.SetValue(a.exposicao_us)
+#         c.GainAuto.SetValue(PySpin.GainAuto_Off)
+#         c.Gain.SetValue(a.ganho_db)
+#         c.BalanceWhiteAuto.SetValue(PySpin.BalanceWhiteAuto_Off)
+#         if self.trigger:
+#             c.LineSelector.SetValue(getattr(PySpin, f"LineSelector_{d.trigger_linha}"))
+#             c.TriggerSelector.SetValue(PySpin.TriggerSelector_FrameStart)
+#             c.TriggerSource.SetValue(getattr(PySpin, f"TriggerSource_{d.trigger_linha}"))
+#             c.TriggerActivation.SetValue(getattr(PySpin, f"TriggerActivation_{d.trigger_ativacao}"))
+#             c.TriggerMode.SetValue(PySpin.TriggerMode_On)
+#         else:
+#             c.AcquisitionFrameRateEnable.SetValue(True)
+#             c.AcquisitionFrameRate.SetValue(d.fps)
+#         c.TLStream.StreamBufferHandlingMode.SetValue(PySpin.StreamBufferHandlingMode_OldestFirst)
+#         c.BeginAcquisition()
+#         self.numero_serie = c.DeviceSerialNumber.GetValue()
+#
+#     def ler(self) -> Captura | None:
+#         import PySpin
+#
+#         while not self.parada and self._camara is not None:
+#             try:
+#                 img = self._camara.GetNextImage(self.timeout_ms)
+#             except PySpin.SpinnakerException:
+#                 continue  # sem imagem no tempo limite: normal com trigger
+#             try:
+#                 if img.IsIncomplete():
+#                     continue
+#                 bruta, numero = img.GetNDArray().copy(), img.GetFrameID()
+#             finally:
+#                 img.Release()
+#             bgr = preparar(bruta, self.cfg.camara.formato_pixel, self.calibracao)
+#             cal = self.calibracao
+#             return Captura(bgr, f"spinnaker:{self.numero_serie}#{numero}", time.time(),
+#                            sensor=True if self.trigger else None, fonte="spinnaker",
+#                            px_por_mm=cal.px_por_mm if cal else None, calibracao_id=cal.id if cal else None)
+#         return None
+#
+#     def fechar(self) -> None:
+#         if getattr(self, "_camara", None) is not None:
+#             try:
+#                 self._camara.EndAcquisition()
+#             except Exception:
+#                 pass
+#             self._camara.TriggerMode.SetValue(0)
+#             self._camara.DeInit()
+#             self._camara = None
+#         if getattr(self, "_lista", None) is not None:
+#             self._lista.Clear()
+#             self._lista = None
+#         if getattr(self, "_sistema", None) is not None:
+#             self._sistema.ReleaseInstance()
+#             self._sistema = None

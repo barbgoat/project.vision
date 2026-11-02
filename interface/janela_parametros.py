@@ -1,18 +1,15 @@
 """Interface, janela principal: os parâmetros e o dataset.
 
 Métodos da Janela (janela.py), separados por assunto: as janelas ⚙ Definições e
-📷 Câmara, o perfil e a fonte, a pré-visualização, Aplicar, Repor, Guardar no perfil
+📷 Câmara, o perfil, a pré-visualização, Aplicar, Repor, Guardar no perfil
 e Guardar no dataset.
 """
 
 from __future__ import annotations
 
-import dataclasses
 from pathlib import Path
 
-from PySide6.QtWidgets import (
-    QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLineEdit, QMessageBox, QTabWidget, QVBoxLayout, QWidget,
-)
+from PySide6.QtWidgets import QComboBox, QFormLayout, QHBoxLayout, QLabel, QMessageBox, QTabWidget, QVBoxLayout, QWidget
 
 from interface.ciclo import Previsao, Visto
 from interface.editor import SECOES_CAMARA, SECOES_DEFINICOES, EditorParametros, diferencas
@@ -23,14 +20,12 @@ from nucleo.config import CAMINHO_POR_OMISSAO, RAIZ, Config, carregar_configurac
 from nucleo.especificacoes import repor_medidas
 
 
-FONTES = {"Pasta": "pasta", "Vídeo": "video", "Webcam": "webcam", "Câmara": "spinnaker"}
-
 
 class Parametros:
     """Os parâmetros e o dataset (métodos da Janela)."""
 
     def _criar_definicoes(self) -> JanelaAuxiliar:
-        """⚙ Definições: o perfil e a fonte (Geral), e os parâmetros de inspeção e de saída."""
+        """⚙ Definições: o perfil (Geral), e os parâmetros de inspeção e de saída."""
         self.cb_perfil = QComboBox()
         for caminho in sorted((RAIZ / "configuracoes").glob("*.json")):
             self.cb_perfil.addItem(caminho.stem, str(caminho.resolve()))
@@ -41,27 +36,10 @@ class Parametros:
             indice = self.cb_perfil.count() - 1
         self.cb_perfil.setCurrentIndex(indice)
         self.cb_perfil.currentIndexChanged.connect(self._carregar_perfil)
-        self.cb_fonte = QComboBox()
-        for nome, tipo in FONTES.items():
-            self.cb_fonte.addItem(nome, tipo)
-        tipo = self.args.fonte or self._lembrado("fonte") or "pasta"
-        self.cb_fonte.setCurrentIndex(max(0, self.cb_fonte.findData(tipo)))
-        self.cb_fonte.currentIndexChanged.connect(self._mudar_fonte)
-        dado = self.args.video if tipo == "video" else self.args.pasta
-        self.ed_caminho = QLineEdit(str(dado) if dado else self._lembrado("caminho") or "")
-        self.ed_caminho.setPlaceholderText("pasta com as imagens ou ficheiro de vídeo")
-        self.ed_caminho.textChanged.connect(self._atualizar_resumo)
-        self.btn_procurar = self._botao("Procurar", icone_botao=self._icone_qt("SP_DirOpenIcon"),
-                                        dica="Escolher a pasta ou o vídeo")
-        self.btn_procurar.clicked.connect(self._procurar)
-        caminho = QHBoxLayout()
-        caminho.addWidget(self.ed_caminho, 1)
-        caminho.addWidget(self.btn_procurar)
         geral = QWidget()
         formulario = QFormLayout(geral)
         formulario.addRow("Perfil", self.cb_perfil)
-        formulario.addRow("Fonte", self.cb_fonte)
-        formulario.addRow("Pasta ou vídeo", caminho)
+        formulario.addRow("Câmara", QLabel("Basler (pypylon); o modo, Ao vivo ou Trigger, escolhe-se na barra"))
 
         self.editor = EditorParametros(SECOES_DEFINICOES)
         self._ligar_editor(self.editor)
@@ -73,7 +51,7 @@ class Parametros:
     def _criar_camara(self) -> JanelaAuxiliar:
         """📷 Câmara: exposição, ganho, trigger (disparo) e lente."""
         ver = self._botao("Ver ao vivo", icone_botao=icone("camara"),
-                          dica="Passa a Ao vivo e começa: centrar o saco, acertar a luz e o foco.")
+                          dica="Passa a Ao vivo e começa: a câmara em contínuo, para acertar a luz e o foco.")
         ver.clicked.connect(self._ver_ao_vivo)
         topo = QHBoxLayout()
         topo.addStretch()
@@ -114,23 +92,6 @@ class Parametros:
         self.btn_corrigir_eng.setToolTip(f"A classe real deste saco: a imagem vai para {self._dataset}\\<classe>\\")
         self._atualizar_resumo()
 
-    def _mudar_fonte(self) -> None:
-        if self.cb_fonte.currentData() == "video" and self._cfg_edicao.disparo.modo == "foto":
-            # Com um vídeo e o disparo "foto", cada imagem do vídeo contaria como um saco.
-            cfg = self._cfg_edicao
-            self._parametros_mudaram(dataclasses.replace(cfg, disparo=dataclasses.replace(cfg.disparo, modo="virtual")))
-            self._mensagem("Com um vídeo, o disparo passou a 'virtual' (📷 Câmara).")
-        self._atualizar_botoes()
-
-    def _procurar(self) -> None:
-        if self.cb_fonte.currentData() == "pasta":
-            caminho = QFileDialog.getExistingDirectory(self, "Pasta com as imagens", self.ed_caminho.text())
-        else:
-            caminho, _ = QFileDialog.getOpenFileName(self, "Vídeo", self.ed_caminho.text(),
-                                                     "Vídeos (*.mp4 *.avi *.mov *.mkv);;Todos (*)")
-        if caminho:
-            self.ed_caminho.setText(caminho)
-
     # --- Parâmetros (⚙ Definições e 📷 Câmara) -------------------------------------------
     def _parametros_mudaram(self, cfg: Config) -> None:
         anterior, self._cfg_edicao = self._cfg_edicao, cfg
@@ -140,10 +101,7 @@ class Parametros:
         self._atualizar_resumo()
         if all(getattr(cfg, s) == getattr(anterior, s) for s in SECOES_DEFINICOES):
             return  # só mudou a câmara: entra no próximo Iniciar, não há nada a pré-visualizar
-        if self.ciclo is not None and self.ciclo.pedido.modo == "ao_vivo":
-            self.ciclo.aplicar(cfg)  # ao vivo: entra já
-            return
-        # Produção (ou parado): pré-visualizar no saco que está no ecrã, sem mexer na linha.
+        # Pré-visualizar no saco que está no ecrã, sem mexer na linha.
         if self._base is None or self._base.resultado.captura is None:
             return
         if self.ciclo is not None:
@@ -170,7 +128,7 @@ class Parametros:
             self._prever(base, cfg)
 
     def _aplicar(self) -> None:
-        if self.ciclo is not None and self.ciclo.pedido.modo == "producao":
+        if self.ciclo is not None:
             self.ciclo.aplicar(self._cfg_edicao)
             self.btn_congelar.setChecked(False)  # volta a seguir a linha, já com os valores novos
             self._mensagem("Parâmetros enviados: entram no próximo saco.")

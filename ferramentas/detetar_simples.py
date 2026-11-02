@@ -4,7 +4,7 @@ Serve para validar a aquisição e a deteção antes da medição em mm. Não co
 isso só depois de calibrar a câmara (calibrateCamera + undistort) e a escala na montagem.
 
     python ferramentas/detetar_simples.py --camara 0
-    python ferramentas/detetar_simples.py --pasta dataset/telemovel/dimensao
+    python ferramentas/detetar_simples.py --pasta dataset/linha/dimensao
     python ferramentas/detetar_simples.py --camara 0 --hsv 90 50 50 130 255 255   (segmentar por cor)
     python ferramentas/detetar_simples.py --calibrar pasta_xadrez --xadrez 9 6      (gera calibracao.npz)
     python ferramentas/detetar_simples.py --camara 0 --calibracao calibracao.npz    (com a lente corrigida)

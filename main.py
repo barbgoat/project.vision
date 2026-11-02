@@ -1,14 +1,13 @@
 r"""MESTRE, programa principal: capta cada saco que passa, inspeciona-o e regista o resultado.
 
-Exemplos (na raiz do projeto, com o .venv ativo):
-    python main.py --pasta dataset\telemovel --config configuracoes\telemovel.json   (fotos: cada foto é um saco)
-    python main.py --fonte video --video "D:\Vídeos\linha.mp4" --disparo virtual
-    python main.py --fonte spinnaker --disparo sensor --guardar nok
-    python main.py --pasta dataset\telemovel --config configuracoes\telemovel.json --depurar nok
-    python main.py --pasta dataset\telemovel --config configuracoes\telemovel.json --of 2026-0412 --produto PreVital
+Exemplos (na raiz do projeto, com o .venv ativo e a câmara ligada):
+    python main.py --config configuracoes\linha.json                      (ao vivo: barreira virtual)
+    python main.py --config configuracoes\bancada_botao.json --guardar nok   (trigger: um saco por sinal)
+    python main.py --config configuracoes\linha.json --disparo trigger --depurar nok
+    python main.py --config configuracoes\linha.json --of 2026-0412 --produto PreVital
 
 Ciclo:
-    M1 Aquisição (thread própria): fonte → disparo → passagens (uma por saco)
+    M1 Aquisição (thread própria): câmara → disparo (ao_vivo ou trigger) → passagens (uma por saco)
     Mestre: escolhe a imagem → M2 → M3..M6 → decisão     ← uma decisão por saco
     M7 Saída: registo.csv, defeitos.csv, imagens
 """
@@ -39,20 +38,11 @@ JANELA = "inspecao"
 
 def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Inspeção visual de sacos de plástico (protótipo v1).")
+    parser.add_argument("--serie", help="nº de série da câmara (omissão: a primeira encontrada)")
     parser.add_argument(
-        "--fonte", choices=["pasta", "video", "webcam", "spinnaker"], default="pasta",
-        help="origem das imagens (omissão: %(default)s)",
-    )
-    parser.add_argument(
-        "--pasta", type=Path,
-        help="pasta com as imagens, para --fonte pasta; inclui subpastas (p.ex. dataset\\telemovel)",
-    )
-    parser.add_argument("--video", type=Path, help="ficheiro de vídeo, para --fonte video")
-    parser.add_argument("--indice", type=int, default=0, help="índice da webcam, para --fonte webcam (omissão: 0)")
-    parser.add_argument("--serie", help="nº de série da câmara, para --fonte spinnaker (omissão: a primeira)")
-    parser.add_argument(
-        "--disparo", choices=["foto", "sensor", "virtual"],
-        help="como se separa cada saco (omissão: DISPARO_MODO nos defines)",
+        "--disparo", choices=["ao_vivo", "trigger"],
+        help="ao_vivo: câmara em contínuo e barreira virtual; trigger: um saco por cada sinal do botão ou "
+             "sensor (omissão: disparo.modo do perfil)",
     )
     parser.add_argument(
         "--config", type=Path, default=CAMINHO_POR_OMISSAO,
@@ -86,7 +76,7 @@ def resumo_linha(resultado: Resultado, ciclo_ms: float, orcamento_ms: float) -> 
     ciclo_ms: inspeção + registo (M7); é este o tempo que tem de caber no orçamento.
     """
     passagem = resultado.passagem
-    if passagem is not None and passagem.modo != "foto":
+    if passagem is not None:
         nome = f"saco {passagem.numero} ({passagem.num_imagens} imagens, {resultado.imagens_analisadas} analisada(s))"
     else:
         nome = Path(resultado.captura.origem).name if resultado.captura else "?"
@@ -102,15 +92,12 @@ def resumo_linha(resultado: Resultado, ciclo_ms: float, orcamento_ms: float) -> 
     return linha
 
 
-def mostrar(imagem, ao_vivo: bool) -> bool:
-    """Mostra a imagem. Devolve False se o utilizador pediu para sair (q ou Esc).
-
-    Pasta/vídeo: espera por uma tecla para avançar. Câmara: não espera; espaço faz pausa.
-    """
+def mostrar(imagem) -> bool:
+    """Mostra a imagem sem esperar (espaço faz pausa). Devolve False se o utilizador pediu para sair (q ou Esc)."""
     cv2.namedWindow(JANELA, cv2.WINDOW_NORMAL)
     cv2.imshow(JANELA, imagem)
-    tecla = cv2.waitKey(1 if ao_vivo else 0) & 0xFF
-    if ao_vivo and tecla == ord(" "):
+    tecla = cv2.waitKey(1) & 0xFF
+    if tecla == ord(" "):
         tecla = cv2.waitKey(0) & 0xFF
     return tecla not in (ord("q"), 27)
 
@@ -144,20 +131,8 @@ def main(argv: list[str] | None = None) -> int:
         log.error("%s", erro)
         return 2
     log.info("Módulos ativos: %s | disparo: %s", ", ".join(mestre.nomes), cfg.disparo.modo)
-    if args.fonte in ("video", "webcam") and cfg.disparo.modo == "foto":
-        log.warning("Com --fonte %s e o disparo 'foto', CADA IMAGEM conta como um saco; "
-                    "para separar os sacos use --disparo virtual.", args.fonte)
-
-    if args.fonte == "pasta" and args.pasta is None:
-        log.error("Indica a pasta das imagens (e a configuração da montagem), p.ex.:\n"
-                  "    python main.py --pasta dataset\\telemovel --config configuracoes\\telemovel.json")
-        return 2
     try:
-        fonte = criar_fonte(args.fonte, cfg, pasta=args.pasta, video=args.video,
-                            indice=args.indice, numero_serie=args.serie)
-    except NotImplementedError:
-        log.error("A fonte '%s' ainda não está implementada (M1 aquisicao).", args.fonte)
-        return 2
+        fonte = criar_fonte(cfg, numero_serie=args.serie)
     except (FileNotFoundError, RuntimeError, ValueError) as erro:
         log.error("M1 aquisicao: %s", erro)
         return 2
@@ -191,11 +166,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(resumo_linha(resultado, ciclo_ms, cfg.geral.orcamento_ms))
                 if args.mostrar:
                     imagem = saida.anotar(resultado)
-                    if imagem is not None and not mostrar(imagem, fonte.ao_vivo):
+                    if imagem is not None and not mostrar(imagem):
                         break
     except KeyboardInterrupt:
         log.info("Interrompido pelo utilizador.")
-    except ValueError as erro:  # p.ex. disparo "sensor" com uma fonte sem sensor
+    except ValueError as erro:  # p.ex. disparo "trigger" com a câmara a captar em contínuo
         log.error("%s", erro)
         return 2
     except RuntimeError as erro:  # p.ex. a câmara desligou-se a meio: mostrar o que já foi feito

@@ -30,7 +30,7 @@ if __package__ in (None, ""):  # corrido como ficheiro: python ferramentas\calcu
 from nucleo.config import CAMINHO_POR_OMISSAO, carregar_configuracao  # noqa: E402
 
 DEBITO_GIGE_MB_S = 120.0  # débito útil de uma ligação Gigabit Ethernet
-BYTES_POR_PIXEL = {"BayerRG8": 1.0, "BayerRG12p": 1.5, "BGR8": 3.0}
+BYTES_POR_PIXEL = {"BGR8": 3.0, "Mono8": 1.0, "BayerRG8": 1.0, "BayerBG8": 1.0, "BayerGB8": 1.0, "BayerGR8": 1.0}
 
 
 def construir_parser() -> argparse.ArgumentParser:

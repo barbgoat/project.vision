@@ -1,10 +1,10 @@
 r"""Validar os segmentadores do M2 num conjunto de teste com as medidas reais (paquímetro).
 
-    python -m ferramentas.validar --config configuracoes\telemovel.json
-    python -m ferramentas.validar --config configuracoes\telemovel.json --backends delta_e aprendido
+    python -m ferramentas.validar --config configuracoes\linha.json
+    python -m ferramentas.validar --config configuracoes\linha.json --backends delta_e aprendido
 
 O conjunto (--pasta, omissão: dataset\teste):
-    imagens/            as fotos (com a referência de escala do perfil: folha ou marcadores)
+    imagens/            as fotos, tiradas com a montagem do perfil (px_por_mm medido)
     mascaras/           (opcional) PNG com o saco anotado, mesmo nome da foto: dá o IoU
     ground_truth.csv    ficheiro; saco; tipo_saco; fundo; comprimento_mm; largura_mm
                         (saco = o saco físico: as fotos do mesmo saco dão a repetibilidade)
@@ -12,7 +12,7 @@ O conjunto (--pasta, omissão: dataset\teste):
 Para cada backend corre o M2 em cada foto e reporta, no terminal e em CSV (--saida, omissão
 resultados\validacao.csv, mais _resumo.csv e _repetibilidade.csv ao lado):
     erro médio, máximo e desvio-padrão (mm) do comprimento e da largura;
-    IoU da máscara (quando há máscara anotada e a foto não foi endireitada);
+    IoU da máscara (quando há máscara anotada);
     taxa de ERRO ou sem saco; tempo médio por foto;
 agrupado por backend, por backend e tipo de saco, e por backend e fundo. A repetibilidade
 é o desvio-padrão das medidas das várias fotos do mesmo saco.
@@ -107,7 +107,7 @@ def _iou(pasta: Path, ficheiro: str, resultado) -> float | None:
     caminho = pasta / "mascaras" / f"{Path(ficheiro).stem}.png"
     anotada = ler_imagem(caminho) if caminho.exists() else None
     if anotada is None or resultado.saco is None or anotada.shape[:2] != resultado.imagem.shape[:2]:
-        return None  # sem máscara, ou a foto foi endireitada pela referência (outras coordenadas)
+        return None  # sem máscara, ou de outro tamanho
     regiao = np.zeros(anotada.shape[:2], np.uint8)
     cv2.fillPoly(regiao, [resultado.saco.contorno], 1)
     return iou(regiao > 0, anotada[..., 0] > 127)

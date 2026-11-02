@@ -1,4 +1,4 @@
-"""Interface gráfica BIapp (PySide6): ver o que a inspeção está a fazer e afinar, ao vivo ou em produção.
+"""Interface gráfica BIapp (PySide6): ver o que a inspeção está a fazer e afinar (modos Ao vivo e Trigger).
 
 Um ficheiro por assunto:
 
@@ -10,7 +10,7 @@ Um ficheiro por assunto:
     editor.py             o editor de parâmetros (um campo por parâmetro da configuração)
     estilo.py             a marca, as cores, o aspeto (ESTILO) e os ícones
     login.py              a janela de entrada e as contas
-    ciclo.py              a inspeção numa thread (Ao vivo ou Produção) e a pré-visualização
+    ciclo.py              a inspeção numa thread (Ao vivo ou Trigger) e a pré-visualização
     registos.py           o que fica escrito: revisões e dataset
 
 Arranca com `python gui.py` (na raiz). Usa o Mestre, o M1 e o M7 tal como o

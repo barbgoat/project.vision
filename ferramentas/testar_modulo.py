@@ -1,9 +1,11 @@
-r"""Corre UM módulo numa imagem (ou numa pasta) e mostra o relatório completo.
+r"""Corre UM módulo numa imagem guardada (ou numa pasta) e mostra o relatório completo.
 
-    python -m ferramentas.testar_modulo localizacao dataset\telemovel\ok\saco_001.jpg --config configuracoes\telemovel.json
-    python -m ferramentas.testar_modulo relevo dataset\telemovel\rugas --config configuracoes\telemovel.json
-    python -m ferramentas.testar_modulo dimensoes dataset\telemovel --config configuracoes\telemovel.json
-    python -m ferramentas.testar_modulo localizacao dataset\telemovel\ok --config configuracoes\telemovel.json --guardar resultados\verificacao_m2
+    python -m ferramentas.testar_modulo localizacao dataset\linha\ok\saco_001.png --config configuracoes\linha.json
+    python -m ferramentas.testar_modulo dimensoes dataset\linha --config configuracoes\linha.json
+    python -m ferramentas.testar_modulo localizacao dataset\linha\ok --config configuracoes\linha.json --guardar resultados\verificacao_m2
+
+As imagens vêm da câmara: as guardadas pela BIapp ("Guardar no dataset") ou a 00_original.png da
+depuração de um saco.
 
 Corre sempre o M2 Localização (os outros precisam do Saco) e depois só o
 módulo pedido, mesmo que esteja desligado no config. Mostra o estado, o tempo,
@@ -25,12 +27,11 @@ if __package__ in (None, ""):  # corrido como ficheiro: python ferramentas\testa
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from mestre import Mestre  # noqa: E402
-from modulos.m1_aquisicao import FontePasta  # noqa: E402
 from modulos.m2_localizacao import Localizador  # noqa: E402
 from modulos.m7_saida import Depuracao  # noqa: E402
 from nucleo.config import CAMINHO_POR_OMISSAO, carregar_configuracao  # noqa: E402
 from nucleo.contrato import Captura, Relatorio  # noqa: E402
-from nucleo.imagens import ler_imagem  # noqa: E402
+from nucleo.imagens import ler_imagem, listar_imagens  # noqa: E402
 
 
 def construir_parser() -> argparse.ArgumentParser:
@@ -46,10 +47,10 @@ def construir_parser() -> argparse.ArgumentParser:
 
 
 def capturas(caminho: Path) -> list[Captura]:
-    """As imagens a testar: uma só, ou todas as de uma pasta."""
+    """As imagens a testar: uma só, ou todas as de uma pasta (as que não abrem são saltadas)."""
     if caminho.is_dir():
-        with FontePasta(caminho) as fonte:
-            return list(fonte)
+        lidas = [(f, ler_imagem(f)) for f in listar_imagens(caminho)]
+        return [Captura(imagem, str(f), 0.0) for f, imagem in lidas if imagem is not None]
     imagem = ler_imagem(caminho)
     if imagem is None:
         raise SystemExit(f"Não é uma imagem válida: {caminho}")

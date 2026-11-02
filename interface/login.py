@@ -50,7 +50,7 @@ CONTAS = {
 }
 # O que cada papel pode fazer (mostrado no menu da conta).
 PERMISSOES = {
-    "admin": "tudo: Ao vivo e Produção, Engenharia, histórico, definições, câmara, dashboard, produtos e OFs",
+    "admin": "tudo: Ao vivo e Trigger, Engenharia, histórico, definições, câmara, dashboard, produtos e OFs",
     "operador": "vista Operador: iniciar e parar a produção, contadores, decidir os sacos em revisão, "
                 "criar e editar a OF (com o nome e o nº)",
 }
@@ -159,7 +159,7 @@ class JanelaLogin(QDialog):
         marca.addStretch()
         marca.addWidget(logo)
         marca.addSpacing(12)
-        for texto, nome in (("Inspeção visual de sacos", "marca"), ("Ao vivo · Produção · Afinação", "discreto")):
+        for texto, nome in (("Inspeção visual de sacos", "marca"), ("Ao vivo · Trigger · Afinação", "discreto")):
             rotulo = _rotulo(texto, nome)
             rotulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
             marca.addWidget(rotulo)

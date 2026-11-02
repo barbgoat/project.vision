@@ -19,8 +19,10 @@ from nucleo.especificacoes import (
     ErroRepositorio, Especificacao, Inspecao, OrdemFabrico, Repositorio, ajustes_entre, compor, efetiva,
     repor_medidas, resolver, resumir,
 )
-from nucleo.imagens import guardar_imagem
-from testes.apoio import COMPRIMENTO, FORMAS, LARGURA, cena_forma, config_teste, correr, execucao, ler_csv, montagem
+import main as programa
+from testes.apoio import (
+    COMPRIMENTO, FORMAS, LARGURA, CamaraSimulada, cena_forma, com_camara, config_teste, execucao, ler_csv, montagem,
+)
 
 CFG = config_teste()
 IMG = np.zeros((20, 30, 3), np.uint8)
@@ -241,18 +243,16 @@ def test_resumo_confere_cada_medida_com_o_pedido_do_seu_momento():
                                               "1 de 3"]
 
 
-def test_main_com_of_usa_a_especificacao_e_regista(tmp_path):
+def test_main_com_of_usa_a_especificacao_e_regista(tmp_path, monkeypatch, capsys):
     rng = np.random.default_rng(5)
-    for nome in ("certo", "comprido_158"):
-        guardar_imagem(tmp_path / "fotos" / f"{nome}.png", cena_forma(rng, FORMAS[nome]))
+    imagens = [cena_forma(rng, FORMAS[nome]) for nome in ("certo", "comprido_158")]
+    com_camara(monkeypatch, programa, lambda cfg: CamaraSimulada(imagens, trigger=True, intervalo_s=0.4))
     (tmp_path / "perfil.json").write_text(json.dumps(montagem()), encoding="utf-8")
     repo = Repositorio(tmp_path / "res" / "especificacoes.sqlite")
     repo.guardar(_produto(tolerancia_comprimento_mm=9.0))  # com 9 mm de tolerância os 158 mm passam
 
-    argumentos = ["main.py", "--pasta", tmp_path / "fotos", "--config", tmp_path / "perfil.json",
-                  "--saida", tmp_path / "res"]
-    p = correr(*argumentos, "--of", "OF7", "--produto", "PreVital")
-    assert p.returncode == 0, p.stderr
+    argumentos = ["--config", str(tmp_path / "perfil.json"), "--saida", str(tmp_path / "res"), "--disparo", "trigger"]
+    assert programa.main([*argumentos, "--of", "OF7", "--produto", "PreVital"]) == 0
     linhas = ler_csv(execucao(tmp_path / "res") / "registo.csv")
     assert [(l["of"], l["produto"], l["estado"]) for l in linhas] == [("OF7", "PreVital", "OK")] * 2
     assert repo.procurar_of("OF7").autor == "main.py", "a OF nova fica associada ao produto"
@@ -261,8 +261,8 @@ def test_main_com_of_usa_a_especificacao_e_regista(tmp_path):
     c = resumir(historico).medidas["comprimento_mm"]
     assert (c.nominal, c.n, c.fora) == (COMPRIMENTO, 2, 0) and 157 < c.maximo < 159, "o 158 dentro de ± 9"
 
-    p = correr(*argumentos, "--produto", "Desconhecido")
-    assert p.returncode == 2 and "não tem especificação" in p.stderr
+    capsys.readouterr()
+    assert programa.main([*argumentos, "--produto", "Desconhecido"]) == 2
 
 
 # --- Dashboard (dados, sem interface) -----------------------------------------------------

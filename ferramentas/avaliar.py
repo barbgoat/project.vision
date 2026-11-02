@@ -41,9 +41,9 @@ CLASSES = CLASSES_DATASET  # as pastas do dataset (nucleo/contrato.py)
 def construir_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Avaliar o sistema no dataset (por saco, por módulo e por defeito).")
     parser.add_argument(
-        "--dataset", type=Path, default=RAIZ / "dataset" / "telemovel",
+        "--dataset", type=Path, default=RAIZ / "dataset" / "linha",
         help=f"pasta de uma montagem, com uma subpasta por classe: {', '.join(CLASSES)} "
-             "(omissão: dataset/telemovel; usar com a configuração da mesma montagem)",
+             "(omissão: dataset/linha; usar com a configuração da mesma montagem)",
     )
     parser.add_argument(
         "--config", type=Path, default=CAMINHO_POR_OMISSAO,
@@ -69,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Fluxo previsto:
     # 1. cfg = carregar_configuracao(args.config); mestre = Mestre(cfg);
-    #    fonte = FontePasta(args.dataset) (inclui as subpastas).
+    #    imagens = nucleo.imagens.listar_imagens(args.dataset) (inclui as subpastas).
     # 2. Para cada captura (mostrar o progresso i/len(fonte)):
     #    a. Classe real = Path(captura.origem).parent.name; ignorar, com aviso,
     #       imagens que não estejam numa das pastas de CLASSES.

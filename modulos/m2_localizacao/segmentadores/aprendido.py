@@ -12,7 +12,7 @@ as cores do saco (aí só uma rede, que aprende formas, resolve).
     3. Fecho, buracos tapados, abertura e maior região (como no ΔE): a região provável.
     4. GrabCut (a M2_APRENDIDO_GRABCUT_LADO_PX): a partir da região provável aprende as cores
        desta foto e decide o que ficou ambíguo para o modelo (um saco branco ou prateado numa
-       folha branca: o modelo só vê a orla, o GrabCut completa o saco).
+       fundo branco: o modelo só vê a orla, o GrabCut completa o saco).
     5. Confiança = P(saco) média dentro do saco menos a da faixa à volta (quanto o modelo
        separa o saco do que o rodeia); abaixo de aprendido_score_min → ERRO.
 

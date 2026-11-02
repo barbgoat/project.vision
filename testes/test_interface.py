@@ -36,7 +36,10 @@ from nucleo.especificacoes import (  # noqa: E402
 )
 from nucleo.imagens import guardar_imagem  # noqa: E402
 from nucleo.servidor_dashboard import Servidor  # noqa: E402
-from testes.apoio import CORES, FORMAS, cena_forma, config_teste, correr, execucao, ler_csv, montagem  # noqa: E402
+from interface import ciclo  # noqa: E402
+from testes.apoio import (  # noqa: E402
+    CORES, FORMAS, CamaraSimulada, cena_forma, com_camara, config_teste, correr, execucao, ler_csv, montagem,
+)
 from testes.test_especificacoes import _produto  # noqa: E402
 
 IMG = np.zeros((20, 30, 3), np.uint8)
@@ -57,15 +60,18 @@ def esperar(app, condicao, segundos: float = 60) -> None:
 
 
 @pytest.fixture
-def janela(app, tmp_path):
-    """A janela com três fotos (canto_dobrado e comprido_158 NOK, certo OK) e o perfil dos testes."""
+def janela(app, tmp_path, monkeypatch):
+    """A janela com a câmara simulada e o perfil dos testes. Em Trigger chegam três sacos (canto_dobrado e
+    comprido_158 NOK, certo OK); Ao vivo, a câmara fica à espera de um saco que não vem."""
     rng = np.random.default_rng(5)
-    for nome in ("canto_dobrado", "certo", "comprido_158"):
-        guardar_imagem(tmp_path / "fotos" / f"{nome}.png", cena_forma(rng, FORMAS[nome], angulo=-15, cor=CORES["azul"]))
-    (tmp_path / "perfil.json").write_text(json.dumps(montagem()), encoding="utf-8")
+    sacos = [Captura(cena_forma(rng, FORMAS[nome], angulo=-15, cor=CORES["azul"]), f"{nome}.png", 0.0)
+             for nome in ("canto_dobrado", "certo", "comprido_158")]
+    com_camara(monkeypatch, ciclo, lambda cfg: CamaraSimulada(sacos, trigger=True) if cfg.disparo.modo == "trigger"
+               else CamaraSimulada([], sem_fim=True))
+    (tmp_path / "perfil.json").write_text(json.dumps(montagem(disparo={"anti_ressalto_ms": 0.0})), encoding="utf-8")
     args = gui.construir_parser().parse_args([
-        "--pasta", str(tmp_path / "fotos"), "--config", str(tmp_path / "perfil.json"),
-        "--saida", str(tmp_path / "res"), "--dataset", str(tmp_path / "dataset" / "blackfly"),
+        "--config", str(tmp_path / "perfil.json"), "--modo", "trigger",
+        "--saida", str(tmp_path / "res"), "--dataset", str(tmp_path / "dataset" / "linha"),
     ])
     j = Janela(args)
     j._ensaio_sem_of = True  # ensaios sem OF, salvo se o teste escolher uma
@@ -78,7 +84,7 @@ def _campo(editor: EditorParametros, secao: str, nome: str):
 
 
 def _producao_ate_ao_fim(app, j: Janela, decisoes: tuple[str, ...] = ("NOK", "NOK"), arrancar: bool = True) -> None:
-    """Corre a pasta até ao fim, decidindo cada saco em revisão pela ordem de `decisoes`."""
+    """Corre os três sacos até ao fim, decidindo cada saco em revisão pela ordem de `decisoes`."""
     if arrancar:
         j.iniciar()
     pendentes = list(decisoes)
@@ -121,7 +127,7 @@ def test_correcao_copia_a_imagem_para_o_dataset_e_regista(tmp_path):
 
 
 def test_correcao_de_uma_imagem_do_dataset_so_regista(tmp_path):
-    dataset = tmp_path / "dataset" / "telemovel"
+    dataset = tmp_path / "dataset" / "linha"
     original = dataset / "ok" / "saco 1 ç.png"
     guardar_imagem(original, IMG)
     r = Resultado(IMG, Estado.NOK, None, [], 1.0, captura=Captura(IMG, str(original), 1000.0))
@@ -137,8 +143,7 @@ def test_passagem_descartada_nao_se_corrige(tmp_path):
 
 
 def test_dataset_das_correcoes_segue_o_perfil():
-    assert pasta_dataset(RAIZ / "configuracoes" / "telemovel.json") == RAIZ / "dataset" / "telemovel"
-    assert pasta_dataset(RAIZ / "configuracoes" / "linha.json") == RAIZ / "dataset" / "blackfly"
+    assert pasta_dataset(RAIZ / "configuracoes" / "linha.json") == RAIZ / "dataset" / "linha"
 
 
 def test_cada_parametro_do_editor_tem_o_seu_define():
@@ -199,7 +204,8 @@ def test_operador_so_ve_a_vista_operador(app, janela):
     so_admin = (janela.acao_engenharia, janela.acao_historico, janela.acao_camara, janela.acao_definicoes,
                 janela.acao_contas)  # entradas do menu ⚙
     assert not any(a.isVisible() for a in so_admin) and janela.btn_ao_vivo.isHidden() and not janela._engenharia()
-    assert janela._modo() == "producao" and not janela.btn_iniciar.isHidden() and not janela.btn_menu.isHidden()
+    assert janela._modo() == "trigger", "o operador usa o modo do perfil"
+    assert not janela.btn_iniciar.isHidden() and not janela.btn_menu.isHidden()
     janela._definir_utilizador("admin")
     assert all(a.isVisible() for a in so_admin) and not janela.btn_ao_vivo.isHidden()
 
@@ -221,8 +227,6 @@ def test_definicoes_e_camara_mostram_a_mesma_configuracao(app, janela):
     cfg = janela._cfg_edicao
     assert cfg.aquisicao.exposicao_us == 200.0 and cfg.dimensoes.tolerancia_comprimento_mm == 4.0
     assert janela.editor.cfg() is cfg and janela.editor_camara.cfg() is cfg
-    janela.cb_fonte.setCurrentIndex(janela.cb_fonte.findData("video"))
-    assert janela._cfg_edicao.disparo.modo == "virtual", "com um vídeo, o disparo 'foto' não serve"
 
 
 # --- Editor de parâmetros ------------------------------------------------------------------
@@ -261,7 +265,7 @@ def test_producao_para_em_cada_saco_nao_ok_ate_decidir(app, janela, tmp_path):
     assert janela.etapas.count() >= 2 and janela.modulos.rowCount() == 5
 
     janela._corrigir("dimensao")  # Engenharia: guardar no dataset
-    assert len(list((tmp_path / "dataset" / "blackfly" / "dimensao").glob("*comprido_158.png"))) == 1
+    assert len(list((tmp_path / "dataset" / "linha" / "dimensao").glob("*comprido_158.png"))) == 1
 
 
 def test_parar_durante_uma_revisao(app, janela):
@@ -272,29 +276,22 @@ def test_parar_durante_uma_revisao(app, janela):
     esperar(app, lambda: janela.ciclo is None and janela._em_revisao is None)
 
 
-def test_ao_vivo_navega_na_pasta_e_aplica_parametros_logo(app, janela, tmp_path):
+def test_ao_vivo_espera_pelos_sacos_e_para(app, janela):
     janela.btn_ao_vivo.setChecked(True)
     janela.iniciar()
-    esperar(app, lambda: janela._base is not None and janela._base.modo == "ao_vivo")
-    primeira = janela._base.resultado.captura.origem
-    assert janela._base.desvio_mm is not None, "a cruz no centro e o desvio do saco"
-
-    janela.btn_seguinte.click()
-    esperar(app, lambda: janela._base.resultado.captura.origem != primeira)
-    _campo(janela.editor, "dimensoes", "tolerancia_comprimento_mm").setValue(9.5)  # sem "Aplicar"
-    esperar(app, lambda: janela._base.cfg.dimensoes.tolerancia_comprimento_mm == 9.5)
-
+    esperar(app, lambda: janela.ciclo is not None and janela.ciclo.pasta_resultados is not None)
+    assert janela.ciclo.pedido.modo == "ao_vivo" and "A CORRER" in janela.indicador.text()
     janela.parar()
     esperar(app, lambda: janela.ciclo is None)
-    assert not (tmp_path / "res").exists(), "ao vivo não regista nada"
+    assert janela.historico.rowCount() == 0, "sem sacos a passar, nada registado"
 
 
 def test_trocar_de_modo_a_correr(app, janela):
     janela.btn_ao_vivo.setChecked(True)
-    janela.iniciar()  # ao vivo nunca acaba sozinho
-    esperar(app, lambda: janela._base is not None)
-    janela.btn_producao.click()  # recomeça em produção sem se carregar em Parar
-    esperar(app, lambda: janela.ciclo is not None and janela.ciclo.pedido.modo == "producao")
+    janela.iniciar()  # ao vivo, sem sacos a passar, nunca acaba sozinho
+    esperar(app, lambda: janela.ciclo is not None and janela.ciclo.pasta_resultados is not None)
+    janela.btn_trigger.click()  # recomeça em Trigger sem se carregar em Parar
+    esperar(app, lambda: janela.ciclo is not None and janela.ciclo.pedido.modo == "trigger")
     _producao_ate_ao_fim(app, janela, arrancar=False)
     assert janela.historico.rowCount() == 3
 

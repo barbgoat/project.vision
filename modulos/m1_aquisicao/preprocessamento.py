@@ -3,8 +3,7 @@
 Tudo o que depende da câmara fica aqui: o resto do projeto recebe sempre BGR uint8,
 sem distorção da lente e (com calibração) já no espaço métrico.
 
-    debayer(bruta, formato)       BayerRG8 → BGR (OpenCV, o mesmo caminho para a câmara
-                                  e para a FonteSimulada); BGR8 passa como está
+    debayer(bruta, formato)       Bayer (RG, BG, GB, GR) ou Mono8 → BGR (OpenCV); BGR8 passa como está
     mosaico_bayer_rg(bgr)         o inverso: o que o sensor da câmara veria (para simular)
     Calibracao, carregar_calibracao, guardar_calibracao
                                   matriz da câmara, coeficientes de distorção e homografia
@@ -24,21 +23,34 @@ import numpy as np
 from nucleo.config import RAIZ
 
 
+# Formato de uma camada (GenICam PixelFormat) → conversão do OpenCV para BGR.
+# BayerRG8: mosaico RGGB (a linha de cima começa em vermelho, verde); os outros, o mesmo
+# com as cores pela ordem do nome. Mono8: cinzento, repetido nos três canais.
+_CONVERSOES = {
+    "BayerRG8": cv2.COLOR_BayerRGGB2BGR,
+    "BayerBG8": cv2.COLOR_BayerBGGR2BGR,
+    "BayerGB8": cv2.COLOR_BayerGBRG2BGR,
+    "BayerGR8": cv2.COLOR_BayerGRBG2BGR,
+    "Mono8": cv2.COLOR_GRAY2BGR,
+}
+
+
 def debayer(bruta: np.ndarray, formato: str) -> np.ndarray:
     """A imagem do sensor em BGR uint8.
 
-    BayerRG8: mosaico RGGB de 8 bits (a linha de cima começa em vermelho, verde), uma
-    camada; BGR8: já está em BGR (a câmara fez a conversão). ValueError noutro formato.
+    Bayer…8 e Mono8: uma camada uint8; BGR8: já está em BGR (a câmara fez a conversão).
+    ValueError noutro formato.
     """
-    if formato == "BayerRG8":
+    if formato in _CONVERSOES:
         if bruta.ndim != 2 or bruta.dtype != np.uint8:
-            raise ValueError(f"BayerRG8 espera uma camada uint8, chegou {bruta.dtype} {bruta.shape}")
-        return cv2.cvtColor(bruta, cv2.COLOR_BayerRGGB2BGR)
+            raise ValueError(f"{formato} espera uma camada uint8, chegou {bruta.dtype} {bruta.shape}")
+        return cv2.cvtColor(bruta, _CONVERSOES[formato])
     if formato == "BGR8":
         if bruta.ndim != 3 or bruta.shape[2] != 3 or bruta.dtype != np.uint8:
             raise ValueError(f"BGR8 espera altura × largura × 3 uint8, chegou {bruta.dtype} {bruta.shape}")
         return bruta
-    raise ValueError(f"formato de píxel {formato!r} ainda não suportado no pré-processamento (usar BayerRG8 ou BGR8)")
+    raise ValueError(f"formato de píxel {formato!r} não suportado no pré-processamento "
+                     f"(usar BGR8, Mono8 ou {', '.join(k for k in _CONVERSOES if k != 'Mono8')})")
 
 
 def mosaico_bayer_rg(bgr: np.ndarray) -> np.ndarray:

@@ -16,6 +16,14 @@ from nucleo.config import Canal
 
 # --- Ficheiros (caminhos com espaços e acentos) -------------------------------------
 
+EXTENSOES_IMAGEM = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
+
+
+def listar_imagens(pasta: str | Path) -> list[Path]:
+    """As imagens de uma pasta e das subpastas, por ordem alfabética do caminho (para as ferramentas)."""
+    return sorted(p for p in Path(pasta).rglob("*") if p.suffix.lower() in EXTENSOES_IMAGEM and p.is_file())
+
+
 def ler_imagem(caminho: str | Path) -> np.ndarray | None:
     """Lê um ficheiro de imagem para BGR uint8.
 

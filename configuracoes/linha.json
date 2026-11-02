@@ -1,6 +1,6 @@
 {
   "disparo": {
-    "modo": "virtual"
+    "modo": "ao_vivo"
   },
   "saida": {
     "guardar_imagens": "nok",

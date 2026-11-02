@@ -44,10 +44,9 @@ OK, NOK, ERRO ou SEM_SACO.
 
 | Perfil | Para |
 |---|---|
-| `telemovel` | fotos do telemóvel (cor desligada: o telemóvel ajusta a cor sozinho) |
-| `bancada_botao` | câmara, saco parado, botão na Line0 |
-| `bancada_virtual` | câmara, saco parado, sem botão |
-| `linha` | tapete a andar, ainda sem sensor |
+| `bancada_botao` | câmara, saco parado, botão na entrada da câmara (`trigger`) |
+| `bancada_virtual` | câmara, saco parado, sem botão (`ao_vivo`) |
+| `linha` | tapete a andar, ainda sem sensor (`ao_vivo`) |
 
 - Um `config.json` na raiz é usado automaticamente (ajustes desta máquina; fora do git).
 - Gralhas e valores incoerentes dão erro ao arrancar; o que o perfil muda aparece no log.

@@ -118,8 +118,8 @@ class Mestre:
             guardar_intermedios: pedir a cada escravo as imagens das suas etapas.
             px_por_mm: a escala da imagem, se já for conhecida (Captura.px_por_mm, câmara
                 calibrada). Se for diferente de geral.px_por_mm, a imagem é reamostrada para
-                essa escala, a do espaço métrico onde tudo é feito. None (telemóvel): a
-                imagem fica como está (a escala vem da folha ou dos marcadores).
+                essa escala, a do espaço métrico onde tudo é feito. None: a imagem já está
+                a geral.px_por_mm (câmara fixa, medido com uma régua).
             captura: a Captura de onde a imagem veio (com as outras iluminações); sem ela, é
                 criada uma só com esta imagem.
         Devolve:
@@ -135,28 +135,13 @@ class Mestre:
     def _inspecionar(self, img: np.ndarray, captura: Captura, guardar_intermedios: bool) -> Resultado:
         inicio = perf_counter()
         img.flags.writeable = False
-        endireitada = False
-
-        # 0. Referência (fotos à mão): daqui em diante a imagem é a folha, ou o que está entre os
-        # marcadores, vista de cima
-        ms_folha = 0.0
-        if self.cfg.localizacao.referencia != "nenhuma":
-            retificada, rel_folha = self._executar(Localizador.nome, lambda: self.localizador.retificar(img))
-            if rel_folha.estado is Estado.SEM_SACO:  # sem a referência: região e medidas em px
-                return self._sem_escala(img, rel_folha, inicio, guardar_intermedios)
-            if rel_folha.estado is not Estado.OK:
-                return Resultado(img, Estado.ERRO, None, [rel_folha], _ms_desde(inicio),
-                                 f"{Localizador.nome}: {rel_folha.mensagem}")
-            img, ms_folha, endireitada = retificada, rel_folha.tempo_ms, True
-            img.flags.writeable = False
 
         # 1. M2 Localização
         diag = Diagnostico()
         saco, rel_localizacao = self._executar(
             Localizador.nome, lambda: self.localizador.localizar(img, guardar_intermedios, diag)
         )
-        rel_localizacao = replace(rel_localizacao, tempo_ms=rel_localizacao.tempo_ms + ms_folha,
-                                  medidas=diag.medidas, intermedios=diag.intermedios)
+        rel_localizacao = replace(rel_localizacao, medidas=diag.medidas, intermedios=diag.intermedios)
         if rel_localizacao.estado is Estado.OK:
             if saco is None:
                 rel_localizacao = replace(rel_localizacao, estado=Estado.SEM_SACO,
@@ -175,40 +160,12 @@ class Mestre:
         relatorios = [rel_localizacao]
 
         # 2. Escravos de inspeção, cada um protegido, com as imagens no espaço métrico
-        metrica = _captura_metrica(captura, img, endireitada, self.cfg.geral.px_por_mm)
+        metrica = _captura_metrica(captura, img, self.cfg.geral.px_por_mm)
         relatorios += self._correr_escravos(saco, metrica, guardar_intermedios)
 
         # 3. Decisão
         estado, mensagem = self._decidir(relatorios[1:])
         return Resultado(img, estado, saco, relatorios, _ms_desde(inicio), mensagem)
-
-    def _sem_escala(self, img: np.ndarray, rel_referencia: Relatorio, inicio: float,
-                    guardar_intermedios: bool) -> Resultado:
-        """Foto sem a referência (folha ou marcadores): sem mm, o saco não se pode inspecionar.
-
-        Localiza-o à mesma, para se ver a região e as medidas em px, e dá ERRO (nunca é
-        aprovado). Se nem assim houver saco, SEM_SACO com o motivo da referência.
-        """
-        diag = Diagnostico()
-        devolvido, rel = self._executar(
-            Localizador.nome, lambda: self.localizador.localizar_sem_escala(img, guardar_intermedios, diag))
-        rel = replace(rel, tempo_ms=rel.tempo_ms + rel_referencia.tempo_ms, intermedios=diag.intermedios)
-        if rel.estado is not Estado.OK or devolvido is None:
-            return Resultado(img, Estado.SEM_SACO, None, [replace(rel_referencia, tempo_ms=rel.tempo_ms)],
-                             _ms_desde(inicio), f"{Localizador.nome}: {rel_referencia.mensagem}")
-        saco, ppm = devolvido
-        comprimento_px, largura_px = saco.comprimento_mm * ppm, saco.largura_mm * ppm
-        # Para o desenho (que usa geral.px_por_mm) e o ecrã, as medidas à escala do perfil;
-        # nunca são registadas como mm (ERRO).
-        escala = ppm / self.cfg.geral.px_por_mm
-        saco = replace(saco, comprimento_mm=saco.comprimento_mm * escala, largura_mm=saco.largura_mm * escala)
-        _so_leitura(saco)
-        rel = replace(rel, estado=Estado.ERRO,
-                      medidas={"comprimento_px": comprimento_px, "largura_px": largura_px,
-                               "angulo_graus": saco.angulo_graus},
-                      mensagem=(f"{rel_referencia.mensagem}: sem escala, o saco tem {comprimento_px:.0f} x "
-                                f"{largura_px:.0f} px (não são mm) e não foi inspecionado"))
-        return Resultado(img, Estado.ERRO, saco, [rel], _ms_desde(inicio), f"{Localizador.nome}: {rel.mensagem}")
 
     # --- Passagem de um saco (várias imagens) ---------------------------------------------
     def inspecionar_passagem(self, passagem: Passagem, guardar_intermedios: bool = False) -> Resultado:
@@ -242,8 +199,8 @@ class Mestre:
         assert resultado is not None
         resultado.passagem = passagem
         resultado.tempo_ms = _ms_desde(inicio)
-        # Numa passagem (sensor/virtual) passou mesmo um saco: não o ter visto inteiro é um erro.
-        if resultado.estado is Estado.SEM_SACO and passagem.modo != "foto":
+        # Numa passagem passou mesmo um saco: não o ter visto inteiro é um erro.
+        if resultado.estado is Estado.SEM_SACO:
             resultado.estado = Estado.ERRO
             resultado.mensagem = (f"nenhuma das {len(passagem.candidatas)} imagens candidatas tinha o saco "
                                   f"completo ({resultado.mensagem})")
@@ -374,15 +331,13 @@ def _ms_desde(inicio: float) -> float:
     return (perf_counter() - inicio) * 1000
 
 
-def _captura_metrica(captura: Captura, img: np.ndarray, endireitada: bool, px_por_mm: float) -> Captura:
+def _captura_metrica(captura: Captura, img: np.ndarray, px_por_mm: float) -> Captura:
     """A Captura que os escravos recebem: as imagens no espaço métrico, como a do Saco.
 
-    A difusa é a imagem analisada. As outras iluminações são reamostradas da mesma maneira;
-    numa foto endireitada pela folha ou pelos marcadores só fica a difusa (a homografia
-    não é guardada).
+    A difusa é a imagem analisada. As outras iluminações são reamostradas da mesma maneira.
     """
-    outras = {} if endireitada else {nome: no_espaco_metrico(i, captura.px_por_mm, px_por_mm)
-                                     for nome, i in captura.imagens.items() if nome != "difusa"}
+    outras = {nome: no_espaco_metrico(i, captura.px_por_mm, px_por_mm)
+              for nome, i in captura.imagens.items() if nome != "difusa"}
     return replace(captura, imagens={"difusa": img, **outras}, px_por_mm=px_por_mm)
 
 

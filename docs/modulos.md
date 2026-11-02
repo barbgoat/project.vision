@@ -2,11 +2,9 @@
 
 ## M2 Localização (`modulos/m2_localizacao/`)
 
-0. **Referência** (opcional, fotos à mão): a foto é endireitada pelos 4 cantos de uma A4 por
-   baixo do saco (papel = claro e liso; arestas subpíxel) ou por 4 marcadores ArUco à volta dele,
-   em qualquer fundo (homografia e posição de cada marcador ajustadas em conjunto aos 16 cantos).
-   Tira a perspetiva e dá mm reais. `referencia = auto`: os marcadores se houver, senão a folha.
-   Sem nenhum na foto, o saco é localizado à mesma (região e medidas em px) e fica ERRO.
+A câmara está fixa, a uma distância conhecida: a escala é `geral.px_por_mm`, medido uma vez
+com uma régua na imagem.
+
 1. **Segmentador** (`localizacao.segmentador`): `delta_e` (abaixo), `aprendido` (as cores e
    texturas das fotos anotadas, completadas pelo GrabCut, CPU; P(saco) dentro menos à volta < `aprendido_score_min` → ERRO), `sam3` (SAM 3 por texto,
    qualquer fundo, GPU; confiança < `sam3_score_min` → ERRO) ou `duplo` (os dois; IoU <
@@ -22,15 +20,13 @@
 Sem saco, diz porquê: "nada difere do fundo", "toca na borda", "fora dos limites".
 
 Em imagens sintéticas: erro ≤ 0,2 mm e ≤ 0,03° (opacos e translúcidos), ~0,9 mm
-(transparentes); ~80 ms numa imagem de 5 MP. Com a folha (A4 em trapézio): erro ≤ 0,15 mm;
-fotos reais: o mesmo saco repete a ±0,5 mm em 4 fotos; a folha custa ~35 ms por foto. Com
-marcadores (sintéticas, 3 fundos, de frente, em trapézio e rodados): erro ≤ 0,21 mm, ~25 ms por foto.
+(transparentes); ~80 ms numa imagem de 5 MP.
 
 **Dicas:** fotografar o fundo vazio em cada sessão; sombra no contorno → baixar
 `LOCALIZACAO_PESO_LUMINOSIDADE`; pedaços de fundo → subir `LOCALIZACAO_DELTA_E_MIN`;
 sacos "fora dos limites" → verificar `GERAL_PX_POR_MM`. Fundo de inox com reflexos e
-sacos com cor na orla (perfil `telemovel`) → peso da luminosidade 0 e limiar fixo de 8 ΔE:
-os reflexos são só luminosidade e o Otsu cortava o saco por dentro (laranja vs bege).
+sacos com cor na orla → peso da luminosidade 0 e limiar fixo de 8 ΔE: os reflexos são só
+luminosidade e o Otsu cortava o saco por dentro (laranja vs bege).
 
 ## M3 Dimensões (`modulos/m3_dimensoes/`)
 
@@ -55,8 +51,8 @@ Em sacos sintéticos: sacos certos a ±0,06°; corte torto de 4 mm (4,2°, invis
 aba, rasgão e dois defeitos no mesmo saco separados; ~15 ms. Entalhes mais estreitos do
 que `LOCALIZACAO_FECHO_MM` são tapados pelo M2. Fotos reais (PreVital na folha): pontas a
 ≤ 1°, lados a ≤ 0,2°, cantos de 4 e 10 mm; sem falsos alarmes de forma. Um saco branco
-sobre a folha branca perde contraste nas zonas sem impressão: daí a profundidade de 3 mm
-no perfil `telemovel`.
+sobre um fundo branco perde contraste nas zonas sem impressão: subir então a profundidade
+mínima (`DIMENSOES_FORMA_PROFUNDIDADE_MIN_MM`, p.ex. 3 mm).
 
 ## M5 Relevo (`modulos/m5_relevo/`, por fazer)
 
@@ -74,7 +70,7 @@ pela coerência de orientação.
 ## Depuração
 
 ```powershell
-python main.py --pasta <pasta> --config <perfil> --depurar nok     # ou: todas
+python main.py --config <perfil> --depurar nok     # ou: todas
 ```
 
 Cada saco depurado tem uma pasta em `resultados/<data_hora>/depuracao/` com:

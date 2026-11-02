@@ -1,6 +1,6 @@
 {
   "disparo": {
-    "modo": "foto"
+    "modo": "trigger"
   },
   "aquisicao": {
     "exposicao_us": 5000.0

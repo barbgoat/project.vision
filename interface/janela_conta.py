@@ -33,12 +33,12 @@ class Conta:
                      self.acao_engenharia, self.acao_contas):
             acao.setVisible(admin)
         self.acao_dashboard.setVisible(self._pode("dashboard"))
-        for botao in (self.btn_ao_vivo, self.btn_producao):
+        for botao in (self.btn_ao_vivo, self.btn_trigger):  # o operador usa o modo do perfil
             botao.setVisible(admin)
         if not self._pode("dashboard") and self.janela_dashboard is not None:
             self.janela_dashboard.hide()
-        if not admin:  # só a produção, na vista Operador
-            self.btn_producao.setChecked(True)
+        if not admin:  # só a vista Operador, no modo do perfil
+            (self.btn_trigger if self._cfg_perfil.disparo.modo == "trigger" else self.btn_ao_vivo).setChecked(True)
             self.acao_operador.setChecked(True)
             self.btn_congelar.setChecked(False)
             for janela in (self.janela_historico, self.janela_definicoes, self.janela_camara):
@@ -81,8 +81,6 @@ class Conta:
         return self._memoria.value(chave) if self._memoria is not None else None
 
     def _lembrar(self) -> None:
-        """Guarda o perfil, a fonte e a pasta para a próxima sessão (p.ex. a do operador)."""
+        """Guarda o perfil para a próxima sessão (p.ex. a do operador)."""
         if self._memoria is not None:
             self._memoria.setValue("perfil", str(self._perfil))
-            self._memoria.setValue("fonte", self.cb_fonte.currentData())
-            self._memoria.setValue("caminho", self.ed_caminho.text().strip())

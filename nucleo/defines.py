@@ -34,9 +34,8 @@ from typing import Final
 # (0,13 mm por píxel). Depois de montar, medir com uma régua; a calculadora
 # (python -m ferramentas.calcular_montagem) avisa se este valor não bater com a
 # lente. Telemóvel e outras montagens: noutro config.json.
-# É também a escala do espaço métrico onde o M2 e os escravos trabalham: a folha e os
-# marcadores endireitam a foto para ela, e uma Captura com outra escala conhecida
-# (câmara calibrada) é reamostrada para ela pelo Mestre.
+# É também a escala do espaço métrico onde o M2 e os escravos trabalham: uma Captura
+# com outra escala conhecida (câmara calibrada) é reamostrada para ela pelo Mestre.
 GERAL_PX_POR_MM: Final = 8.0  # [MEDIR]
 # Velocidade do tapete: só importa na fase 3 de ensaios (tapete a andar); com o saco
 # parado não é usada. Ver as fases de ensaio em modulos/m1_aquisicao/__init__.py.
@@ -49,25 +48,21 @@ GERAL_ORCAMENTO_MS: Final = 500.0  # [MEDIR] confirmar o ritmo real da linha
 GERAL_PARALELO: Final = False  # True = os escravos de inspeção correm ao mesmo tempo (threads)
 
 # =============================================================================
-# CÂMARA: FLIR Blackfly S BFS-PGE-50S5C-C (PoE GigE, cor, Sony IMX264) — fixas
+# CÂMARA: Basler acA1300-30gm (GigE, monocromática, modelo legacy) agora; Blackfly S mais tarde
 # =============================================================================
-# Só se mudam se se mudar de câmara. Outras características: sensor 2/3"
-# (8,45 × 7,07 mm), obturador global, 12 bits, buffer interno de 240 MB (guarda
-# ~48 imagens se a rede atrasar), GigE Vision 1.2, alimentação por PoE.
-# Montar a câmara com o lado de 2448 px ao longo do movimento do tapete: dá
-# mais imagens com o saco inteiro à vista.
-CAMARA_MODELO: Final = "BFS-PGE-50S5C-C"
-CAMARA_LARGURA_PX: Final = 2448
-CAMARA_ALTURA_PX: Final = 2048
-CAMARA_PIXEL_UM: Final = 3.45  # tamanho de cada píxel no sensor (µm)
-# 24 FPS é o máximo a resolução total por GigE, com píxeis de 8 bits em Bayer:
-# 5 MB por imagem × 24 ≈ 120 MB/s, o limite de uma ligação GigE. Com "BGR8" (cor
-# feita na câmara, 3× mais dados) desce para ~8 FPS; com "BayerRG12p", para ~16.
-CAMARA_FPS_MAX: Final = 24.0
-CAMARA_FORMATO_PIXEL: Final = "BayerRG8"  # "BayerRG8" | "BayerRG12p" | "BGR8"; com Bayer a cor faz-se no PC
-CAMARA_EXPOSICAO_MIN_US: Final = 11.0
-CAMARA_EXPOSICAO_MAX_US: Final = 30_000_000.0  # 30 s
-CAMARA_PACOTE_BYTES: Final = 9000  # jumbo frames; ativar também na placa de rede do PC ("Jumbo Packet" 9014)
+# A câmara é PARTILHADA com outra aplicação: o programa muda só a exposição, o ganho e o
+# trigger, guarda os valores originais e repõe-nos ao fechar. Nunca grava nem carrega User Sets.
+CAMARA_MODELO: Final = "acA1300-30gm"
+CAMARA_SERIAL: Final = ""  # nº de série da câmara (obrigatório no perfil); procura-se por ele
+CAMARA_IP: Final = ""  # IP da câmara, se não aparecer na procura (p.ex. noutra sub-rede); "" = não usar
+CAMARA_LARGURA_PX: Final = 1296
+CAMARA_ALTURA_PX: Final = 966
+CAMARA_PIXEL_UM: Final = 3.75  # tamanho de cada píxel no sensor (µm)
+CAMARA_FPS_MAX: Final = 30.0
+CAMARA_FORMATO_PIXEL: Final = "Mono8"  # o formato em que a câmara envia (não é alterado pelo programa)
+CAMARA_EXPOSICAO_MIN_US: Final = 16.0  # confirmar na ficha da câmara
+CAMARA_EXPOSICAO_MAX_US: Final = 10_000_000.0  # confirmar na ficha da câmara
+CAMARA_PACOTE_BYTES: Final = 9000  # GigE: jumbo frames; ativar também na placa de rede do PC ("Jumbo Packet" 9014)
 
 # =============================================================================
 # LENTE: Basler C23-0828-16M (características fixas, exceto a distância e a abertura)
@@ -94,47 +89,40 @@ LENTE_DISTANCIA_MM: Final = 300.0  # [MEDIR] da frente da lente ao tapete (0,3 m
 # estroboscópica). Tem de estar entre 11 µs e 1/FPS.
 AQUISICAO_EXPOSICAO_US: Final = 120.0  # [MEDIR]
 AQUISICAO_CALIBRACAO: Final = ""  # ficheiro .npz da calibração da montagem (lente + plano do tapete); "" = nenhuma
-AQUISICAO_GANHO_DB: Final = 0.0  # ganho da câmara em dB; subir só se faltar luz (aumenta o ruído)
+AQUISICAO_GANHO_DB: Final = 0.0  # Blackfly: ganho em dB; subir só se faltar luz (aumenta o ruído)
+AQUISICAO_GANHO_RAW: Final = -1  # Basler legacy: GainRaw (unidades da câmara); -1 = não alterar
+AQUISICAO_TIMEOUT_MS: Final = 1000  # espera máxima por cada imagem; com trigger, sem sinal, volta a esperar
 
 # =============================================================================
 # M1 AQUISIÇÃO: DISPARO (trigger) — quando começa e acaba a passagem de cada saco
 # =============================================================================
 # Uma PASSAGEM é a sequência de imagens de um saco, desde que entra até que sai.
 # O Mestre analisa a(s) melhor(es) imagem(ns) de cada passagem e dá UMA decisão
-# por saco.
-#   "foto"    cada imagem é um saco: fotos de uma pasta; ou a câmara com um BOTÃO
-#             (ou o sensor) na entrada Line0: cada vez que se carrega, uma imagem
-#   "sensor"  sensor de presença ligado à entrada Line0 da câmara
-#   "virtual" sem sensor: a entrada e a saída do saco detetam-se na própria imagem
-#             (vídeos do telemóvel; e a câmara enquanto não houver sensor)
-# Fotos do telemóvel: "foto". Câmara com o botão na Line0 (ensaios com o saco
-# parado): "foto". Câmara sem botão nem sensor: "virtual".
-DISPARO_MODO: Final = "foto"
-# Imagens por segundo enquanto o saco passa (no máximo CAMARA_FPS_MAX). Imagens com
+# por saco. Dois modos:
+#   "ao_vivo"  a câmara capta em contínuo (DISPARO_FPS); uma barreira virtual na
+#              própria imagem deteta a entrada e a saída de cada saco
+#   "trigger"  a câmara só capta quando recebe um sinal na entrada DISPARO_TRIGGER_LINHA
+#              (botão ou sensor de presença): cada sinal, uma imagem, um saco
+# A linha final tem o sensor ("trigger"); enquanto não houver, os perfis usam "ao_vivo".
+DISPARO_MODO: Final = "trigger"
+# Imagens por segundo no modo "ao_vivo" (no máximo CAMARA_FPS_MAX). Imagens com
 # o saco COMPLETO à vista ≈ FPS × (campo de visão − comprimento do saco) / velocidade;
-# tem de dar pelo menos 1 (melhor 3 ou mais). Com esta câmara (campo de 306 mm a
-# 8 px/mm, tapete a 500 mm/s): saco de 200 mm → 24 × (306 − 200) / 500 ≈ 5 imagens.
+# tem de dar pelo menos 1 (melhor 3 ou mais). Com um campo de 306 mm a 8 px/mm e o
+# tapete a 500 mm/s: saco de 200 mm → 24 × (306 − 200) / 500 ≈ 5 imagens.
 DISPARO_FPS: Final = 24.0
 
-# --- Modo "sensor" ----------------------------------------------------------------
-#   "janela"  a câmara capta em contínuo e grava em cada imagem o estado do sensor;
-#             a passagem são as imagens com o sensor ativo (alinhar o sensor com o
-#             centro do campo de visão)
-#   "rajada"  cada ativação do sensor dispara uma rajada de N imagens
-DISPARO_SENSOR_ESTRATEGIA: Final = "janela"
-DISPARO_SENSOR_INVERTIDO: Final = False  # True se o sensor/botão dá 0 V quando atua (inverte a Line0)
-DISPARO_SENSOR_FILTRO_US: Final = 100.0  # ignora impulsos do sensor mais curtos do que isto (ruído, ressaltos)
-DISPARO_RAJADA_IMAGENS: Final = 5  # [MEDIR] imagens por ativação, no modo "rajada"
-# [MEDIR] atraso entre o sensor e a 1.ª imagem da rajada, para o saco ficar centrado a
-# meio da rajada (ver docs/camara.md). Com DISPARO_MODO "foto" e a câmara, é o
-# atraso da única imagem.
-DISPARO_RAJADA_ATRASO_US: Final = 0.0
-# Botão (modo "foto" com a câmara): um botão mecânico "salta" durante alguns ms ao
-# fechar e cada salto pode disparar uma imagem. Imagens disparadas a menos do que
-# isto da anterior são ignoradas (ninguém carrega duas vezes em 0,3 s de propósito).
+# --- Modo "trigger" ----------------------------------------------------------------
+# Entrada da câmara onde chega o sinal: nas Basler ace, "Line1" é a entrada opto-isolada
+# (confirmar no manual do modelo). O botão de agora e o sensor de mais tarde usam os mesmos fios.
+DISPARO_TRIGGER_LINHA: Final = "Line1"
+DISPARO_TRIGGER_ATIVACAO: Final = "RisingEdge"  # "RisingEdge" (dispara na subida do sinal) | "FallingEdge"
+# Um botão mecânico "salta" durante alguns ms ao fechar e cada salto pode disparar uma
+# imagem. Imagens a menos do que isto da anterior são ignoradas (ninguém carrega duas
+# vezes em 0,3 s de propósito; a 2 sacos/s o sensor dispara de 500 em 500 ms). Medido
+# com o relógio da câmara.
 DISPARO_ANTI_RESSALTO_MS: Final = 300.0
 
-# --- Modo "virtual" (barreira virtual na imagem) -----------------------------------
+# --- Modo "ao_vivo": barreira virtual na imagem --------------------------------------
 # Como uma barreira ótica, mas na imagem: vigia uma faixa estreita no centro,
 # perpendicular ao movimento do tapete. A passagem dura enquanto o saco atravessa
 # a faixa (e o saco está inteiro à vista por volta do meio da passagem).
@@ -149,7 +137,7 @@ DISPARO_VIRTUAL_IMAGENS_FUNDO: Final = 5  # imagens iniciais (tapete vazio) usad
 DISPARO_VIRTUAL_APRENDIZAGEM: Final = 0.05  # quanto o fundo se adapta a cada imagem sem saco (luz que muda)
 M1_OBJETO_AREA_MIN: Final = 0.2  # na barreira virtual, só contam objetos com esta fração da área do maior (o resto é ruído)
 
-# --- Validação das passagens e desempenho -------------------------------------------
+# --- Validação das passagens ("ao_vivo") e desempenho --------------------------------
 DISPARO_IMAGENS_MIN: Final = 1  # passagens com menos imagens são ignoradas (subir para 2–3 contra disparos falsos)
 DISPARO_DURACAO_MAX_MS: Final = 2000.0  # acima disto: sacos encostados ou tapete parado → aviso e fecha
 DISPARO_INTERVALO_MAX_MS: Final = 200.0  # sem imagens durante mais do que isto, a passagem fecha (> 1000/FPS)
@@ -160,24 +148,13 @@ DISPARO_FILA_MAX: Final = 4  # passagens à espera de análise; acima disto a an
 # =============================================================================
 # M2 LOCALIZAÇÃO (encontrar o saco, medir, endireitar)
 # =============================================================================
-# Referência para fotos à mão (câmara não fixa): a foto é endireitada (sem perspetiva) e fica a
-# GERAL_PX_POR_MM exatos. "folha": o saco pousado numa folha de tamanho conhecido, inteira na foto;
-# "marcadores": 4 marcadores ArUco à volta do saco, em qualquer fundo (folha para imprimir:
-# python -m modulos.m2_localizacao.marcadores); "auto": os marcadores, se os houver, senão a folha.
-# Sem a referência na foto, o saco é localizado à mesma (região e medidas em px), mas fica ERRO.
-# "nenhuma": câmara fixa, com GERAL_PX_POR_MM calibrado.
-LOCALIZACAO_REFERENCIA: Final = "nenhuma"
-LOCALIZACAO_FOLHA_LARGURA_MM: Final = 210.0  # A4
-LOCALIZACAO_FOLHA_ALTURA_MM: Final = 297.0
-LOCALIZACAO_MARCADORES_LADO_MM: Final = 40.0  # lado de cada marcador impresso (medir com a régua)
-LOCALIZACAO_REFERENCIA_MARGEM_MM: Final = 3.0  # faixa junto à folha / aos marcadores que é cortada
 # Segmentador (o que separa o saco do fundo): "delta_e" (diferença de cor ao fundo, CPU, rápido),
 # "aprendido" (as cores e texturas aprendidas com as fotos anotadas em ferramentas/anotar.py:
 # fundos variados, CPU), "sam3" (SAM 3 da Meta por texto: qualquer fundo, precisa de GPU e dos
 # pesos; ver o README) ou "duplo" (ΔE e SAM 3; se discordarem, ERRO e a foto vai para dataset/revisao/).
 LOCALIZACAO_SEGMENTADOR: Final = "delta_e"
 LOCALIZACAO_APRENDIDO_MODELO: Final = "dataset/segmentacao/modelo.npz"  # criado e atualizado pelo anotar.py
-LOCALIZACAO_APRENDIDO_SCORE_MIN: Final = 0.15  # P(saco) dentro do saco menos à volta (folha branca ~0,25, fundo preto ~0,5); abaixo: ERRO "incerta"
+LOCALIZACAO_APRENDIDO_SCORE_MIN: Final = 0.15  # P(saco) dentro do saco menos à volta (fundo claro ~0,25, fundo preto ~0,5); abaixo: ERRO "incerta"
 LOCALIZACAO_SAM3_PROMPT: Final = "plastic bag"  # o que o SAM 3 procura (texto, em inglês)
 LOCALIZACAO_SAM3_SCORE_MIN: Final = 0.5  # confiança mínima (0–1); abaixo: ERRO "segmentação incerta"
 LOCALIZACAO_SAM3_FECHO_MM: Final = 0.0  # fecho morfológico com o SAM 3 (0 = nenhum: não tapa entalhes)
@@ -204,20 +181,6 @@ LOCALIZACAO_MARGEM_BORDA_MM: Final = 3.0  # faixa junto ao contorno do saco que 
 LOCALIZACAO_MARGEM_EXTREMIDADES_MM: Final = 5.0  # [MEDIR] faixa extra nas pontas do saco (selagens)
 
 # --- M2: afinação interna ----------------------------------------------------------
-M2_FOLHA_DETECAO_PX: Final = 600  # a folha procura-se numa versão reduzida com este lado maior (px)
-M2_FOLHA_TEXTURA_MAX: Final = 4.0  # desvio-padrão local (níveis de cinzento) abaixo do qual é papel liso
-M2_FOLHA_AREA_MIN: Final = 0.1  # a folha ocupa pelo menos esta fração da imagem
-M2_FOLHA_PROCURA: Final = 6  # na resolução total, procurar a aresta a ± isto px da versão reduzida
-M2_FOLHA_PONTOS_ARESTA: Final = 200  # pontos por aresta no ajuste da reta
-M2_FOLHA_TEXTURA_JANELA_PX: Final = 7  # janela (px da versão reduzida) do desvio-padrão local que mede a textura
-M2_FOLHA_DESFOQUE_PX: Final = 5  # desfoque (px da versão reduzida) antes do limiar de Otsu do claro
-M2_FOLHA_ABERTURA_PX: Final = 9  # abertura (px da versão reduzida) que corta as pontes do papel para os reflexos
-M2_FOLHA_APROXIMACAO: Final = 0.02  # tolerância do polígono da folha (fração do perímetro)
-M2_FOLHA_SUAVIZACAO_PX: Final = 1.5  # desfoque (px da imagem original) antes do gradiente das arestas
-M2_FOLHA_ANGULO_MIN_GRAUS: Final = 20.0  # arestas vizinhas mais paralelas do que isto: não há canto
-M2_MARCADORES_ITERACOES: Final = 30  # máximo de iterações do ajuste conjunto (Levenberg-Marquardt)
-M2_MARCADORES_ERRO_MAX_PX: Final = 3.0  # erro médio dos cantos acima disto: marcadores fora do plano
-M2_MARCADORES_ESPACO_MIN_MM: Final = 20.0  # o espaço entre os marcadores tem de ter pelo menos isto
 M2_APRENDIDO_LADO_PX: Final = 800  # o modelo aprendido aprende e trabalha a esta resolução (lado maior)
 M2_APRENDIDO_NIVEIS_COR: Final = 16  # níveis por canal de CIELAB no modelo (16³ cores)
 M2_APRENDIDO_NIVEIS_TEXTURA: Final = 4  # níveis do desvio-padrão local da luminosidade
@@ -230,10 +193,6 @@ M2_APRENDIDO_FAIXA_INCERTA: Final = 0.02  # zona junto à aresta (fração da im
 M2_APRENDIDO_GRABCUT_LADO_PX: Final = 400  # o GrabCut corre numa versão com este lado maior (é o passo lento)
 M2_APRENDIDO_GRABCUT_ITERACOES: Final = 3
 M2_REVISAO: Final = "dataset/revisao"  # "duplo": onde ficam as fotos em que os segmentadores discordam
-M2_SEM_ESCALA_CAMPO_MM: Final = 300.0  # sem referência, a foto conta como tendo este lado (só p/ os tamanhos do M2)
-M2_SEM_ESCALA_COMPRIMENTO_MIN: Final = 0.05  # sem referência, limites do saco em frações do campo: comprimento ≥ isto
-M2_SEM_ESCALA_LARGURA_MIN: Final = 0.02  # ... largura ≥ isto
-M2_SEM_ESCALA_MAX: Final = 2.0  # ... comprimento e largura ≤ isto
 # A aresta subpíxel procura-se a ± isto px DO MAPA do segmentador. Fica em px (não em mm): é a
 # precisão da máscara grosseira na sua própria resolução, não uma tolerância do saco.
 M2_AFINAR_PROCURA: Final = 3

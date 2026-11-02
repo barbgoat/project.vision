@@ -1,6 +1,7 @@
 [tool.pytest.ini_options]
 testpaths = ["testes"]
 pythonpath = ["."]
+filterwarnings = ["ignore:builtin type .* has no __module__ attribute:DeprecationWarning"]  # do pypylon (SWIG)
 
 [tool.ruff]
 line-length = 120

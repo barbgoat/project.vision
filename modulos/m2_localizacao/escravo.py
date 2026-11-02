@@ -11,13 +11,12 @@ Liga as etapas pela ordem, um ficheiro cada:
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
 
-from modulos.m2_localizacao import folha, marcadores, medicao, normalizacao, segmentacao, segmentadores
-from nucleo import defines as D
+from modulos.m2_localizacao import medicao, normalizacao, segmentacao, segmentadores
 from nucleo.config import Config
 from nucleo.contrato import Saco, SemSaco
 
@@ -47,43 +46,6 @@ class Localizador:
         """
         self.cfg = cfg
         self.segmentador = segmentador or segmentadores.criar(cfg)
-
-    def retificar(self, img: np.ndarray) -> np.ndarray:
-        """Etapa 0, só com localizacao.referencia: a foto endireitada pela folha (folha.py) ou
-        pelos marcadores ArUco (marcadores.py); com "auto", os marcadores se houver algum, senão a folha.
-
-        O Mestre usa a imagem devolvida em vez da original. Levanta SemSaco se
-        a referência não aparecer inteira.
-        """
-        referencia = self.cfg.localizacao.referencia
-        if referencia == "folha":
-            return folha.retificar(img, self.cfg)
-        try:
-            return marcadores.retificar(img, self.cfg)
-        except marcadores.SemMarcadores:
-            if referencia == "marcadores":
-                raise
-        try:
-            return folha.retificar(img, self.cfg)
-        except SemSaco:
-            raise SemSaco("sem referência (nem marcadores nem folha na foto)") from None
-
-    def localizar_sem_escala(self, img: np.ndarray, guardar_intermedios: bool = False,
-                             diagnostico: Diagnostico | None = None) -> tuple[Saco, float]:
-        """O saco numa foto sem referência: (Saco, px por "mm" provisório).
-
-        Sem a referência não há mm; a foto é tratada como tendo M2_SEM_ESCALA_CAMPO_MM de
-        lado maior, só para os tamanhos internos do M2 (fecho, margens), com limites de
-        tamanho largos. As medidas do Saco × o valor devolvido dão as medidas em px.
-        """
-        ppm = max(img.shape[:2]) / D.M2_SEM_ESCALA_CAMPO_MM
-        campo = D.M2_SEM_ESCALA_CAMPO_MM
-        loc = replace(self.cfg.localizacao, referencia="nenhuma",
-                      comprimento_min_mm=D.M2_SEM_ESCALA_COMPRIMENTO_MIN * campo,
-                      comprimento_max_mm=D.M2_SEM_ESCALA_MAX * campo,
-                      largura_min_mm=D.M2_SEM_ESCALA_LARGURA_MIN * campo, largura_max_mm=D.M2_SEM_ESCALA_MAX * campo)
-        provisorio = Localizador(replace(self.cfg, geral=replace(self.cfg.geral, px_por_mm=ppm), localizacao=loc))
-        return provisorio.localizar(img, guardar_intermedios, diagnostico), ppm
 
     def localizar(self, img: np.ndarray, guardar_intermedios: bool = False,
                   diagnostico: Diagnostico | None = None) -> Saco:

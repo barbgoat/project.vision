@@ -69,14 +69,14 @@ class Captura:
     """
 
     imagens: dict[str, np.ndarray]  # por iluminação ("difusa", "retro", "rasante"); BGR uint8
-    origem: str  # caminho do ficheiro, "linha.mp4#17", "spinnaker:<nº de série>#<FrameID>"
+    origem: str  # "basler:<nº de série>#<nº da imagem>" (ou o ficheiro, numa imagem lida do disco)
     instante: float  # momento da aquisição (time.time(), em s)
-    # Estado do sensor de presença no momento da exposição (gravado pela câmara
-    # em cada imagem); None se a fonte não tem sensor (pasta, vídeo, webcam).
+    # True se a imagem foi disparada pelo sinal do botão ou do sensor (modo "trigger");
+    # None com a câmara a captar em contínuo (modo "ao_vivo").
     sensor: bool | None = None
-    px_por_mm: float | None = None  # escala já conhecida (câmara calibrada); None = desconhecida (telemóvel)
+    px_por_mm: float | None = None  # escala já conhecida (câmara calibrada); None = a de geral.px_por_mm
     calibracao_id: str | None = None  # a calibração aplicada (Calibracao.id); None = nenhuma
-    fonte: str = ""  # "pasta", "video", "spinnaker"...
+    fonte: str = ""  # "basler", "spinnaker"...
     id_saco: int | None = None  # o nº da Passagem a que pertence (posto pela Passagem)
 
     def __post_init__(self) -> None:
@@ -111,7 +111,7 @@ class Passagem:
     num_imagens: int  # quantas imagens a passagem teve ao todo
     inicio: float  # instante da primeira imagem (s)
     fim: float  # instante da última imagem (s)
-    modo: str  # o modo de disparo que a criou: "foto", "sensor" ou "virtual"
+    modo: str  # o modo de disparo que a criou: "ao_vivo" ou "trigger"
     aviso: str = ""  # algo de anormal, p.ex. "passagem demasiado longa (sacos encostados?)"
     descartada: bool = False  # True se não pôde ser analisada (a análise está atrasada face à linha)
 

@@ -4,7 +4,9 @@ Visão por computador clássica (OpenCV) para inspecionar sacos numa linha
 industrial: uma decisão **OK/NOK por saco** e cada defeito localizado.
 
 - Sacos de 10–20 × 3–8 cm, em qualquer posição e rotação; 2 sacos/s (**500 ms por saco**).
-- Câmara FLIR Blackfly S BFS-PGE-50S5C-C com lente Basler C23-0828-16M (8 mm).
+- Câmara fixa: Basler (pypylon) agora, FLIR Blackfly S BFS-PGE-50S5C-C mais tarde; lente Basler C23-0828-16M (8 mm).
+- Dois modos: **Ao vivo** (a câmara capta em contínuo e uma barreira virtual separa os sacos) e
+  **Trigger** (um botão ou sensor na entrada da câmara: um saco por sinal).
 
 ```
 MESTRE (main.py, mestre.py)
@@ -24,8 +26,8 @@ biapp_dashboard.py   o dashboard numa janela própria, em tempo real (SSE)
 nucleo/              contrato entre módulos e defines.py (TODOS os valores ajustáveis)
 modulos/             um escravo por pasta: m1_aquisicao/ … m7_saida/
 ferramentas/         testar um módulo, o disparo ou a câmara; montagem; afinar; avaliar; anotar; validar
-configuracoes/       perfis por montagem: telemovel, bancada_botao, bancada_virtual, linha
-dataset/             imagens por montagem (telemovel/, blackfly/) e por classe; fora do git
+configuracoes/       perfis por montagem: bancada_botao, bancada_virtual, linha
+dataset/             imagens da câmara por montagem e por classe (criadas pela BIapp); fora do git
 testes/              testes automáticos (python -m pytest)
 docs/                documentação
 ```
@@ -38,19 +40,21 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Câmara (PySpin, Spinnaker 4.4): `pip install` da wheel em `instaladores\` (ver `requirements.txt`).
+Câmara Basler: o `pypylon` (já no `requirements.txt`). Mais tarde a Blackfly: PySpin, da wheel do
+Spinnaker 4.4 em `instaladores\`, e descomentar a `FonteSpinnaker` em `modulos/m1_aquisicao/fontes.py`.
+Ligação, modos e ensaios: [docs/camara.md](docs/camara.md).
 
 ## Correr
 
 ```powershell
-python main.py --pasta dataset\telemovel --config configuracoes\telemovel.json                # cada foto é um saco
-python main.py --pasta dataset\telemovel --config configuracoes\telemovel.json --depurar nok   # + cada etapa dos NOK
-python main.py --fonte video --video linha.mp4 --disparo virtual
-python main.py --pasta dataset\telemovel --config configuracoes\telemovel.json --of 2026-0412 --produto PreVital
-python gui.py --pasta dataset\telemovel --config configuracoes\telemovel.json                 # interface gráfica
-python biapp_dashboard.py                                                                     # dashboard à parte (SSE)
-python -m ferramentas.testar_modulo dimensoes <imagem ou pasta> --config configuracoes\telemovel.json
-python -m nucleo.config --config configuracoes\telemovel.json                                 # valores em uso
+python main.py --config configuracoes\linha.json                          # ao vivo (o modo do perfil)
+python main.py --config configuracoes\linha.json --disparo trigger --depurar nok   # + cada etapa dos NOK
+python main.py --config configuracoes\linha.json --of 2026-0412 --produto PreVital
+python gui.py                                                                 # interface gráfica
+python biapp_dashboard.py                                                     # dashboard à parte (SSE)
+python -m ferramentas.testar_disparo --config configuracoes\linha.json        # só a separação dos sacos
+python -m ferramentas.testar_modulo dimensoes <imagem ou pasta> --config configuracoes\linha.json
+python -m nucleo.config --config configuracoes\linha.json                     # valores em uso
 python -m pytest
 python -m ruff check .                                                                        # verificação do código
 ```
@@ -111,7 +115,7 @@ ferramenta de anotação, a proposta por cliques usa o **SAM 2** (`pip install g
 ```powershell
 python -m ferramentas.anotar <pasta> --tipo PreVital --fundo preto    # anotar (GrabCut, pontos, SAM 3, SAM 2)
 python -m ferramentas.dividir_dataset --copiar                         # treino/validação/teste por saco físico
-python -m ferramentas.validar --config configuracoes\telemovel.json --backends delta_e sam3
+python -m ferramentas.validar --config configuracoes\linha.json --backends delta_e sam3
 ```
 
 `validar` usa `dataset/teste/` (`imagens/`, `ground_truth.csv` com as medidas do paquímetro e,
@@ -122,22 +126,22 @@ por tipo de saco e por fundo, e a repetibilidade do mesmo saco ([docs/dataset.md
 
 - Abre com **login** (contas em `interface/login.py`): `admin`/`admin` faz tudo; `op`/`op`
   só vê a vista Operador. F5 inicia, Shift+F5 para.
-- **OF**: o operador indica a OF e/ou o produto a cada início em Produção. OF ou produto conhecidos
+- **OF**: o operador indica a OF e/ou o produto a cada início. OF ou produto conhecidos
   usam as especificações guardadas (uma OF nova herda as da última OF do produto); senão abre o
   formulário. O operador cria e edita a OF com o nome e o nº; o admin muda tudo e tem o **Dashboard**
   (OFs e produtos, OK/NOK, defeitos por tipo, taxa de NOK, evolução). Permissões em `ACESSOS`.
   Mudar de OF a correr só conta a partir do saco seguinte.
 - Barra: o menu **⚙** à esquerda (definições, câmara, histórico, dashboard, vista, mudar de utilizador),
-  a **OF** ao centro, e o estado, Ao vivo/Produção, Iniciar e Parar à direita. O perfil, a fonte e
-  a pasta ficam lembrados para a sessão seguinte.
+  a **OF** ao centro, e o estado, Ao vivo/Trigger, Iniciar e Parar à direita. O perfil fica
+  lembrado para a sessão seguinte; o modo inicial é o do perfil (`disparo.modo`).
 - **Atalho no ambiente de trabalho**: aponta para `.venv\Scripts\pythonw.exe gui.py`, com a pasta do
   projeto como pasta de trabalho e o ícone `interface\recursos\biapp.ico`. Sem consola: o log vai para
   `resultados\biapp.log`.
-- **Ao vivo**: câmara/vídeo em contínuo, sem trigger, com uma cruz no centro: centrar o
-  saco, luz e foco, afinar (os parâmetros entram logo). Não regista nada.
-- **Produção**: com o trigger, uma decisão por saco, registada como no `main.py`. Um
-  parâmetro mudado é pré-visualizado no saco do ecrã e só entra com "Aplicar à produção".
-- **Revisão**: em produção, cada saco não OK para a inspeção e abre uma janela com a imagem;
+- **Ao vivo**: a câmara capta em contínuo e a barreira virtual separa os sacos.
+- **Trigger**: a câmara só capta com o sinal do botão ou do sensor: um saco por sinal.
+- Nos dois, uma decisão por saco, registada como no `main.py`. Um parâmetro mudado é
+  pré-visualizado no saco do ecrã e só entra com "Aplicar à produção".
+- **Revisão**: cada saco não OK para a inspeção e abre uma janela com a imagem;
   "Descartar" (não conta) ou "Mover para NOK". As decisões ficam em `revisoes.csv`.
 - Vistas **Operador** (estado em grande) e **Engenharia** (etapas, log, "Guardar no dataset");
   o **Histórico** abre numa janela à parte (menu ⚙). As imagens ampliam com a roda do rato.
@@ -147,8 +151,8 @@ por tipo de saco e por fundo, e a repetibilidade do mesmo saco ([docs/dataset.md
 
 | | |
 |---|---|
-| **Funcional** | Mestre, M1 (pasta, vídeo, disparo), M2, M3, M7, interface gráfica, produtos e OFs, testes |
-| **Por fazer** | câmara (`FonteSpinnaker`), M4, M5, M6, `afinar`, `avaliar`, servidor partilhado, assistente do nominal |
+| **Funcional** | Mestre, M1 (câmara Basler, Ao vivo e Trigger), M2, M3, M7, interface gráfica, produtos e OFs, testes |
+| **Por fazer** | ensaios com a Basler real, Blackfly (`FonteSpinnaker`, comentada), M4, M5, M6, `afinar`, `avaliar`, servidor partilhado, assistente do nominal |
 
 Próximos passos: dataset e `px_por_mm` medido → validar M2/M3 com fotos reais →
 M5 Relevo → M6 → `avaliar` → câmara e M4 → PLC.

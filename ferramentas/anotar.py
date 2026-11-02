@@ -1,6 +1,6 @@
 r"""Anotar o saco em fotos com qualquer fundo: máscaras e polígonos para treinar uma rede de segmentação.
 
-    python -m ferramentas.anotar dataset\telemovel
+    python -m ferramentas.anotar dataset\linha
     python -m ferramentas.anotar "D:\Fotos novas" --saida dataset\segmentacao
 
 Para cada foto (também nas subpastas) aparece logo uma proposta do contorno do saco, a

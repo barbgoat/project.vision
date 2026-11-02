@@ -1,6 +1,6 @@
 {
   "disparo": {
-    "modo": "virtual",
+    "modo": "ao_vivo",
     "duracao_max_ms": 60000.0
   },
   "aquisicao": {

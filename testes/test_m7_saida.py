@@ -72,7 +72,7 @@ def test_registo_csv(resultado, tmp_path):
 
 def test_nomes_de_ficheiro_a_partir_da_origem():
     assert nome_curto("spinnaker:12345#17") == "spinnaker_12345_17"
-    assert nome_curto("webcam0#3") == "webcam0_3"
+    assert nome_curto("basler:24350001#3") == "basler_24350001_3"
 
 
 def test_desenhar_devolve_uma_copia_anotada(resultado):
@@ -134,7 +134,7 @@ def test_registo_tem_a_data_da_captura(resultado, tmp_path):
 def test_passagem_descartada_fica_no_registo(tmp_path):
     """Fila cheia: a passagem não é analisada, mas fica no registo como ERRO (nunca é ignorada)."""
     from nucleo.contrato import Passagem
-    descartada = Passagem(7, [], [], 12, 0.0, 0.3, "virtual", aviso="não analisada: fila cheia", descartada=True)
+    descartada = Passagem(7, [], [], 12, 0.0, 0.3, "ao_vivo", aviso="não analisada: fila cheia", descartada=True)
     resultado = m.Mestre(CFG, apenas=["dimensoes"]).inspecionar_passagem(descartada)
     with Saida(CFG, tmp_path, ["localizacao", "dimensoes"]) as saida:
         saida.registar(resultado)

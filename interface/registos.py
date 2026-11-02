@@ -41,8 +41,8 @@ def registar_revisao(resultado: Resultado, numero: int, decisao: str, pasta: Pat
 # --- Dataset: a classe real de um saco ----------------------------------------------------
 
 def pasta_dataset(perfil: Path) -> Path:
-    """A montagem do dataset para as correções: telemovel com o perfil do telemóvel; senão, blackfly."""
-    return RAIZ / "dataset" / ("telemovel" if perfil.stem == "telemovel" else "blackfly")
+    """A pasta do dataset para as correções: uma por montagem, com o nome do perfil (dataset/linha...)."""
+    return RAIZ / "dataset" / perfil.stem
 
 
 def guardar_correcao(resultado: Resultado, classe: str, dataset: Path, registo: Path) -> str:
@@ -56,7 +56,7 @@ def guardar_correcao(resultado: Resultado, classe: str, dataset: Path, registo: 
     Recebe:
         resultado: o saco a corrigir (com a captura analisada).
         classe: "ok", um TipoDefeito ou "varios" (as pastas do dataset).
-        dataset: a pasta da montagem, p.ex. dataset/telemovel.
+        dataset: a pasta da montagem, p.ex. dataset/linha.
         registo: o correcoes.csv (acrescenta uma linha; cria-o se não existir).
     Devolve:
         O que foi feito, em texto, para a barra de estado.

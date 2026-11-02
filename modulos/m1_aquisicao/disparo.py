@@ -1,22 +1,17 @@
 """M1 Aquisição, disparo (trigger): "quando começa e acaba a passagem de cada saco?".
 
-Recebe as imagens da fonte, uma a uma, e junta-as em Passagens: a sequência de
-imagens de um saco, desde que entra até que sai. De cada passagem guarda as
-melhores imagens (candidatas), da mais promissora para a menos, e o Mestre
-analisa-as até uma ter o saco completo.
+Recebe as imagens da câmara, uma a uma, e junta-as em Passagens: as imagens de
+um saco. De cada passagem guarda as melhores imagens (candidatas), da mais
+promissora para a menos, e o Mestre analisa-as até uma ter o saco completo.
 
-    "foto"     cada imagem é uma passagem (fotos; ou a câmara com um botão/sensor
-               na Line0: cada vez que se carrega, uma imagem)
-    "sensor"   a passagem são as imagens com o sensor ativo (Captura.sensor)
-    "virtual"  a passagem são as imagens em que algo difere do fundo aprendido
-               numa faixa no centro da imagem (barreira virtual, sem sensor)
+    "ao_vivo"  a câmara capta em contínuo; a passagem são as imagens em que algo
+               difere do fundo aprendido numa faixa no centro da imagem (barreira
+               virtual). A melhor imagem é a do saco mais centrado e inteiro, medido
+               numa miniatura comparada com o fundo (BarreiraVirtual), o que é muito rápido.
+    "trigger"  a câmara só capta com um sinal (botão ou sensor) na sua entrada:
+               cada imagem é uma passagem, um saco. Os "saltos" do botão são ignorados.
 
-Qual é a melhor imagem? A do saco mais centrado e inteiro no campo de visão.
-Mede-se numa miniatura, comparada com o fundo (BarreiraVirtual), o que é muito
-rápido. Sem fundo conhecido (p.ex. rajadas: a câmara só capta com saco), usam-se
-as imagens do meio da passagem.
-
-Uma passagem também fecha, com aviso, se demorar mais do que duracao_max_ms
+No "ao_vivo", uma passagem também fecha, com aviso, se demorar mais do que duracao_max_ms
 (sacos encostados, tapete parado) ou se deixarem de chegar imagens durante mais
 de intervalo_max_ms. Passagens com menos de imagens_min imagens são ignoradas.
 """
@@ -40,12 +35,10 @@ log = logging.getLogger(__name__)
 def criar_disparo(cfg: Config) -> Disparo:
     """O disparo pedido em cfg.disparo.modo."""
     modo = cfg.disparo.modo
-    if modo == "foto":
-        return DisparoFoto(cfg)
-    if modo == "sensor":
-        return DisparoSensor(cfg)
-    if modo == "virtual":
-        return DisparoVirtual(cfg)
+    if modo == "ao_vivo":
+        return DisparoAoVivo(cfg)
+    if modo == "trigger":
+        return DisparoTrigger(cfg)
     raise ValueError(f"Modo de disparo desconhecido: {modo!r}")
 
 
@@ -113,59 +106,30 @@ class Disparo:
         )
 
 
-class DisparoFoto(Disparo):
-    """Cada imagem é uma passagem (fotos soltas, ou a câmara com um botão/sensor na Line0).
+class DisparoTrigger(Disparo):
+    """Cada imagem é uma passagem: a câmara só capta quando o botão ou o sensor dá sinal.
 
-    Imagens disparadas pela câmara (Captura.sensor = True) a menos de
-    anti_ressalto_ms da anterior são ignoradas: são os "saltos" do botão. As
-    fotos de uma pasta (sensor = None) nunca são ignoradas.
+    Imagens a menos de anti_ressalto_ms da anterior são ignoradas: são os "saltos" do botão.
     """
 
-    modo = "foto"
+    modo = "trigger"
 
     def passagens(self, capturas: Iterable[Captura]) -> Iterator[Passagem]:
-        ultimo_disparo: float | None = None
+        ultimo: float | None = None
         for captura in capturas:
-            if captura.sensor:
-                if (ultimo_disparo is not None
-                        and (captura.instante - ultimo_disparo) * 1000 < self.p.anti_ressalto_ms):
-                    self.ignoradas += 1
-                    log.debug("Disparo ignorado (ressalto do botão): %s", captura.origem)
-                    continue
-                ultimo_disparo = captura.instante
+            if not captura.sensor:
+                raise ValueError("O disparo 'trigger' precisa da câmara em modo trigger (imagens disparadas pelo sinal); "
+                                 "sem botão nem sensor, use o modo 'ao_vivo'.")
+            if ultimo is not None and (captura.instante - ultimo) * 1000 < self.p.anti_ressalto_ms:
+                self.ignoradas += 1
+                log.debug("Disparo ignorado (ressalto do botão): %s", captura.origem)
+                continue
+            ultimo = captura.instante
             self._numero += 1
             yield Passagem(self._numero, [captura], [None], 1, captura.instante, captura.instante, self.modo)
 
 
-class DisparoSensor(Disparo):
-    """A passagem são as imagens com o sensor de presença ativo (Captura.sensor).
-
-    Se a câmara também capta sem saco (estratégia "janela"), essas imagens
-    ensinam o fundo e as candidatas escolhem-se pela posição do saco; nas
-    rajadas, escolhem-se as imagens do meio.
-    """
-
-    modo = "sensor"
-
-    def __init__(self, cfg: Config) -> None:
-        super().__init__(cfg)
-        self.barreira = BarreiraVirtual(cfg)
-
-    def _avaliar(self, captura: Captura, dentro: bool) -> tuple[bool, float | None]:
-        if captura.sensor is None:
-            raise ValueError(
-                "O disparo 'sensor' precisa de uma fonte com sensor (a câmara com o sensor na Line0); "
-                "com pasta, vídeo ou webcam use o disparo 'virtual'."
-            )
-        if not captura.sensor:
-            self.barreira.medir(captura.imagem)
-            self.barreira.aprender()
-            return False, None
-        _, pontuacao = self.barreira.medir(captura.imagem)
-        return True, pontuacao
-
-
-class DisparoVirtual(Disparo):
+class DisparoAoVivo(Disparo):
     """Barreira virtual: há saco quando uma parte suficiente da faixa central difere do fundo.
 
     A faixa é estreita e perpendicular ao movimento do tapete, como uma barreira
@@ -178,7 +142,7 @@ class DisparoVirtual(Disparo):
     continua a adaptar-se, devagar, enquanto não há saco.
     """
 
-    modo = "virtual"
+    modo = "ao_vivo"
 
     def __init__(self, cfg: Config) -> None:
         super().__init__(cfg)

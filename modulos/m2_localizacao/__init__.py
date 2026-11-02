@@ -31,8 +31,6 @@ o motivo, que aparece no registo.
 Está partido por etapas, um ficheiro cada:
 
     escravo.py        o ponto de entrada que o Mestre chama (Localizador)
-    folha.py          0. (opcional) endireitar a foto pela folha de referência
-    marcadores.py     0. (opcional) ou pelos 4 marcadores ArUco, em qualquer fundo
     segmentadores/    1. separar o saco do fundo: ΔE (delta_e.py), SAM 3 (sam3.py), os dois
     fundo.py             modelo do fundo e diferença de cor ao fundo (do ΔE)
     segmentacao.py    2. contorno subpíxel (e o limiar, arestas e limpeza do ΔE)

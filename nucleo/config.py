@@ -43,12 +43,11 @@ PoliticaErro = Literal["rejeitar", "ignorar"]
 GuardarImagens = Literal["nenhuma", "nok", "todas"]
 FormatoImagem = Literal[".jpg", ".png"]
 SeparadorDecimal = Literal[",", "."]
-ModoDisparo = Literal["foto", "sensor", "virtual"]
-EstrategiaSensor = Literal["janela", "rajada"]
+ModoDisparo = Literal["ao_vivo", "trigger"]
+AtivacaoTrigger = Literal["RisingEdge", "FallingEdge"]
 Direcao = Literal["horizontal", "vertical"]
-Referencia = Literal["nenhuma", "folha", "marcadores", "auto"]
 TipoSegmentador = Literal["delta_e", "aprendido", "sam3", "duplo"]
-FormatoPixel = Literal["BayerRG8", "BayerRG12p", "BGR8"]
+FormatoPixel = Literal["BGR8", "Mono8", "BayerRG8", "BayerBG8", "BayerGB8", "BayerGR8"]
 
 
 def nome_define(secao: str, parametro: str) -> str:
@@ -90,9 +89,11 @@ class ConfigGeral:
 
 @dataclass(frozen=True)
 class ConfigCamara:
-    """Características fixas da câmara (Blackfly S GigE 5 MP); só mudam se mudar a câmara."""
+    """A câmara (Basler acA1300-30gm; mais tarde a Blackfly S): qual é e as suas características."""
 
     modelo: str = D.CAMARA_MODELO
+    serial: str = D.CAMARA_SERIAL
+    ip: str = D.CAMARA_IP
     largura_px: int = D.CAMARA_LARGURA_PX
     altura_px: int = D.CAMARA_ALTURA_PX
     pixel_um: float = D.CAMARA_PIXEL_UM
@@ -138,16 +139,20 @@ class ConfigLente:
 
 @dataclass(frozen=True)
 class ConfigAquisicao:
-    """M1 Aquisição: parâmetros da câmara Blackfly S."""
+    """M1 Aquisição: parâmetros da câmara."""
 
     exposicao_us: float = D.AQUISICAO_EXPOSICAO_US
     calibracao: str = D.AQUISICAO_CALIBRACAO
     ganho_db: float = D.AQUISICAO_GANHO_DB
+    ganho_raw: int = D.AQUISICAO_GANHO_RAW
+    timeout_ms: int = D.AQUISICAO_TIMEOUT_MS
 
     def erros(self) -> list[str]:
         return _verificar([
             (self.exposicao_us > 0, "exposicao_us tem de ser > 0"),
             (self.ganho_db >= 0, "ganho_db tem de ser ≥ 0"),
+            (self.ganho_raw >= -1, "ganho_raw tem de ser ≥ 0 (ou -1 = não alterar)"),
+            (self.timeout_ms > 0, "timeout_ms tem de ser > 0"),
             (self.calibracao == "" or self.calibracao.lower().endswith(".npz"),
              "calibracao tem de ser um ficheiro .npz (ou vazia)"),
         ])
@@ -159,11 +164,8 @@ class ConfigDisparo:
 
     modo: ModoDisparo = D.DISPARO_MODO
     fps: float = D.DISPARO_FPS
-    sensor_estrategia: EstrategiaSensor = D.DISPARO_SENSOR_ESTRATEGIA
-    sensor_invertido: bool = D.DISPARO_SENSOR_INVERTIDO
-    sensor_filtro_us: float = D.DISPARO_SENSOR_FILTRO_US
-    rajada_imagens: int = D.DISPARO_RAJADA_IMAGENS
-    rajada_atraso_us: float = D.DISPARO_RAJADA_ATRASO_US
+    trigger_linha: str = D.DISPARO_TRIGGER_LINHA
+    trigger_ativacao: AtivacaoTrigger = D.DISPARO_TRIGGER_ATIVACAO
     anti_ressalto_ms: float = D.DISPARO_ANTI_RESSALTO_MS
     virtual_direcao: Direcao = D.DISPARO_VIRTUAL_DIRECAO
     virtual_faixa_mm: float = D.DISPARO_VIRTUAL_FAIXA_MM
@@ -183,13 +185,11 @@ class ConfigDisparo:
     def erros(self) -> list[str]:
         return _verificar([
             _opcao(self, "modo", ModoDisparo),
-            _opcao(self, "sensor_estrategia", EstrategiaSensor),
             _opcao(self, "virtual_direcao", Direcao),
             (self.virtual_faixa_mm > 0, "virtual_faixa_mm tem de ser > 0"),
             (self.fps > 0, "fps tem de ser > 0"),
-            (self.sensor_filtro_us >= 0, "sensor_filtro_us tem de ser ≥ 0"),
-            (self.rajada_imagens >= 1, "rajada_imagens tem de ser ≥ 1"),
-            (self.rajada_atraso_us >= 0, "rajada_atraso_us tem de ser ≥ 0"),
+            (self.trigger_linha.startswith("Line"), "trigger_linha tem de ser uma entrada da câmara, p.ex. Line1"),
+            _opcao(self, "trigger_ativacao", AtivacaoTrigger),
             (self.anti_ressalto_ms >= 0, "anti_ressalto_ms tem de ser ≥ 0"),
             (self.virtual_resolucao_px_por_mm > 0, "virtual_resolucao_px_por_mm tem de ser > 0"),
             (self.virtual_delta_e > 0, "virtual_delta_e tem de ser > 0"),
@@ -202,7 +202,6 @@ class ConfigDisparo:
             (self.intervalo_max_ms > 1000 / self.fps if self.fps > 0 else True,
              "intervalo_max_ms tem de ser maior do que o intervalo entre imagens (1000 / fps)"),
             (1 <= self.candidatas <= self.imagens_max, "tem de ser 1 ≤ candidatas ≤ imagens_max"),
-            (self.rajada_imagens <= self.imagens_max, "rajada_imagens não pode ser maior do que imagens_max"),
             (self.fila_max >= 1, "fila_max tem de ser ≥ 1"),
         ])
 
@@ -211,11 +210,6 @@ class ConfigDisparo:
 class ConfigLocalizacao:
     """M2 Localização: separar o saco do fundo, medi-lo e normalizá-lo."""
 
-    referencia: Referencia = D.LOCALIZACAO_REFERENCIA
-    folha_largura_mm: float = D.LOCALIZACAO_FOLHA_LARGURA_MM
-    folha_altura_mm: float = D.LOCALIZACAO_FOLHA_ALTURA_MM
-    marcadores_lado_mm: float = D.LOCALIZACAO_MARCADORES_LADO_MM
-    referencia_margem_mm: float = D.LOCALIZACAO_REFERENCIA_MARGEM_MM
     segmentador: TipoSegmentador = D.LOCALIZACAO_SEGMENTADOR
     aprendido_modelo: str = D.LOCALIZACAO_APRENDIDO_MODELO
     aprendido_score_min: float = D.LOCALIZACAO_APRENDIDO_SCORE_MIN
@@ -258,11 +252,6 @@ class ConfigLocalizacao:
             (self.folga_mm >= 0, "folga_mm tem de ser ≥ 0"),
             (self.margem_borda_mm >= 0, "margem_borda_mm tem de ser ≥ 0"),
             (self.margem_extremidades_mm >= 0, "margem_extremidades_mm tem de ser ≥ 0"),
-            (self.folha_largura_mm > 0 and self.folha_altura_mm > 0, "folha_largura_mm e folha_altura_mm têm de ser > 0"),
-            (0 <= 2 * self.referencia_margem_mm < min(self.folha_largura_mm, self.folha_altura_mm),
-             "referencia_margem_mm tem de ser ≥ 0 e caber na folha"),
-            (self.marcadores_lado_mm > 0, "marcadores_lado_mm tem de ser > 0"),
-            _opcao(self, "referencia", Referencia),
             _opcao(self, "segmentador", TipoSegmentador),
             (bool(self.aprendido_modelo.strip()), "aprendido_modelo não pode estar vazio"),
             (0 <= self.aprendido_score_min <= 1, "aprendido_score_min tem de estar entre 0 e 1"),

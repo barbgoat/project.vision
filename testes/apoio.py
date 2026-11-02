@@ -16,14 +16,57 @@ import math
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
 
+from modulos.m1_aquisicao.fontes import FonteImagem
 from nucleo.config import RAIZ, Config
 from nucleo.contrato import Captura
+
+
+# --- Câmara simulada ----------------------------------------------------------------------
+
+class CamaraSimulada(FonteImagem):
+    """Uma câmara que entrega as capturas dadas, uma a uma, com o instante real.
+
+    trigger: cada imagem chega como disparada pelo sinal (sensor=True), como a câmara em "trigger".
+    intervalo_s: tempo entre imagens (como a câmara a FPS constantes).
+    sem_fim: no fim das capturas fica à espera, como uma câmara sem sacos a passar, até parar().
+    avaria_em: nesta imagem a câmara "desliga-se" (RuntimeError).
+    """
+
+    def __init__(self, imagens, trigger: bool = False, intervalo_s: float = 0.0, sem_fim: bool = False,
+                 avaria_em: int | None = None) -> None:
+        self.imagens, self.trigger, self.intervalo_s = list(imagens), trigger, intervalo_s
+        self.sem_fim, self.avaria_em, self.i = sem_fim, avaria_em, 0
+        self.parada = False
+        self.fechada = False
+
+    def ler(self) -> Captura | None:
+        if self.i == self.avaria_em:
+            raise RuntimeError("câmara desligada")
+        if self.i >= len(self.imagens):
+            while self.sem_fim and not self.parada:
+                time.sleep(0.02)  # à espera de um saco que não vem
+            return None
+        time.sleep(self.intervalo_s)
+        img = self.imagens[self.i]
+        self.i += 1
+        imagem = img.imagem if isinstance(img, Captura) else img
+        origem = img.origem if isinstance(img, Captura) else f"simulada#{self.i}"
+        return Captura(imagem, origem, time.time(), sensor=True if self.trigger else None, fonte="simulada")
+
+    def fechar(self) -> None:
+        self.fechada = True
+
+
+def com_camara(monkeypatch, modulo, fabrica) -> None:
+    """Põe modulo.criar_fonte a devolver fabrica(cfg): a câmara simulada no lugar da Basler."""
+    monkeypatch.setattr(modulo, "criar_fonte", lambda cfg, numero_serie=None: fabrica(cfg))
 
 
 # --- Comandos e ficheiros -----------------------------------------------------------------
@@ -66,7 +109,7 @@ MONTAGEM: dict[str, dict[str, Any]] = {
     "geral": {"px_por_mm": 5.0, "velocidade_mm_s": 500.0, "orcamento_ms": 500.0},
     "lente": {"abertura_f": 4.0, "distancia_mm": 300.0},
     "aquisicao": {"exposicao_us": 120.0},
-    "disparo": {"rajada_imagens": 5, "rajada_atraso_us": 0.0, "virtual_direcao": "horizontal"},
+    "disparo": {"virtual_direcao": "horizontal"},
     "localizacao": {"margem_extremidades_mm": 5.0},
     "dimensoes": {"comprimento_nominal_mm": COMPRIMENTO, "largura_nominal_mm": LARGURA,
                   "tolerancia_comprimento_mm": 3.0, "tolerancia_largura_mm": 3.0, "forma_raio_canto_mm": 0.0, "forma_raio_canto_outra_ponta_mm": -1.0,
@@ -184,53 +227,6 @@ def cortar_canto(poligono, corte: float = 15.0, comprimento: float = COMPRIMENTO
             t = fp / (fp - fq)
             resultado.append((p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])))
     return resultado
-
-
-def cena_folha(rng: np.random.Generator, cantos_px, saco_mm: tuple[float, float] = (120.0, 80.0),
-               angulo: float = 10.0, folha_mm: tuple[float, float] = (210.0, 297.0),
-               tamanho: tuple[int, int] = (2048, 1536)) -> np.ndarray:
-    """Foto "à mão" de um saco numa folha: inox escovado, a folha em perspetiva com os cantos
-    (cima-esq, cima-dir, baixo-dir, baixo-esq) em cantos_px e o saco ao centro da folha."""
-    altura, largura = tamanho
-    inox = cv2.GaussianBlur(rng.normal(0, 1, (altura, largura)).astype(np.float32), (0, 0), sigmaX=25, sigmaY=0.7)
-    img = (np.float32(125) + inox / inox.std() * 14)[..., None] + np.zeros((1, 1, 3), np.float32)
-    ppm = 8.0  # a folha desenha-se direita, a esta escala, e depois vai para a foto
-    w, h = round(folha_mm[0] * ppm), round(folha_mm[1] * ppm)
-    folha = np.full((h, w, 3), 235, np.float32)
-    a = alfa_retangulo(h, w, w / 2, h / 2, saco_mm[0] * ppm, saco_mm[1] * ppm, angulo)[..., None]
-    folha = folha * (1 - a) + np.array(CORES["azul"], np.float32) * a
-    origem = np.array([[0, 0], [w, 0], [w, h], [0, h]], np.float32) - 0.5
-    matriz = cv2.getPerspectiveTransform(origem, np.asarray(cantos_px, np.float32))
-    na_foto = cv2.warpPerspective(folha, matriz, (largura, altura), flags=cv2.INTER_AREA)
-    alfa = cv2.warpPerspective(np.ones((h, w), np.float32), matriz, (largura, altura), flags=cv2.INTER_AREA)[..., None]
-    img = img * (1 - alfa) + na_foto * alfa + rng.normal(0, 1.5, img.shape).astype(np.float32)
-    return np.clip(img, 0, 255).astype(np.uint8)
-
-
-def cena_marcadores(rng: np.random.Generator, cantos_px, saco_mm: tuple[float, float] = (120.0, 80.0),
-                    angulo: float = 10.0, plano_mm: tuple[float, float] = (280.0, 220.0), lado_mm: float = 40.0,
-                    fundo=(40, 90, 30), tamanho: tuple[int, int] = (1536, 2048)) -> np.ndarray:
-    """Foto "à mão" de um saco num fundo de cor com textura e 4 marcadores ArUco (com orla branca)
-    nos cantos do plano. O plano (plano_mm, deitado) vai para a foto com os cantos (cima-esq,
-    cima-dir, baixo-dir, baixo-esq) em cantos_px; o saco fica ao centro."""
-    altura, largura = tamanho
-    ppm = 8.0  # o plano desenha-se direito, a esta escala, e depois vai para a foto
-    w, h = round(plano_mm[0] * ppm), round(plano_mm[1] * ppm)
-    textura = cv2.GaussianBlur(rng.normal(0, 1, (h, w)).astype(np.float32), (0, 0), 6)
-    plano = np.array(fundo, np.float32) + (textura / textura.std() * 6)[..., None]
-    a = alfa_retangulo(h, w, w / 2, h / 2, saco_mm[0] * ppm, saco_mm[1] * ppm, angulo)[..., None]
-    plano = plano * (1 - a) + np.array(CORES["azul"], np.float32) * a
-    dicionario = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
-    lado, orla = round(lado_mm * ppm), round(8 * ppm)
-    for i, (x, y) in enumerate([(orla, orla), (w - orla - lado, orla), (orla, h - orla - lado),
-                                (w - orla - lado, h - orla - lado)]):
-        plano[y - orla:y + lado + orla, x - orla:x + lado + orla] = 245
-        plano[y:y + lado, x:x + lado] = cv2.aruco.generateImageMarker(dicionario, i, lado)[..., None]
-    origem = np.array([[0, 0], [w, 0], [w, h], [0, h]], np.float32) - 0.5
-    matriz = cv2.getPerspectiveTransform(origem, np.asarray(cantos_px, np.float32))
-    img = cv2.warpPerspective(plano, matriz, (largura, altura), flags=cv2.INTER_AREA, borderMode=cv2.BORDER_CONSTANT, borderValue=tuple(float(c) for c in fundo))
-    img += rng.normal(0, 1.5, img.shape).astype(np.float32)
-    return np.clip(img, 0, 255).astype(np.uint8)
 
 
 def cena_saco(rng: np.random.Generator, cor=CORES["vermelho"], angulo: float = 23.0,

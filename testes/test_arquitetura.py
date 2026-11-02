@@ -18,13 +18,11 @@ from ferramentas import afinar, avaliar
 from nucleo import config
 from nucleo import defines as D
 from nucleo.config import RAIZ, Config, carregar_configuracao, nome_define
-from nucleo.contrato import Defeito, Escravo, Estado, Relatorio, Saco, TipoDefeito
+from nucleo.contrato import CLASSES_DATASET, Defeito, Escravo, Estado, Relatorio, Saco, TipoDefeito
 from nucleo.imagens import guardar_imagem
 from testes.apoio import MONTAGEM, alfa_retangulo, cena_saco, com_acentos, config_teste
 
 PERFIS = sorted((RAIZ / "configuracoes").glob("*.json"))
-MONTAGENS = sorted(p for p in (RAIZ / "dataset").iterdir()  # sem as pastas das ferramentas
-                   if p.is_dir() and p.name not in ("segmentacao", "teste", "revisao"))
 
 
 def _ficheiros_do_projeto():
@@ -173,14 +171,14 @@ def test_perfis_de_configuracao_carregam(perfil):
 
 
 def test_ha_perfis():
-    assert {p.stem for p in PERFIS} >= {"telemovel", "bancada_botao", "bancada_virtual", "linha"}
+    assert {p.stem for p in PERFIS} >= {"bancada_botao", "bancada_virtual", "linha"}
 
 
 # --- Ferramentas e dataset ---------------------------------------------------------------
 
-@pytest.mark.parametrize("montagem", MONTAGENS, ids=[p.name for p in MONTAGENS])
-def test_classes_do_avaliar_sao_as_pastas_do_dataset(montagem):
-    assert sorted(p.name for p in montagem.iterdir() if p.is_dir()) == sorted(avaliar.CLASSES)
+def test_classes_do_avaliar_sao_as_pastas_do_dataset():
+    """O avaliar lê as pastas que a BIapp cria ao "Guardar no dataset" (uma por classe)."""
+    assert sorted(avaliar.CLASSES) == sorted(CLASSES_DATASET)
 
 
 def test_parametros_do_afinar_estao_na_grelha():
