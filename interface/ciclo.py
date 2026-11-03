@@ -13,6 +13,9 @@ A janela recebe cada saco duas vezes:
     visto      já com a imagem anotada e as etapas prontas a mostrar.
 A preparação para o ecrã corre noutra thread e só trata o saco mais recente: a
 inspeção nunca espera pela janela, e o tempo de cada saco não muda por ela existir.
+
+Antes de produzir, a Afinacao mostra só a câmara (sem inspeção nem registo), para
+acertar a luz, o foco e a posição; a exposição e o ganho mudam sem parar de captar.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ import logging
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from time import perf_counter
+from time import monotonic, perf_counter
 
 import cv2
 import numpy as np
@@ -32,8 +35,8 @@ from mestre import Mestre
 from modulos.m1_aquisicao import AquisicaoEmParalelo, criar_disparo, criar_fonte
 from modulos.m1_aquisicao.fontes import FonteImagem
 from modulos.m7_saida import Depuracao, Saida
-from nucleo.config import RAIZ, Config, ModoDisparo
-from nucleo.contrato import Estado, Resultado
+from nucleo.config import RAIZ, Config, ConfigAquisicao, ModoDisparo
+from nucleo.contrato import Captura, Estado, Resultado
 from nucleo.especificacoes import ErroRepositorio, Repositorio
 
 
@@ -93,6 +96,10 @@ def _ms_desde(inicio: float) -> float:
     return (perf_counter() - inicio) * 1000
 
 
+QUADRO_INTERVALO_S = 0.1  # intervalo entre as imagens mostradas ao vivo
+MEDIDAS_INTERVALO_S = 0.5  # intervalo entre as medidas da imagem ao afinar (brilho, nitidez...)
+
+
 # --- O ciclo ------------------------------------------------------------------------------
 
 class Ciclo(QThread):
@@ -101,6 +108,7 @@ class Ciclo(QThread):
     registado = Signal(object)  # Visto por preparar, um por saco
     visto = Signal(object)  # Visto preparado para o ecrã (só o mais recente)
     mensagem = Signal(str)  # para a barra de estado (incluindo porque parou)
+    quadro = Signal(object)  # a imagem da câmara tal como chega (BGR), umas 10 por segundo, para a ver ao vivo
 
     def __init__(self, pedido: Pedido) -> None:
         super().__init__()
@@ -118,6 +126,7 @@ class Ciclo(QThread):
         self._a_preparar: Visto | None = None
         self._ha_para_preparar = threading.Event()
         self._fim = threading.Event()  # o ciclo acabou: a preparação despacha o que falta e termina
+        self._ultimo_quadro = 0.0
 
     # --- Comandos (chamados pela janela) -------------------------------------------------
     def aplicar(self, cfg: Config, of: str | None = None, produto: str | None = None) -> None:
@@ -151,6 +160,13 @@ class Ciclo(QThread):
             self._ha_para_preparar.set()
             preparacao.join()
 
+    def _mostrar_quadro(self, captura: Captura) -> None:
+        """Chamada a cada imagem da câmara: manda uma ao ecrã, no máximo ~10 por segundo."""
+        agora = monotonic()
+        if agora - self._ultimo_quadro >= QUADRO_INTERVALO_S:
+            self._ultimo_quadro = agora
+            self.quadro.emit(next(iter(captura.imagens.values())))
+
     def _entregar(self, visto: Visto) -> None:
         """Um saco decidido: já para os contadores; para o ecrã, depois de preparado."""
         self.registado.emit(visto)
@@ -179,7 +195,7 @@ class Ciclo(QThread):
         ordem = (p.of, p.produto)
         mestre = Mestre(cfg, of=p.of, produto=p.produto)
         self._fonte = criar_fonte(cfg)
-        aquisicao = AquisicaoEmParalelo(self._fonte, criar_disparo(cfg), cfg.disparo.fila_max)
+        aquisicao = AquisicaoEmParalelo(self._fonte, criar_disparo(cfg), cfg.disparo.fila_max, self._mostrar_quadro)
         with aquisicao, Saida(cfg, p.saida, mestre.nomes) as saida:
             self.pasta_resultados = saida.pasta
             self.mensagem.emit(f"Resultados em {saida.pasta}")
@@ -233,6 +249,125 @@ class Ciclo(QThread):
 def no_modo(cfg: Config, modo: ModoDisparo) -> Config:
     """A configuração com o modo de disparo escolhido na janela (Ao vivo ou Trigger)."""
     return dataclasses.replace(cfg, disparo=dataclasses.replace(cfg.disparo, modo=modo))
+
+
+class Afinacao(QThread):
+    """A câmara sem inspeção nem registo: para acertar a luz, o foco, a posição e o trigger antes de produzir.
+
+    Ao vivo    a câmara capta em contínuo (umas 10 imagens por segundo no ecrã)
+    Trigger    uma imagem por sinal do botão ou do sensor (os ressaltos, a menos de
+               disparo.anti_ressalto_ms do anterior, são ignorados como na inspeção)
+    """
+
+    quadro = Signal(object)  # a imagem (BGR): ao vivo umas 10 por segundo; em Trigger, uma por sinal
+    medidas = Signal(str)  # brilho, saturados, nitidez (medidas_imagem) e imagens por segundo ou nº do sinal
+    mensagem = Signal(str)
+
+    def __init__(self, cfg: Config, modo: ModoDisparo = "ao_vivo") -> None:
+        super().__init__()
+        self.modo = modo
+        self._cfg = no_modo(cfg, modo)
+        self._nova: Config | None = None
+        self._trinco = threading.Lock()
+        self._parar = threading.Event()
+        self._fonte: FonteImagem | None = None
+
+    def aplicar(self, cfg: Config) -> None:
+        """Valores novos: a exposição e o ganho mudam já; o resto da câmara, reabrindo-a.
+        Em Trigger a câmara está à espera do sinal: sai da espera, para a imagem seguinte já os usar."""
+        nova = no_modo(cfg, self.modo)
+        with self._trinco:
+            self._nova = nova
+        if self.modo == "trigger" and self._fonte is not None and _da_camara(nova) != _da_camara(self._cfg):
+            self._fonte.parar()
+
+    def _ha_valores_novos(self) -> bool:
+        with self._trinco:
+            return self._nova is not None
+
+    def parar(self) -> None:
+        self._parar.set()
+        if self._fonte is not None:
+            self._fonte.parar()
+
+    def run(self) -> None:
+        try:
+            self._fonte = criar_fonte(self._cfg)
+            try:
+                self._mostrar()
+            finally:
+                self._fonte.fechar()  # repõe os parâmetros originais (a câmara é partilhada)
+        except Exception as erro:  # a janela mostra-o; o traceback fica no log
+            log.exception("A afinação parou.")
+            self.mensagem.emit(f"Afinar a câmara: {erro}")
+
+    def _mostrar(self) -> None:
+        ultimo_quadro = ultima_medida = monotonic()
+        imagens = sinais = 0
+        ultimo_sinal: float | None = None
+        while not self._parar.is_set():
+            self._trocar()
+            captura = self._fonte.ler()
+            if captura is None:
+                if self._parar.is_set() or self._ha_valores_novos():
+                    continue  # a parar, ou saiu da espera do sinal para aplicar valores novos
+                self.mensagem.emit("A câmara deixou de enviar imagens.")
+                return
+            imagem = next(iter(captura.imagens.values()))
+            if self.modo == "trigger":
+                if ultimo_sinal is not None and \
+                        (captura.instante - ultimo_sinal) * 1000 < self._cfg.disparo.anti_ressalto_ms:
+                    continue  # ressalto do botão
+                ultimo_sinal = captura.instante
+                sinais += 1
+                self.quadro.emit(imagem)
+                self.medidas.emit(f"{medidas_imagem(imagem)}   ·   sinal n.º {sinais}")
+                continue
+            imagens += 1
+            agora = monotonic()
+            if agora - ultimo_quadro >= QUADRO_INTERVALO_S:
+                ultimo_quadro = agora
+                self.quadro.emit(imagem)
+            if agora - ultima_medida >= MEDIDAS_INTERVALO_S:
+                self.medidas.emit(f"{medidas_imagem(imagem)}   ·   {imagens / (agora - ultima_medida):.0f} img/s")
+                ultima_medida, imagens = agora, 0
+
+    def _trocar(self) -> None:
+        """Os valores pedidos com aplicar(), se os houver."""
+        with self._trinco:
+            nova, self._nova = self._nova, None
+        if nova is None or (_da_camara(nova) == _da_camara(self._cfg) and not self._fonte.parada):
+            return
+        so_luz = (nova.camara == self._cfg.camara and nova.disparo == self._cfg.disparo
+                  and _sem_luz(nova) == _sem_luz(self._cfg) and not self._fonte.parada)
+        try:
+            if not (so_luz and self._fonte.ajustar(nova.aquisicao)):
+                self._fonte.fechar()
+                self._fonte = criar_fonte(nova)
+                if self._parar.is_set():  # parar() chegou durante a reabertura: foi à câmara antiga
+                    self._fonte.parar()
+            self._cfg = nova
+        except RuntimeError as erro:
+            self.mensagem.emit(f"Câmara: valores não aplicados ({erro})")
+
+
+def _da_camara(cfg: Config) -> tuple:
+    """O que a fonte usa: só uma mudança nisto mexe na câmara (as do M3, p.ex., não)."""
+    return cfg.camara, cfg.aquisicao, cfg.disparo
+
+
+def _sem_luz(cfg: Config) -> ConfigAquisicao:
+    """A aquisição sem a exposição e o ganho: se só esses mudaram, a câmara não precisa de ser reaberta."""
+    return dataclasses.replace(cfg.aquisicao, exposicao_us=1.0, ganho_raw=0)
+
+
+def medidas_imagem(imagem: np.ndarray) -> str:
+    """Para afinar: o brilho médio (0 a 255), os píxeis saturados e a nitidez (variância do Laplaciano;
+    só serve para comparar com ela própria: quanto maior, mais focada)."""
+    cinza = cv2.cvtColor(imagem, cv2.COLOR_BGR2GRAY)
+    saturados = 100 * np.count_nonzero(cinza == 255) / cinza.size
+    nitidez = cv2.Laplacian(cinza, cv2.CV_64F).var()
+    return f"brilho {cinza.mean():.0f}   ·   saturados {saturados:.1f} %   ·   nitidez {nitidez:.0f}"
 
 
 class Previsao(QThread):

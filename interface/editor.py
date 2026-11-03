@@ -254,6 +254,12 @@ class EditorParametros(QWidget):
         """A última configuração válida."""
         return self._cfg
 
+    def mostrar_secao(self, secao: str) -> None:
+        """Passa para a página dessa secção (p.ex. "disparo"), se o editor a tiver."""
+        indice = self.secao.findData(secao)
+        if indice >= 0:
+            self.secao.setCurrentIndex(indice)
+
     def _alterado(self) -> None:
         try:
             valores: dict[str, dict[str, Any]] = {s: {} for s in self._secoes}

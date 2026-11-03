@@ -51,13 +51,20 @@ class Parametros:
     def _criar_camara(self) -> JanelaAuxiliar:
         """📷 Câmara: exposição, ganho, trigger (disparo) e lente."""
         ver = self._botao("Ver ao vivo", icone_botao=icone("camara"),
-                          dica="Passa a Ao vivo e começa: a câmara em contínuo, para acertar a luz e o foco.")
-        ver.clicked.connect(self._ver_ao_vivo)
+                          dica="Passa a Ao vivo e mostra a câmara em contínuo (parado: afina, sem inspeção).")
+        ver.clicked.connect(lambda: self._ver_camara("ao_vivo"))
+        ver_trigger = self._botao("Ver com trigger", icone_botao=icone("camara"),
+                                  dica="Passa a Trigger e mostra uma imagem por sinal do botão ou do sensor "
+                                       "(parado: afina, sem inspeção).")
+        ver_trigger.clicked.connect(lambda: self._ver_camara("trigger"))
+        self.lbl_medidas = QLabel()  # ao afinar: brilho, saturados, nitidez (Afinacao.medidas)
         topo = QHBoxLayout()
-        topo.addStretch()
+        topo.addWidget(self.lbl_medidas, 1)
         topo.addWidget(ver)
+        topo.addWidget(ver_trigger)
         self.editor_camara = EditorParametros(SECOES_CAMARA)
-        self.editor_camara.btn_aplicar.hide()  # a câmara e o trigger só mudam no próximo Iniciar
+        # A afinar, a exposição e o ganho mudam logo; a inspeção só os usa no próximo Iniciar.
+        self.editor_camara.btn_aplicar.hide()
         self._ligar_editor(self.editor_camara)
         conteudo = QWidget()
         coluna = QVBoxLayout(conteudo)
@@ -99,6 +106,8 @@ class Parametros:
             if editor.cfg() is not cfg:
                 editor.definir(cfg)
         self._atualizar_resumo()
+        if self.afinacao is not None:
+            self.afinacao.aplicar(cfg)  # a afinar: a exposição e o ganho veem-se já
         if all(getattr(cfg, s) == getattr(anterior, s) for s in SECOES_DEFINICOES):
             return  # só mudou a câmara: entra no próximo Iniciar, não há nada a pré-visualizar
         # Pré-visualizar no saco que está no ecrã, sem mexer na linha.

@@ -38,6 +38,7 @@ import html
 import logging
 from collections import Counter
 from pathlib import Path
+from time import monotonic
 
 from PySide6.QtCore import QSettings, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QIcon, QKeySequence, QShortcut
@@ -46,7 +47,7 @@ from PySide6.QtWidgets import (
     QStackedWidget, QStyle, QTabWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
-from interface.ciclo import Ciclo, Pedido, Previsao, Visto, preparar
+from interface.ciclo import Afinacao, Ciclo, Pedido, Previsao, Visto, preparar
 from interface.estilo import AZUL, CORES_ESTADO, NOME_APP, icone
 from interface.janela_conta import Conta
 from interface.janela_parametros import Parametros
@@ -64,8 +65,9 @@ from nucleo.especificacoes import ErroRepositorio, Escolha, Repositorio
 log = logging.getLogger("interface")
 
 SEM_IMAGEM = "Carrega em ▶ Iniciar"
-# Cor do indicador do estado (à direita da barra): parado, ao vivo a correr, trigger a correr.
-CORES_INDICADOR = {None: "#78909c", "ao_vivo": AZUL, "trigger": "#2e7d32"}
+SEGURAR_SACO_S = 3.0  # quanto tempo um saco analisado fica no ecrã antes de voltar a imagem ao vivo
+# Cor do indicador do estado (à direita da barra): parado, ao vivo a correr, trigger a correr, a afinar.
+CORES_INDICADOR = {None: "#78909c", "ao_vivo": AZUL, "trigger": "#2e7d32", "afinar": "#ef6c00"}
 
 
 class Janela(Conta, Parametros, Ordens, QMainWindow):
@@ -77,6 +79,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         self._memoria = memoria
         self.utilizador, self.papel = utilizador, "admin"
         self.ciclo: Ciclo | None = None
+        self.afinacao: Afinacao | None = None  # a câmara ao vivo, sem inspeção (Afinar câmara)
         self._previsao: Previsao | None = None
         self._previsao_pendente: tuple[Visto, Config] | None = None
         lembrado = self._lembrado("perfil")
@@ -92,6 +95,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         self._ultimo: Visto | None = None  # o último que chegou do ciclo
         self._base: Visto | None = None  # o que está no ecrã (sem contar com a pré-visualização)
         self._pendente: Visto | None = None  # à espera de ser desenhado
+        self._segurar_ate = 0.0  # até quando o último saco fica no ecrã, sem a imagem ao vivo por cima
         self._contagem: Counter[str] = Counter()  # OK, NOK e DESCARTADOS (depois da revisão)
         self._em_revisao: JanelaRevisao | None = None  # o saco à espera de decisão
         self._tempos: list[float] = []
@@ -182,7 +186,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         self.btn_of.setObjectName("of")  # largo, ao centro (ESTILO)
         self.btn_of.clicked.connect(self._escolher_ordem)
 
-        self.indicador = QLabel()  # "PARADO", "A CORRER" ou "EM REVISÃO", com a cor do modo
+        self.indicador = QLabel()  # "PARADO", "A AFINAR", "A CORRER" ou "EM REVISÃO", com a cor do modo
         self.indicador.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.indicador.setMinimumWidth(150)
         self.btn_ao_vivo = self._botao("Ao vivo", True, dica="A câmara capta em contínuo e a barreira virtual "
@@ -192,6 +196,12 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         self.btn_ao_vivo.setObjectName("segmento_esq")  # colados, como um interruptor
         self.btn_trigger.setObjectName("segmento_dir")
         self._grupo(self.btn_ao_vivo, self.btn_trigger).idClicked.connect(self._mudar_modo)
+        self.btn_afinar = self._botao("Afinar câmara", True, icone("camara"),
+                                      "Só a câmara, sem inspeção nem registo, no modo escolhido ao lado: Ao vivo em "
+                                      "contínuo (luz, foco, posição); Trigger, uma imagem por sinal do botão ou do "
+                                      "sensor. Trocar de modo troca a afinação. A exposição e o ganho (📷 Câmara) "
+                                      "mudam logo.")
+        self.btn_afinar.clicked.connect(self._alternar_afinacao)
         self.btn_iniciar = self._botao("Iniciar", icone_botao=self._icone_qt("SP_MediaPlay"),
                                        dica="Começar a inspeção (F5)")
         self.btn_parar = self._botao("Parar", icone_botao=self._icone_qt("SP_MediaStop"),
@@ -211,8 +221,8 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         esquerda.addWidget(self.btn_menu)
         esquerda.addStretch()
         direita.addStretch()
-        for item in (self.indicador, 12, _par(self.btn_ao_vivo, self.btn_trigger), 12, self.btn_iniciar,
-                     self.btn_parar):
+        for item in (self.indicador, 12, self.btn_afinar, 12, _par(self.btn_ao_vivo, self.btn_trigger), 12,
+                     self.btn_iniciar, self.btn_parar):
             _juntar(direita, item)
         barra.addLayout(esquerda, 1)
         barra.addWidget(self.btn_of)
@@ -318,14 +328,19 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         if self.ciclo is not None and self.ciclo.pedido.modo != self._modo():
             self._reiniciar = True  # recomeça no outro modo quando este parar
             self.ciclo.parar()
+        if self.afinacao is not None and self.afinacao.modo != self._modo():
+            self._parar_afinacao()  # a afinar: passa logo ao outro modo
+            self.afinacao = None  # já terminou: o finished dela só a apaga
+            self.afinar()
         self._atualizar_botoes()
 
-    def _ver_ao_vivo(self) -> None:
-        """Da janela da câmara: passa a Ao vivo e começa (ou recomeça, se estava em Trigger)."""
-        self.btn_ao_vivo.setChecked(True)
+    def _ver_camara(self, modo: str) -> None:
+        """Da janela da câmara: passa a esse modo e mostra a câmara (parado, afina-se; a correr, a inspeção muda)."""
+        (self.btn_trigger if modo == "trigger" else self.btn_ao_vivo).setChecked(True)
         self._mudar_modo()
-        if self.ciclo is None:
-            self.iniciar()
+        if self.ciclo is None and self.afinacao is None:
+            self.btn_afinar.setChecked(True)
+            self.afinar()
 
     def _engenharia(self) -> bool:
         return self.acao_engenharia.isChecked()
@@ -337,13 +352,15 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
 
     def _atualizar_botoes(self) -> None:
         a_correr = self.ciclo is not None
-        self.cb_perfil.setEnabled(not a_correr)
+        a_afinar = self.afinacao is not None
+        self.cb_perfil.setEnabled(not a_correr and not a_afinar)
+        self.btn_afinar.setEnabled(not a_correr)
         self.btn_iniciar.setEnabled(not a_correr)
         self.btn_parar.setEnabled(a_correr)
         for editor in (self.editor, self.editor_camara):
             editor.btn_aplicar.setEnabled(a_correr)
-        cor = CORES_INDICADOR[self.ciclo.pedido.modo if a_correr else None]
-        estado = "A CORRER" if a_correr else "PARADO"
+        cor = CORES_INDICADOR[self.ciclo.pedido.modo if a_correr else "afinar" if a_afinar else None]
+        estado = "A CORRER" if a_correr else "A AFINAR" if a_afinar else "PARADO"
         if self._em_revisao is not None:
             cor, estado = CORES_ESTADO[Estado.ERRO], "EM REVISÃO"
         self.indicador.setText(estado)
@@ -371,6 +388,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         perguntar = not self._pode("producao_sem_of") or (self._ordem is None and not self._ensaio_sem_of)
         if perguntar and not self._escolher_ordem():
             return
+        self._parar_afinacao()  # a câmara só abre uma vez: passa da afinação para a inspeção
         self._contagem.clear()
         self._tempos.clear()
         self.historico.limpar()
@@ -386,6 +404,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         self.ciclo.etapas = self._engenharia()
         self.ciclo.registado.connect(self._registado)
         self.ciclo.visto.connect(self._recebido)
+        self.ciclo.quadro.connect(self._ver_quadro)
         self.ciclo.mensagem.connect(self._mensagem)
         self.ciclo.finished.connect(self._terminou)
         self.ciclo.start()
@@ -396,6 +415,64 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
     def parar(self) -> None:
         if self.ciclo is not None:
             self.ciclo.parar()
+
+    # --- Afinar a câmara (só a imagem, sem inspeção) -------------------------------------
+    def _alternar_afinacao(self) -> None:
+        if self.btn_afinar.isChecked():
+            self.afinar()
+        else:
+            self._parar_afinacao()
+
+    def afinar(self) -> None:
+        """A câmara no modo escolhido (Ao vivo ou Trigger), sem inspeção nem registo; abre a 📷 Câmara
+        na secção que interessa: a exposição e o ganho ao vivo, o trigger em Trigger."""
+        if self.ciclo is not None or self.afinacao is not None:
+            return
+        modo = self._modo()
+        afinacao = self.afinacao = Afinacao(self._cfg_edicao, modo)
+        afinacao.quadro.connect(self._ver_afinacao)
+        afinacao.medidas.connect(self._medidas_afinacao)
+        afinacao.mensagem.connect(self._mensagem)
+        afinacao.finished.connect(lambda: self._afinacao_terminou(afinacao))
+        afinacao.start()
+        trigger = modo == "trigger"
+        for faixa in (self.faixa_op, self.faixa_eng):
+            faixa.mostrar(None, "a afinar: trigger" if trigger else "a afinar: ao vivo")
+        self.titulo_imagem.setText(f"<b style='color:{CORES_INDICADOR['afinar']}'>AFINAR CÂMARA</b>"
+                                   f"   {'Trigger' if trigger else 'Ao vivo'} (sem inspeção nem registo)")
+        espera = "À espera do sinal do botão ou do sensor…" if trigger else ""
+        self.lbl_medidas.setText(espera)
+        self.info.setText(espera)
+        self.editor_camara.mostrar_secao("disparo" if trigger else "aquisicao")
+        self.janela_camara.abrir()
+        self._atualizar_botoes()
+
+    def _parar_afinacao(self) -> None:
+        """Para a afinação e espera que a câmara fique livre (a inspeção vai abri-la a seguir)."""
+        if self.afinacao is not None:
+            self.afinacao.parar()
+            self.afinacao.wait(5000)
+
+    def _afinacao_terminou(self, afinacao: Afinacao) -> None:
+        afinacao.deleteLater()
+        if self.afinacao is afinacao:
+            self.afinacao = None
+            self.btn_afinar.setChecked(False)
+            self.lbl_medidas.setText("")
+            self.info.setText("")  # as medidas eram da afinação: não ficam como se fossem atuais
+            if self.ciclo is None:
+                self.titulo_imagem.setText("")
+                for faixa in (self.faixa_op, self.faixa_eng):
+                    faixa.mostrar(None, "parado")
+            self._atualizar_botoes()
+
+    def _ver_afinacao(self, imagem) -> None:
+        self.imagem_op.mostrar(imagem)
+        self.imagem_eng.mostrar(imagem)
+
+    def _medidas_afinacao(self, texto: str) -> None:
+        self.lbl_medidas.setText(texto)
+        self.info.setText(texto.replace("   ·   ", "<br>"))
 
     def _terminou(self) -> None:
         ciclo, self.ciclo = self.ciclo, None
@@ -411,6 +488,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
 
     def closeEvent(self, evento: QCloseEvent) -> None:
         self._reiniciar = False
+        self._parar_afinacao()
         if self.ciclo is not None:
             self.ciclo.parar()
             self.ciclo.wait(5000)
@@ -468,6 +546,18 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
             QTimer.singleShot(0, self._desenhar_pendente)
         self._pendente = visto
 
+    def _ver_quadro(self, imagem) -> None:
+        """A imagem da câmara tal como chega, para acertar a luz e o foco; um saco acabado de analisar tem prioridade."""
+        if monotonic() < self._segurar_ate or self._em_revisao is not None:
+            return
+        if self.btn_congelar.isChecked() and self._engenharia():
+            return
+        for faixa in (self.faixa_op, self.faixa_eng):
+            faixa.mostrar(None, "câmara ao vivo")
+        self.imagem_op.mostrar(imagem)
+        self.imagem_eng.mostrar(imagem)
+        self.titulo_imagem.setText("")
+
     def _desenhar_pendente(self) -> None:
         visto, self._pendente = self._pendente, None
         if visto is not None:
@@ -476,6 +566,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
     def _mostrar(self, visto: Visto, original: bool = True) -> None:
         if original:
             self._base = visto
+            self._segurar_ate = monotonic() + SEGURAR_SACO_S
         r = visto.resultado
         for faixa in (self.faixa_op, self.faixa_eng):
             faixa.mostrar(r.estado, f"saco {visto.numero}")

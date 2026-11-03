@@ -53,7 +53,7 @@ GERAL_PARALELO: Final = False  # True = os escravos de inspeção correm ao mesm
 # A câmara é PARTILHADA com outra aplicação: o programa muda só a exposição, o ganho e o
 # trigger, guarda os valores originais e repõe-nos ao fechar. Nunca grava nem carrega User Sets.
 CAMARA_MODELO: Final = "acA1300-30gm"
-CAMARA_SERIAL: Final = ""  # nº de série da câmara (obrigatório no perfil); procura-se por ele
+CAMARA_SERIAL: Final = "23987581"  # nº de série da câmara (o perfil pode pôr outro); procura-se por ele
 CAMARA_IP: Final = ""  # IP da câmara, se não aparecer na procura (p.ex. noutra sub-rede); "" = não usar
 CAMARA_LARGURA_PX: Final = 1296
 CAMARA_ALTURA_PX: Final = 966

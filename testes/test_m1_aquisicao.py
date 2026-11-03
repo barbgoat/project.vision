@@ -82,6 +82,9 @@ def test_basler_emulada_repoe_a_camara_partilhada(monkeypatch):
     finally:
         fonte.fechar()
     fonte.fechar()  # duas vezes não faz mal
+    fora = dataclasses.replace(cfg, aquisicao=dataclasses.replace(cfg.aquisicao, ganho_raw=10**6))
+    with criar_fonte(fora) as fonte:  # fora da gama da câmara: fica no máximo, em vez de não abrir
+        assert fonte._camara.GainRaw.GetValue() == fonte._camara.GainRaw.GetMax()
     with pytest.raises(RuntimeError, match="não encontrada"):
         criar_fonte(config_teste(camara={"serial": "999"}))
 
@@ -89,7 +92,7 @@ def test_basler_emulada_repoe_a_camara_partilhada(monkeypatch):
 def test_basler_sem_numero_de_serie_diz_o_que_falta():
     pytest.importorskip("pypylon")
     with pytest.raises(RuntimeError, match="camara.serial"):
-        criar_fonte(config_teste())
+        criar_fonte(config_teste(camara={"serial": ""}))
 
 
 # --- Barreira virtual ---------------------------------------------------------------------

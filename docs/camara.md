@@ -16,7 +16,7 @@ do sensor ao longo do tapete. GigE: placa de rede só para a câmara, com "Jumbo
 Packet" 9014 e IP fixo na mesma sub-rede.
 
 **Câmara partilhada com outra aplicação.** O programa procura-a pelo nº de série
-(`camara.serial`, obrigatório no perfil; se não aparecer, liga-se por `camara.ip` e confirma o
+(`camara.serial`, já preenchido nos defines; se não aparecer, liga-se por `camara.ip` e confirma o
 nº). Muda só a exposição (`ExposureTimeAbs`), o ganho (`GainRaw`, se `aquisicao.ganho_raw` ≥ 0) e o
 trigger; guarda os valores originais e repõe-nos ao fechar, o trigger primeiro. Nunca grava nem
 carrega User Sets. Se a outra aplicação (ou o pylon Viewer) a tiver aberta, dá um erro claro.

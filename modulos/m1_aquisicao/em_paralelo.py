@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Self
 
 from modulos.m1_aquisicao.disparo import Disparo
@@ -41,8 +41,11 @@ class AquisicaoEmParalelo:
     A fonte é fechada pela thread de aquisição, quando termina.
     """
 
-    def __init__(self, fonte: FonteImagem, disparo: Disparo, fila_max: int) -> None:
+    def __init__(self, fonte: FonteImagem, disparo: Disparo, fila_max: int,
+                 ao_captar: Callable[[Captura], None] | None = None) -> None:
+        """ao_captar: chamada, na thread de aquisição, a cada imagem (p.ex. para a ver ao vivo); tem de ser rápida."""
         self.fonte = fonte
+        self.ao_captar = ao_captar
         self.disparo = disparo
         self.fila_max = fila_max
         self.ao_vivo = fonte.ao_vivo
@@ -97,6 +100,8 @@ class AquisicaoEmParalelo:
             if self._parar.is_set():
                 return
             self.imagens += 1
+            if self.ao_captar is not None:
+                self.ao_captar(captura)
             yield captura
 
     def _entregar(self, passagem: Passagem) -> None:

@@ -16,6 +16,7 @@ funcionam numa máquina sem ele.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -23,7 +24,7 @@ from collections.abc import Iterator
 from typing import Any, ClassVar, Self
 
 from modulos.m1_aquisicao.preprocessamento import carregar_calibracao, preparar
-from nucleo.config import Config
+from nucleo.config import Config, ConfigAquisicao
 from nucleo.contrato import Captura
 
 log = logging.getLogger(__name__)
@@ -66,6 +67,13 @@ class FonteImagem(ABC):
         termina e fechar() nunca chega a ser chamado.
         """
         self.parada = True
+
+    def ajustar(self, aquisicao: ConfigAquisicao) -> bool:
+        """Muda a exposição e o ganho sem parar de captar (para afinar a câmara ao vivo).
+
+        Devolve False se esta fonte não o sabe fazer: quem chama fecha-a e abre outra.
+        """
+        return False
 
     def __iter__(self) -> Iterator[Captura]:
         while not self.parada and (captura := self.ler()) is not None:
@@ -156,9 +164,18 @@ class FonteBasler(FonteImagem):
                  self.numero_serie, self.cfg.disparo.modo)
 
     def _mudar(self, nome: str, valor: Any) -> None:
-        """Muda um parâmetro da câmara, guardando antes o valor original (reposto em fechar())."""
+        """Muda um parâmetro da câmara, guardando antes o valor original (reposto em fechar()).
+        Um número fora da gama da câmara (p.ex. GainRaw 0 com mínimo 300) fica no limite, com um aviso."""
         no = getattr(self._camara, nome)
-        self._originais.append((nome, no.GetValue()))
+        if isinstance(valor, int | float):
+            minimo, maximo = no.GetMin(), no.GetMax()
+            if not minimo <= valor <= maximo:
+                limitado = type(valor)(min(max(valor, minimo), maximo))
+                log.warning("Câmara Basler: %s = %s fora da gama da câmara (%s a %s); usado %s.",
+                            nome, valor, minimo, maximo, limitado)
+                valor = limitado
+        if all(n != nome for n, _ in self._originais):  # o original é o de antes da 1.ª mudança
+            self._originais.append((nome, no.GetValue()))
         no.SetValue(valor)
 
     def _configurar(self) -> None:
@@ -176,6 +193,21 @@ class FonteBasler(FonteImagem):
             self._mudar("TriggerMode", "On")
         else:
             self._mudar("TriggerMode", "Off")  # ao vivo: a captar em contínuo
+
+    def ajustar(self, aquisicao: ConfigAquisicao) -> bool:
+        """A exposição e o ganho, com a câmara a captar; fechar() continua a repor os originais."""
+        from pypylon import genicam
+
+        if self._camara is None:
+            return False
+        try:
+            self._mudar("ExposureTimeAbs", float(aquisicao.exposicao_us))
+            if aquisicao.ganho_raw >= 0:
+                self._mudar("GainRaw", int(aquisicao.ganho_raw))
+        except genicam.GenericException as erro:  # p.ex. fora dos limites da câmara
+            raise RuntimeError(f"Câmara Basler {self.numero_serie}: {erro}") from erro
+        self.cfg = dataclasses.replace(self.cfg, aquisicao=aquisicao)
+        return True
 
     def adquirir(self) -> Captura | None:
         """Uma só imagem (GrabOne), p.ex. para ver se a câmara responde; None se não chegar a tempo.

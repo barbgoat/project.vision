@@ -296,6 +296,60 @@ def test_trocar_de_modo_a_correr(app, janela):
     assert janela.historico.rowCount() == 3
 
 
+class CamaraAfinar(CamaraSimulada):
+    """Imagens sem fim e sem sacos, como a câmara a afinar; guarda as exposições pedidas com ajustar()."""
+
+    def __init__(self, cfg: Config) -> None:
+        super().__init__([])
+        self.modo = cfg.disparo.modo
+        self.exposicoes = [cfg.aquisicao.exposicao_us]
+
+    def ler(self) -> Captura | None:
+        time.sleep(0.01)
+        return None if self.parada else Captura(IMG, "afinar.png", time.time(), fonte="simulada")
+
+    def ajustar(self, aquisicao) -> bool:
+        self.exposicoes.append(aquisicao.exposicao_us)
+        return True
+
+
+def test_afinar_segue_o_modo_sem_inspecionar_e_passa_a_inspecao(app, janela, tmp_path, monkeypatch):
+    abertas: list[CamaraAfinar] = []
+    inspecao = ciclo.criar_fonte  # a da janela (Trigger: os três sacos)
+
+    def fabrica(cfg):
+        if janela.ciclo is not None:  # a inspeção: o ciclo já existe quando abre a câmara
+            return inspecao(cfg)
+        abertas.append(CamaraAfinar(cfg))
+        return abertas[-1]
+
+    com_camara(monkeypatch, ciclo, fabrica)
+    janela.btn_ao_vivo.click()  # parado: só escolhe o modo
+    assert janela.afinacao is None
+    janela.btn_afinar.click()
+    esperar(app, lambda: janela.imagem_eng._original is not None and "img/s" in janela.lbl_medidas.text())
+    assert "A AFINAR" in janela.indicador.text() and janela.lbl_medidas.text().startswith("brilho 0")
+    assert abertas[-1].modo == "ao_vivo" and janela.editor_camara.secao.currentData() == "aquisicao"
+
+    _campo(janela.editor_camara, "aquisicao", "exposicao_us").setValue(1234.0)
+    esperar(app, lambda: abertas[-1].exposicoes[-1] == 1234.0)
+    assert len(abertas) == 1, "a exposição muda sem reabrir a câmara"
+    _campo(janela.editor_camara, "aquisicao", "timeout_ms").setValue(2500)
+    esperar(app, lambda: len(abertas) == 2 and abertas[0].fechada)
+
+    janela.btn_trigger.click()  # a afinar: passa logo a Trigger, uma imagem por sinal
+    esperar(app, lambda: "sinal n.º" in janela.lbl_medidas.text())
+    assert janela.afinacao.modo == "trigger" and abertas[-1].modo == "trigger" and abertas[-2].fechada
+    assert janela.editor_camara.secao.currentData() == "disparo"
+    _campo(janela.editor_camara, "aquisicao", "exposicao_us").setValue(2000.0)  # sai da espera do sinal
+    esperar(app, lambda: abertas[-1].exposicoes[-1] == 2000.0)
+    assert not (tmp_path / "res").exists(), "a afinar não se regista nada"
+
+    _producao_ate_ao_fim(app, janela)  # Iniciar: a afinação para e a inspeção abre a câmara
+    assert all(c.fechada for c in abertas) and janela.afinacao is None and not janela.btn_afinar.isChecked()
+    assert janela.historico.rowCount() == 3
+
+
 def test_pre_visualizar_e_guardar_no_perfil(app, janela, tmp_path, monkeypatch):
     _producao_ate_ao_fim(app, janela)  # termina no comprido_158: NOK com a tolerância de 3 mm
     _campo(janela.editor, "dimensoes", "tolerancia_comprimento_mm").setValue(9.0)
