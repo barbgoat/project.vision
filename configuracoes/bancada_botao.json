@@ -1,22 +1,24 @@
 {
   "geral": {
-    "px_por_mm": 6.68
+    "px_por_mm": 6.8
   },
   "aquisicao": {
     "exposicao_us": 10000.0,
     "ganho_raw": 300,
-    "roi_x_px": 60,
-    "roi_y_px": 90,
-    "roi_largura_px": 1172,
-    "roi_altura_px": 769
+    "roi_x_px": 194,
+    "roi_y_px": 12,
+    "roi_largura_px": 788,
+    "roi_altura_px": 660
   },
   "localizacao": {
     "resolucao_px_por_mm": 20.0,
-    "suavizacao_mm": 0.04
+    "suavizacao_mm": 0.04,
+    "fundo_referencia": "dataset/bancada_botao/fundo.png"
   },
   "dimensoes": {
     "comprimento_nominal_mm": 140.0,
     "largura_nominal_mm": 93.0,
+    "forma_raio_canto_mm": 6.0,
     "forma_profundidade_min_mm": 3.5
   },
   "cor": {
@@ -30,6 +32,8 @@
   },
   "saida": {
     "guardar_imagens": "todas",
+    "guardar_originais": "todas",
+    "originais_max_mb": 300.0,
     "depurar": "nok"
   }
 }
