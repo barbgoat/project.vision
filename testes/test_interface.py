@@ -399,12 +399,13 @@ def test_afinar_com_contorno_mede_o_saco_na_roi(app, janela, monkeypatch):
     esperar(app, lambda: len(janela._medicoes) >= 2)
     comprimentos, larguras = np.array(janela._medicoes).T
     assert np.allclose(comprimentos, COMPRIMENTO, atol=0.5) and np.allclose(larguras, LARGURA, atol=0.5)
-    contorno = janela.imagem_eng.contorno
+    contorno, ideal = janela.imagem_eng.contorno, janela.imagem_eng.ideal
     assert abs(contorno[:, 0].mean() - cx) < 10 and abs(contorno[:, 1].mean() - cy) < 10, "na imagem inteira"
+    assert np.allclose(ideal.mean(axis=0), (cx, cy), atol=2), "o contorno ideal, liso, no mesmo sítio"
     texto = janela.lbl_medidas.text()
     assert "RMS" in texto and "rejeitados" in texto and "σ C" in texto and "face ao nominal" in texto
     janela.btn_recomecar.click()
-    assert janela._medicoes == [] and janela.imagem_eng.contorno is None
+    assert janela._medicoes == [] and janela.imagem_eng.contorno is None and janela.imagem_eng.ideal is None
     janela.btn_contorno.setChecked(False)
     assert janela.afinacao.medir_contorno is False
 

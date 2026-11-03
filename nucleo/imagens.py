@@ -6,6 +6,7 @@ cada um a sua cópia.
 
 from __future__ import annotations
 
+import logging
 import unicodedata
 from pathlib import Path
 
@@ -14,14 +15,51 @@ import numpy as np
 
 from nucleo.config import Canal
 
+log = logging.getLogger(__name__)
+
 # --- Ficheiros (caminhos com espaços e acentos) -------------------------------------
 
 EXTENSOES_IMAGEM = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
 
 
+def e_anotada(caminho: str | Path) -> bool:
+    """A imagem foi desenhada pelo programa (anotada, etapas da depuração, painel), não é a da câmara?
+
+    Pelo nome (…_anotada, painel) ou por estar numa pasta de resultados (com registo.csv), onde só os
+    …_original.png e os 00_original.png da depuração são da câmara. As anotadas têm o contorno
+    desenhado em cima da borda do saco: analisá-las dá medidas erradas.
+    """
+    p = Path(caminho)
+    nome = p.stem.lower()
+    if nome.endswith("_original") or nome == "00_original":
+        return False
+    if nome.endswith("anotada") or nome == "painel":
+        return True
+    return any((pai / "registo.csv").is_file() for pai in list(p.parents)[:3])
+
+
 def listar_imagens(pasta: str | Path) -> list[Path]:
-    """As imagens de uma pasta e das subpastas, por ordem alfabética do caminho (para as ferramentas)."""
-    return sorted(p for p in Path(pasta).rglob("*") if p.suffix.lower() in EXTENSOES_IMAGEM and p.is_file())
+    """As imagens de uma pasta e das subpastas, por ordem alfabética do caminho (para as ferramentas),
+    sem as anotadas (e_anotada): só o que veio da câmara."""
+    imagens, anotadas = [], 0
+    for p in sorted(Path(pasta).rglob("*")):
+        if p.suffix.lower() in EXTENSOES_IMAGEM and p.is_file():
+            if e_anotada(p):
+                anotadas += 1
+            else:
+                imagens.append(p)
+    if anotadas:
+        log.warning("%d imagens anotadas (com desenhos por cima) deixadas de fora em %s; analisar os originais.",
+                    anotadas, pasta)
+    return imagens
+
+
+def ler_original(caminho: str | Path) -> np.ndarray | None:
+    """ler_imagem, mas recusa uma imagem anotada (e_anotada): as ferramentas de análise usam esta."""
+    if e_anotada(caminho):
+        raise ValueError(f"{caminho} é uma imagem anotada (com desenhos por cima): usar a original "
+                         "(…_original.png ou 00_original.png da depuração)")
+    return ler_imagem(caminho)
 
 
 def limites_roi(forma: tuple[int, ...], roi: tuple[int, int, int, int] | None) -> tuple[int, int, int, int]:

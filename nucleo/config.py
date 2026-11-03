@@ -409,6 +409,10 @@ class ConfigSaida:
 
     guardar_imagens: GuardarImagens = D.SAIDA_GUARDAR_IMAGENS
     formato_imagem: FormatoImagem = D.SAIDA_FORMATO_IMAGEM
+    guardar_originais: GuardarImagens = D.SAIDA_GUARDAR_ORIGINAIS
+    originais_pasta: str = D.SAIDA_ORIGINAIS_PASTA
+    originais_cada: int = D.SAIDA_ORIGINAIS_CADA
+    originais_max_mb: float = D.SAIDA_ORIGINAIS_MAX_MB
     separador_decimal: SeparadorDecimal = D.SAIDA_SEPARADOR_DECIMAL
     base_dados: str = D.SAIDA_BASE_DADOS
     dashboard_endereco: str = D.SAIDA_DASHBOARD_ENDERECO
@@ -423,6 +427,9 @@ class ConfigSaida:
         return _verificar([
             _opcao(self, "guardar_imagens", GuardarImagens),
             _opcao(self, "formato_imagem", FormatoImagem),
+            _opcao(self, "guardar_originais", GuardarImagens),
+            (self.originais_cada >= 1, "originais_cada tem de ser ≥ 1"),
+            (self.originais_max_mb >= 0, "originais_max_mb tem de ser ≥ 0 (0 = sem limite)"),
             _opcao(self, "separador_decimal", SeparadorDecimal),
             _opcao(self, "depurar", GuardarImagens),
             (bool(self.dashboard_endereco.strip()), "dashboard_endereco não pode estar vazio"),

@@ -574,7 +574,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         self._medicoes.clear()
         self._texto_contorno = ""
         for vista in (self.imagem_op, self.imagem_eng):
-            vista.contorno = None
+            vista.contorno = vista.ideal = None
             vista.update()
         self._mostrar_textos_afinacao()
 
@@ -587,7 +587,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
             self._medicoes.append((medicao.comprimento_mm, medicao.largura_mm))
             self._texto_contorno = _texto_contorno(medicao, self._medicoes, self._cfg_edicao)
         for vista in (self.imagem_op, self.imagem_eng):
-            vista.contorno = medicao.contorno
+            vista.contorno, vista.ideal = medicao.contorno, medicao.ideal
             vista.update()
         self._mostrar_textos_afinacao()
 

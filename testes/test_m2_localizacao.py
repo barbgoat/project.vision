@@ -265,6 +265,17 @@ def test_qualidade_do_contorno(rng):
     assert max(diagnostico.medidas[f"rejeitados_{lado}_pct"] for lado in ("esquerda", "direita", "baixo")) < 5
 
 
+def test_contorno_ideal_e_o_retangulo_medido_com_os_cantos_do_produto():
+    from modulos.m2_localizacao.medicao import retangulo_arredondado
+    ideal = retangulo_arredondado((300.0, 200.0), 30.0, 400.0, 150.0, 20.0)
+    assert np.allclose(ideal.mean(axis=0), (300, 200), atol=0.5)
+    area = cv2.contourArea(ideal.astype(np.float32))
+    assert abs(area - (400 * 150 - (4 - math.pi) * 20 ** 2)) < 0.01 * area, "retângulo com cantos de raio 20"
+    _, (lado1, lado2), _ = cv2.minAreaRect(ideal.astype(np.float32))
+    assert sorted((lado1, lado2)) == pytest.approx([150, 400], abs=0.5)
+    assert len(retangulo_arredondado((0, 0), 0, 100, 50, 0)) == 48, "raio 0: cantos vivos"
+
+
 def test_contorno_que_nao_fechou_e_erro_e_nao_medidas(rng):
     """Uma parte do saco igual ao fundo deixa uma "baía" na região (a solidez cai): ERRO, não medidas."""
     img, verdade = _verdade(rng, angulo=0.0)

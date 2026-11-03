@@ -71,7 +71,7 @@ from modulos.m2_localizacao.segmentadores import sam3  # noqa: E402
 from modulos.m2_localizacao.segmentadores.aprendido import Modelo, reduzir, sementes  # noqa: E402
 from nucleo import defines as D  # noqa: E402
 from nucleo.config import RAIZ  # noqa: E402
-from nucleo.imagens import guardar_imagem, ler_imagem  # noqa: E402
+from nucleo.imagens import e_anotada, guardar_imagem, ler_imagem  # noqa: E402
 
 EXTENSOES = (".jpg", ".jpeg", ".png", ".bmp")
 LADO_TRABALHO = D.M2_APRENDIDO_LADO_PX  # o GrabCut, o ecrã e o modelo trabalham com este lado maior (px)
@@ -625,8 +625,8 @@ def fotos(pasta: Path, saida: Path) -> list[tuple[Path, str]]:
     """(foto, nome na saída) das fotos de `pasta` e subpastas, sem as de `saida` nem as já anotadas."""
     lista = []
     for f in sorted(pasta.rglob("*")):
-        if f.suffix.lower() not in EXTENSOES or saida.resolve() in f.resolve().parents:
-            continue
+        if f.suffix.lower() not in EXTENSOES or saida.resolve() in f.resolve().parents or e_anotada(f):
+            continue  # nem as da saída, nem as anotadas pelo programa (desenhos por cima da borda)
         nome = "__".join(f.relative_to(pasta).with_suffix("").parts)
         if not (saida / "mascaras" / f"{nome}.png").exists():
             lista.append((f, nome))

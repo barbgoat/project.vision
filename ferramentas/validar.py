@@ -40,7 +40,7 @@ from mestre import Mestre  # noqa: E402
 from modulos.m2_localizacao.segmentadores import iou, sam3  # noqa: E402
 from nucleo.config import CAMINHO_POR_OMISSAO, RAIZ, Config, TipoSegmentador, carregar_configuracao  # noqa: E402
 from nucleo.contrato import Estado  # noqa: E402
-from nucleo.imagens import ler_imagem  # noqa: E402
+from nucleo.imagens import ler_imagem, ler_original  # noqa: E402
 
 COLUNAS_VERDADE = ("ficheiro", "saco", "tipo_saco", "fundo", "comprimento_mm", "largura_mm")
 
@@ -81,7 +81,7 @@ def medir(pasta: Path, cfg: Config, backend: str) -> list[Medicao]:
     mestre = Mestre(cfg, apenas=[])
     medicoes = []
     for verdade in ler_verdade(pasta):
-        img = ler_imagem(pasta / "imagens" / verdade["ficheiro"])
+        img = ler_original(pasta / "imagens" / verdade["ficheiro"])
         if img is None:
             raise FileNotFoundError(pasta / "imagens" / verdade["ficheiro"])
         inicio = perf_counter()

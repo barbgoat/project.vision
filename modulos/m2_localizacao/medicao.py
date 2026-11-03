@@ -32,6 +32,8 @@ def pose(arestas: np.ndarray, px_por_mm: float) -> tuple[np.ndarray, float, floa
     cada lado é a mediana dos pontos do contorno nesse lado, longe dos cantos.
     Assim, a "escada" de píxeis de um saco rodado, um canto saliente ou um
     píxel a mais não mexem nas medidas (a forma irregular é assunto do M3).
+    (Medir pela reta robusta de cada lado (_retas) foi experimentado e não
+    melhorou: σ igual em cenas sintéticas e um pouco pior com sacos reais.)
     O centro é o meio entre os lados (não o centro de massa), para as posições
     em mm irem de −comprimento/2 a +comprimento/2.
     """
@@ -77,33 +79,13 @@ def qualidade(arestas: np.ndarray, centro: np.ndarray, angulo: float, desvio_px:
     dos quatro lados, rejeitados_<lado>_pct e rejeitados_max_pct, o do pior lado.
     """
     u, v = _projetar(arestas.reshape(-1, 2).astype(np.float64) - centro, angulo)
-    meio_u, meio_v = (u.max() + u.min()) / 2, (v.max() + v.min()) / 2
-    metade = D.M2_PARTE_CENTRAL_LADOS / 2
-    central_u = np.abs(u - meio_u) < metade * np.ptp(u)
-    central_v = np.abs(v - meio_v) < metade * np.ptp(v)
-    lados = {  # (posição ao longo do lado, distância ao eixo)
-        "esquerda": (v[central_v & (u < meio_u)], u[central_v & (u < meio_u)]),
-        "direita": (v[central_v & (u > meio_u)], u[central_v & (u > meio_u)]),
-        "cima": (u[central_u & (v < meio_v)], v[central_u & (v < meio_v)]),
-        "baixo": (u[central_u & (v > meio_v)], v[central_u & (v > meio_v)]),
-    }
     medidas: dict[str, float] = {}
     quadrados, validos_total = 0.0, 0
-    for nome, (ao_longo, distancia) in lados.items():
-        if len(ao_longo) < 10:
+    for nome, reta in _retas(u, v, desvio_px).items():
+        if reta is None:
             medidas[f"rejeitados_{nome}_pct"] = 100.0
             continue
-        # Começa pela reta paralela ao eixo, na mediana (o ângulo já vem afinado pelos lados), e
-        # afina-a só com os pontos perto dela: um vinco colado ao lado não a puxa.
-        a, b = 0.0, float(np.median(distancia))
-        for _ in range(3):
-            residuo = distancia - (a * ao_longo + b)
-            validos = np.abs(residuo) <= desvio_px
-            if validos.sum() < 10:
-                break
-            a, b = np.polyfit(ao_longo[validos], distancia[validos], 1)
-        residuo = distancia - (a * ao_longo + b)
-        validos = np.abs(residuo) <= desvio_px
+        _, residuo, validos = reta
         medidas[f"rejeitados_{nome}_pct"] = float(100 * (1 - validos.mean()))
         quadrados += float(np.sum(residuo[validos] ** 2))
         validos_total += int(validos.sum())
@@ -144,6 +126,43 @@ def _inclinacao_lados(u: np.ndarray, v: np.ndarray, desvio_px: float) -> float |
     return math.atan(float(np.average(inclinacoes, weights=pesos)))
 
 
+Reta = tuple[tuple[float, float], np.ndarray, np.ndarray]  # ((a, b), resíduos, pontos válidos)
+
+
+def _retas(u: np.ndarray, v: np.ndarray, desvio_px: float) -> dict[str, Reta | None]:
+    """A reta robusta da parte central (M2_PARTE_CENTRAL_LADOS, sem os cantos) de cada lado.
+
+    Em cada lado, distância = a·(posição ao longo do lado) + b. Começa pela reta paralela ao
+    eixo, na mediana (o ângulo já vem afinado), e afina-a só com os pontos a menos de
+    desvio_px dela: uma aba, um vinco ou uma sombra colados ao lado não a puxam.
+    None num lado com menos de 10 pontos.
+    """
+    meio_u, meio_v = (u.max() + u.min()) / 2, (v.max() + v.min()) / 2
+    metade = D.M2_PARTE_CENTRAL_LADOS / 2
+    central_u = np.abs(u - meio_u) < metade * np.ptp(u)  # parte central dos lados compridos
+    central_v = np.abs(v - meio_v) < metade * np.ptp(v)  # parte central dos lados curtos
+    lados = {  # (posição ao longo do lado, distância ao eixo)
+        "esquerda": (v[central_v & (u < meio_u)], u[central_v & (u < meio_u)]),
+        "direita": (v[central_v & (u > meio_u)], u[central_v & (u > meio_u)]),
+        "cima": (u[central_u & (v < meio_v)], v[central_u & (v < meio_v)]),
+        "baixo": (u[central_u & (v > meio_v)], v[central_u & (v > meio_v)]),
+    }
+    retas: dict[str, Reta | None] = {}
+    for nome, (ao_longo, distancia) in lados.items():
+        if len(ao_longo) < 10:
+            retas[nome] = None
+            continue
+        a, b = 0.0, float(np.median(distancia))
+        for _ in range(3):
+            validos = np.abs(distancia - (a * ao_longo + b)) <= desvio_px
+            if validos.sum() < 10:
+                break
+            a, b = np.polyfit(ao_longo[validos], distancia[validos], 1)
+        residuo = distancia - (a * ao_longo + b)
+        retas[nome] = ((float(a), float(b)), residuo, np.abs(residuo) <= desvio_px)
+    return retas
+
+
 def _lados(u: np.ndarray, v: np.ndarray) -> tuple[float, float, float, float]:
     """Posição (mediana) dos lados esquerdo, direito, de cima e de baixo, longe dos cantos."""
     meio_u, meio_v = (u.max() + u.min()) / 2, (v.max() + v.min()) / 2
@@ -160,3 +179,19 @@ def _lados(u: np.ndarray, v: np.ndarray) -> tuple[float, float, float, float]:
         mediana(v[central_u & (v < meio_v)], v.min()),
         mediana(v[central_u & (v > meio_v)], v.max()),
     )
+
+
+def retangulo_arredondado(centro: tuple[float, float], angulo_graus: float, comprimento_px: float,
+                          largura_px: float, raio_px: float, pontos_por_canto: int = 12) -> np.ndarray:
+    """O contorno ideal (N×2, px) de um saco com estas medidas e cantos com este raio: o que se
+    desenha por cima, liso, em vez dos pontos da borda (que seguem cada píxel e cada friso)."""
+    raio = min(max(raio_px, 0.0), comprimento_px / 2, largura_px / 2)
+    meio_c, meio_l = comprimento_px / 2 - raio, largura_px / 2 - raio
+    pontos = []
+    for (sx, sy), inicio in (((1, 1), 0.0), ((-1, 1), 90.0), ((-1, -1), 180.0), ((1, -1), 270.0)):
+        for t in np.radians(np.linspace(inicio, inicio + 90.0, pontos_por_canto)):
+            pontos.append((sx * meio_c + raio * math.cos(t), sy * meio_l + raio * math.sin(t)))
+    p = np.array(pontos)
+    a = math.radians(angulo_graus)
+    rot = np.array([[math.cos(a), -math.sin(a)], [math.sin(a), math.cos(a)]])
+    return p @ rot.T + np.asarray(centro, np.float64)

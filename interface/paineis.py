@@ -101,7 +101,8 @@ class VistaImagem(QWidget):
         self.desenhar_roi = False  # arrastar desenha uma ROI em vez de mover a imagem
         # Desenhados por cima: ((x, y, largura, altura) em px da imagem, cor, nome), p.ex. a ROI.
         self.auxilios: list[tuple[tuple[int, int, int, int], str, str]] = []
-        self.contorno: np.ndarray | None = None  # N×2 em px da imagem, desenhado a verde (o M2 a afinar)
+        self.contorno: np.ndarray | None = None  # N×2 em px da imagem: o contorno real (fino) do M2 a afinar
+        self.ideal: np.ndarray | None = None  # N×2: o contorno ideal medido (liso, a verde por cima)
         self._roi_arrasto: tuple[QPointF, QPointF] | None = None  # (início, fim) em px da imagem
 
     def mostrar(self, imagem: np.ndarray | None) -> None:
@@ -152,10 +153,11 @@ class VistaImagem(QWidget):
         if self._roi_arrasto is not None:
             retangulos.append((self._retangulo(*self._roi_arrasto), "#ef6c00", "", Qt.PenStyle.DashLine))
         pintor.setBrush(Qt.BrushStyle.NoBrush)
-        if self.contorno is not None and len(self.contorno) > 2:
-            pintor.setPen(QPen(QColor("#00c853"), 2))
-            pintor.drawPolygon(QPolygonF([QPointF(canto.x() + x * escala, canto.y() + y * escala)
-                                          for x, y in self.contorno]))
+        for pontos, cor, largura in ((self.contorno, "#ffd600", 1), (self.ideal, "#00c853", 2)):
+            if pontos is not None and len(pontos) > 2:
+                pintor.setPen(QPen(QColor(cor), largura))
+                pintor.drawPolygon(QPolygonF([QPointF(canto.x() + x * escala, canto.y() + y * escala)
+                                              for x, y in pontos]))
         for (x, y, largura, altura), cor, nome, estilo in retangulos:
             caixa = QRectF(canto.x() + x * escala, canto.y() + y * escala, largura * escala, altura * escala)
             pintor.setPen(QPen(QColor(cor), 2, estilo))

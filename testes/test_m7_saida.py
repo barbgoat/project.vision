@@ -140,3 +140,37 @@ def test_passagem_descartada_fica_no_registo(tmp_path):
         saida.registar(resultado)
     (linha,) = ler_csv(saida.pasta / "registo.csv")
     assert linha["estado"] == "ERRO" and "fila cheia" in linha["mensagens"]
+
+
+def test_originais_da_camara_ao_lado_das_anotadas(resultado, imagem, tmp_path):
+    """O original é a imagem da câmara (mono: um só canal, os mesmos píxeis), com o nome base da anotada;
+    1 em cada N; e acima do limite, os mais antigos saem (buffer circular)."""
+    import dataclasses
+    from nucleo.imagens import e_anotada, ler_original
+    cinza = imagem[..., 1]
+    camara = np.dstack([cinza] * 3)  # a câmara mono dá BGR com os três canais iguais
+    mono = dataclasses.replace(resultado, imagem=camara, captura=Captura(camara, "cam:1#7", 1_700_000_000.0))
+    cfg = dataclasses.replace(CFG, saida=dataclasses.replace(CFG.saida, guardar_imagens="todas",
+                                                             guardar_originais="todas", originais_cada=2))
+    with Saida(cfg, tmp_path, ["localizacao", "dimensoes"]) as saida:
+        anotadas = [saida.registar(mono) for _ in range(4)]
+    linhas = ler_csv(saida.pasta / "registo.csv")
+    originais = [saida.pasta / linha["imagem_original"] for linha in linhas if linha["imagem_original"]]
+    assert len(originais) == 2, "1 em cada 2"
+    assert originais[0].name == anotadas[0].name.replace("_anotada.jpg", "_original.png")
+    lida = ler_imagem(originais[0])
+    assert np.array_equal(lida[..., 0] if lida.ndim == 3 else lida, cinza), "os píxeis da câmara, sem perdas"
+    import cv2
+    assert cv2.imdecode(np.fromfile(originais[0], np.uint8), cv2.IMREAD_UNCHANGED).ndim == 2, "um só canal"
+    assert e_anotada(anotadas[0]) and not e_anotada(originais[0])
+    with pytest.raises(ValueError, match="anotada"):
+        ler_original(anotadas[0])
+
+    tamanho = originais[0].stat().st_size
+    limite = dataclasses.replace(cfg, saida=dataclasses.replace(cfg.saida, originais_cada=1,
+                                                                originais_max_mb=2.5 * tamanho / 1e6))
+    with Saida(limite, tmp_path / "limite", ["localizacao", "dimensoes"]) as saida:
+        for _ in range(5):
+            saida.registar(mono)
+    assert len(list(saida.pasta_originais.glob("*_original.png"))) == 2, "só cabem 2: os antigos saem"
+    assert (saida.pasta_originais / f"000005_{nome_curto('cam:1#7')}_NOK_original.png").exists()

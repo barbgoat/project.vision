@@ -4,7 +4,9 @@ Para cada execução do main.py cria uma pasta resultados/<AAAAMMDD_HHMMSS>/ com
     registo.csv   uma linha por saco (passagem): OF e produto, estado final, imagens da passagem,
                   estado + tempo de cada módulo, e a pasta de depuração (se houver)
     defeitos.csv  uma linha por defeito, com o mesmo número que aparece na imagem
-    imagens/      imagens anotadas (conforme SAIDA_GUARDAR_IMAGENS)
+    imagens/      imagens anotadas, …_anotada.jpg (conforme SAIDA_GUARDAR_IMAGENS)
+    originais/    as imagens da câmara, …_original.png, com o mesmo nome base (SAIDA_GUARDAR_ORIGINAIS;
+                  noutra pasta com SAIDA_ORIGINAIS_PASTA)
     depuracao/    uma pasta por saco depurado (conforme SAIDA_DEPURAR / --depurar)
 
 Os CSV usam ";" como separador e "utf-8-sig", para o Excel em português os
@@ -15,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import logging
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Self
@@ -23,7 +26,7 @@ import numpy as np
 
 from modulos.m7_saida.depuracao import Depuracao, nome_curto
 from modulos.m7_saida.desenho import desenhar
-from nucleo.config import Config, GuardarImagens
+from nucleo.config import RAIZ, Config, GuardarImagens
 from nucleo.contrato import Estado, Resultado
 from nucleo.imagens import guardar_imagem
 
@@ -67,6 +70,19 @@ class Saida:
         self._registo.writerow(self.colunas_registo())
         self._defeitos.writerow(COLUNAS_DEFEITOS)
 
+        s = cfg.saida
+        raiz = Path(s.originais_pasta) if s.originais_pasta else None
+        if raiz is not None and not raiz.is_absolute():
+            raiz = RAIZ / raiz
+        # Com uma pasta própria (p.ex. outro disco), uma subpasta por sessão; o limite vale para a pasta toda.
+        self._raiz_originais = raiz or self.pasta
+        self.pasta_originais = raiz / self.pasta.name if raiz else self.pasta / "originais"
+        self._originais_vistos = 0
+        self._originais: deque[tuple[Path, int]] = deque()  # (ficheiro, bytes), do mais antigo ao mais novo
+        if s.guardar_originais != "nenhuma" and s.originais_max_mb > 0 and self._raiz_originais.is_dir():
+            antigos = sorted(self._raiz_originais.rglob("*_original.png"), key=lambda p: p.stat().st_mtime)
+            self._originais.extend((p, p.stat().st_size) for p in antigos)
+
     def colunas_registo(self) -> list[str]:
         """Colunas do registo.csv: a OF e o produto, o saco (passagem), a decisão, e o estado e o tempo de cada módulo."""
         return [
@@ -74,7 +90,7 @@ class Saida:
             "imagens_passagem", "imagens_analisadas", "duracao_passagem_ms",
             *self.modulos,
             *(f"t_{m}_ms" for m in self.modulos),
-            "mensagens", "imagem_anotada", "depuracao",
+            "mensagens", "imagem_anotada", "imagem_original", "depuracao",
         ]
 
     # --- Imagem anotada ------------------------------------------------------------
@@ -106,11 +122,12 @@ class Saida:
         numero_passagem = passagem.numero if passagem else ""
 
         caminho_imagem = None
+        base = f"{self._contador:06d}_{nome_curto(origem)}_{resultado.estado}"  # o mesmo na anotada e na original
         anotada = self.anotar(resultado) if self._deve_guardar(resultado.estado) else None
         if anotada is not None:
-            nome = f"{self._contador:06d}_{nome_curto(origem)}_{resultado.estado}{self.cfg.saida.formato_imagem}"
-            caminho_imagem = self.pasta / "imagens" / nome
+            caminho_imagem = self.pasta / "imagens" / f"{base}_anotada{self.cfg.saida.formato_imagem}"
             guardar_imagem(caminho_imagem, anotada)
+        caminho_original = self._guardar_original(resultado, base)
         pasta_depuracao = self.depuracao.processar(resultado, self._contador) if self.depuracao else None
 
         relatorios = {r.modulo: r for r in resultado.relatorios}
@@ -129,6 +146,8 @@ class Saida:
             *(self._numero(relatorios[m].tempo_ms, 1) if m in relatorios else "" for m in self.modulos),
             mensagens,
             caminho_imagem.relative_to(self.pasta) if caminho_imagem else "",
+            (caminho_original.relative_to(self.pasta) if caminho_original.is_relative_to(self.pasta)
+             else caminho_original) if caminho_original else "",
             pasta_depuracao.relative_to(self.pasta) if pasta_depuracao else "",
         ])
         for numero, d in enumerate(resultado.defeitos, start=1):
@@ -143,9 +162,42 @@ class Saida:
         self._ficheiro_defeitos.flush()
         return caminho_imagem
 
-    def _deve_guardar(self, estado: Estado) -> bool:
-        modo = self.cfg.saida.guardar_imagens
+    def _deve_guardar(self, estado: Estado, modo: GuardarImagens | None = None) -> bool:
+        modo = modo or self.cfg.saida.guardar_imagens
         return modo == "todas" or (modo == "nok" and estado is not Estado.OK)
+
+    # --- Originais -----------------------------------------------------------------
+    def _guardar_original(self, resultado: Resultado, base: str) -> Path | None:
+        """A imagem que a inspeção analisou, tal como veio da câmara: PNG sem perdas, mono num só canal."""
+        s = self.cfg.saida
+        if resultado.imagem is None or not self._deve_guardar(resultado.estado, s.guardar_originais):
+            return None
+        self._originais_vistos += 1
+        if (self._originais_vistos - 1) % s.originais_cada:
+            return None
+        imagem = resultado.imagem
+        if imagem.ndim == 3 and (imagem == imagem[..., :1]).all():
+            imagem = imagem[..., 0]  # câmara mono: os mesmos 8 bits, num só canal
+        caminho = self.pasta_originais / f"{base}_original.png"
+        try:
+            guardar_imagem(caminho, imagem)
+        except OSError as erro:  # p.ex. disco cheio: a inspeção continua, o registo diz que não ficou
+            log.error("M7 saida: original não guardado (%s): %s", caminho, erro)
+            return None
+        self._limitar_originais(caminho)
+        return caminho
+
+    def _limitar_originais(self, novo: Path) -> None:
+        """Buffer circular: acima de originais_max_mb, apaga os originais mais antigos (só …_original.png)."""
+        limite = self.cfg.saida.originais_max_mb * 1e6
+        if limite <= 0:
+            return
+        self._originais.append((novo, novo.stat().st_size))
+        total = sum(tamanho for _, tamanho in self._originais)
+        while total > limite and len(self._originais) > 1:
+            antigo, tamanho = self._originais.popleft()
+            antigo.unlink(missing_ok=True)
+            total -= tamanho
 
     def _numero(self, valor: float, casas: int = 2) -> str:
         return f"{valor:.{casas}f}".replace(".", self.cfg.saida.separador_decimal)

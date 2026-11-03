@@ -31,7 +31,7 @@ from modulos.m2_localizacao import Localizador  # noqa: E402
 from modulos.m7_saida import Depuracao  # noqa: E402
 from nucleo.config import CAMINHO_POR_OMISSAO, carregar_configuracao  # noqa: E402
 from nucleo.contrato import Captura, Relatorio  # noqa: E402
-from nucleo.imagens import ler_imagem, listar_imagens  # noqa: E402
+from nucleo.imagens import ler_original, listar_imagens  # noqa: E402
 
 
 def construir_parser() -> argparse.ArgumentParser:
@@ -47,11 +47,15 @@ def construir_parser() -> argparse.ArgumentParser:
 
 
 def capturas(caminho: Path) -> list[Captura]:
-    """As imagens a testar: uma só, ou todas as de uma pasta (as que não abrem são saltadas)."""
+    """As imagens a testar: uma só, ou todas as de uma pasta (as que não abrem são saltadas). Só as
+    originais da câmara: as anotadas (com o contorno desenhado por cima) são recusadas."""
     if caminho.is_dir():
-        lidas = [(f, ler_imagem(f)) for f in listar_imagens(caminho)]
+        lidas = [(f, ler_original(f)) for f in listar_imagens(caminho)]
         return [Captura(imagem, str(f), 0.0) for f, imagem in lidas if imagem is not None]
-    imagem = ler_imagem(caminho)
+    try:
+        imagem = ler_original(caminho)
+    except ValueError as erro:
+        raise SystemExit(str(erro)) from erro
     if imagem is None:
         raise SystemExit(f"Não é uma imagem válida: {caminho}")
     return [Captura(imagem, str(caminho), 0.0)]
