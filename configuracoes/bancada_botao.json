@@ -1,21 +1,23 @@
 {
   "geral": {
-    "px_por_mm": 5.87
+    "px_por_mm": 6.68
   },
   "aquisicao": {
-    "exposicao_us": 1200.0
-  },
-  "disparo": {
-    "modo": "trigger"
+    "exposicao_us": 10000.0,
+    "ganho_raw": 300,
+    "roi_x_px": 60,
+    "roi_y_px": 90,
+    "roi_largura_px": 1172,
+    "roi_altura_px": 769
   },
   "localizacao": {
-    "limiar_delta_e": 14.0,
-    "fecho_mm": 6.0,
-    "abertura_mm": 4.0
+    "resolucao_px_por_mm": 20.0,
+    "suavizacao_mm": 0.04
   },
   "dimensoes": {
     "comprimento_nominal_mm": 140.0,
-    "largura_nominal_mm": 93.0
+    "largura_nominal_mm": 93.0,
+    "forma_profundidade_min_mm": 3.5
   },
   "cor": {
     "ativo": false
