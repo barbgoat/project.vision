@@ -1,9 +1,30 @@
 {
+  "geral": {
+    "px_por_mm": 5.87
+  },
+  "aquisicao": {
+    "exposicao_us": 1200.0
+  },
   "disparo": {
     "modo": "trigger"
   },
-  "aquisicao": {
-    "exposicao_us": 5000.0
+  "localizacao": {
+    "limiar_delta_e": 14.0,
+    "fecho_mm": 6.0,
+    "abertura_mm": 4.0
+  },
+  "dimensoes": {
+    "comprimento_nominal_mm": 140.0,
+    "largura_nominal_mm": 93.0
+  },
+  "cor": {
+    "ativo": false
+  },
+  "relevo": {
+    "ativo": false
+  },
+  "manchas": {
+    "ativo": false
   },
   "saida": {
     "guardar_imagens": "todas",
