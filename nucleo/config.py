@@ -146,6 +146,10 @@ class ConfigAquisicao:
     ganho_db: float = D.AQUISICAO_GANHO_DB
     ganho_raw: int = D.AQUISICAO_GANHO_RAW
     timeout_ms: int = D.AQUISICAO_TIMEOUT_MS
+    roi_x_px: int = D.AQUISICAO_ROI_X_PX
+    roi_y_px: int = D.AQUISICAO_ROI_Y_PX
+    roi_largura_px: int = D.AQUISICAO_ROI_LARGURA_PX
+    roi_altura_px: int = D.AQUISICAO_ROI_ALTURA_PX
 
     def erros(self) -> list[str]:
         return _verificar([
@@ -153,9 +157,17 @@ class ConfigAquisicao:
             (self.ganho_db >= 0, "ganho_db tem de ser ≥ 0"),
             (self.ganho_raw >= -1, "ganho_raw tem de ser ≥ 0 (ou -1 = não alterar)"),
             (self.timeout_ms > 0, "timeout_ms tem de ser > 0"),
+            (min(self.roi_x_px, self.roi_y_px, self.roi_largura_px, self.roi_altura_px) >= 0,
+             "a ROI (roi_x_px, roi_y_px, roi_largura_px, roi_altura_px) tem de ser ≥ 0"),
             (self.calibracao == "" or self.calibracao.lower().endswith(".npz"),
              "calibracao tem de ser um ficheiro .npz (ou vazia)"),
         ])
+
+    def roi(self) -> tuple[int, int, int, int] | None:
+        """(x, y, largura, altura) em px da imagem inteira; None = a imagem inteira."""
+        if self.roi_largura_px <= 0 or self.roi_altura_px <= 0:
+            return None
+        return self.roi_x_px, self.roi_y_px, self.roi_largura_px, self.roi_altura_px
 
 
 @dataclass(frozen=True)
@@ -218,6 +230,7 @@ class ConfigLocalizacao:
     sam3_fecho_mm: float = D.LOCALIZACAO_SAM3_FECHO_MM
     duplo_iou_min: float = D.LOCALIZACAO_DUPLO_IOU_MIN
     resolucao_px_por_mm: float = D.LOCALIZACAO_RESOLUCAO_PX_POR_MM
+    suavizacao_mm: float = D.LOCALIZACAO_SUAVIZACAO_MM
     fundo_referencia: str = D.LOCALIZACAO_FUNDO_REFERENCIA
     faixa_fundo_mm: float = D.LOCALIZACAO_FAIXA_FUNDO_MM
     limiar_delta_e: float = D.LOCALIZACAO_LIMIAR_DELTA_E
@@ -228,6 +241,7 @@ class ConfigLocalizacao:
     fecho_mm: float = D.LOCALIZACAO_FECHO_MM
     abertura_mm: float = D.LOCALIZACAO_ABERTURA_MM
     rejeitar_borda: bool = D.LOCALIZACAO_REJEITAR_BORDA
+    solidez_min: float = D.LOCALIZACAO_SOLIDEZ_MIN
     comprimento_min_mm: float = D.LOCALIZACAO_COMPRIMENTO_MIN_MM
     comprimento_max_mm: float = D.LOCALIZACAO_COMPRIMENTO_MAX_MM
     largura_min_mm: float = D.LOCALIZACAO_LARGURA_MIN_MM
@@ -239,6 +253,7 @@ class ConfigLocalizacao:
     def erros(self) -> list[str]:
         return _verificar([
             (self.resolucao_px_por_mm > 0, "resolucao_px_por_mm tem de ser > 0"),
+            (self.suavizacao_mm >= 0, "suavizacao_mm tem de ser ≥ 0"),
             (self.faixa_fundo_mm > 0, "faixa_fundo_mm tem de ser > 0"),
             (self.limiar_delta_e >= 0, "limiar_delta_e tem de ser ≥ 0 (0 = automático)"),
             (self.delta_e_min >= 0, "delta_e_min tem de ser ≥ 0"),
@@ -246,6 +261,7 @@ class ConfigLocalizacao:
             (self.arestas_fator > 0, "arestas_fator tem de ser > 0"),
             (self.fecho_mm >= 0, "fecho_mm tem de ser ≥ 0"),
             (self.abertura_mm >= 0, "abertura_mm tem de ser ≥ 0"),
+            (0 <= self.solidez_min <= 1, "solidez_min tem de estar entre 0 e 1 (0 = não verificar)"),
             (0 < self.comprimento_min_mm < self.comprimento_max_mm,
              "tem de ser 0 < comprimento_min_mm < comprimento_max_mm"),
             (0 < self.largura_min_mm < self.largura_max_mm, "tem de ser 0 < largura_min_mm < largura_max_mm"),
@@ -423,12 +439,14 @@ class ConfigSaida:
 # Usada pelas barras do ferramentas/afinar.py e pelas setas do editor da interface.
 AFINACAO: dict[str, list[tuple[str, float, float, float]]] = {
     "localizacao": [
+        ("suavizacao_mm", 0, 1, 0.01),
         ("limiar_delta_e", 0, 60, 0.5),
         ("delta_e_min", 0, 30, 0.5),
         ("peso_luminosidade", 0, 2, 0.1),
         ("arestas_fator", 1, 10, 0.5),
         ("fecho_mm", 0, 10, 0.5),
         ("abertura_mm", 0, 10, 0.5),
+        ("solidez_min", 0, 1, 0.01),
         ("margem_borda_mm", 0, 15, 0.5),
         ("margem_extremidades_mm", 0, 30, 1),
     ],

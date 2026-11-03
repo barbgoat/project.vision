@@ -28,7 +28,6 @@ import numpy as np
 
 from modulos.m2_localizacao import fundo, segmentacao
 from modulos.m2_localizacao.segmentadores import ResultadoSegmentacao, SegmentacaoIncerta, Segmentador
-from nucleo import defines as D
 from nucleo.config import Config
 
 log = logging.getLogger("m2.sam3")
@@ -54,7 +53,7 @@ class SegmentadorSam3(Segmentador):
                                      f"≥ {p.sam3_score_min:g} sem tocar na borda (melhor: {melhor})")
         mascara, score = escolhida
         saco = limpar(mascara, p.sam3_fecho_mm * px_por_mm)
-        lab = fundo.lab(img, D.M2_SUAVIZACAO_MM * px_por_mm)
+        lab = fundo.lab(img, p.suavizacao_mm * px_por_mm)
         intermedios = {"segmentacao": saco.astype(np.uint8) * 255} if guardar_intermedios else {}
         return ResultadoSegmentacao(saco, score, self.nome, (perf_counter() - inicio) * 1000, lab,
                                     {"score_sam3": score, "mascaras_sam3": float(len(scores))}, intermedios)

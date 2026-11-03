@@ -85,6 +85,10 @@ def test_basler_emulada_repoe_a_camara_partilhada(monkeypatch):
     fora = dataclasses.replace(cfg, aquisicao=dataclasses.replace(cfg.aquisicao, ganho_raw=10**6))
     with criar_fonte(fora) as fonte:  # fora da gama da câmara: fica no máximo, em vez de não abrir
         assert fonte._camara.GainRaw.GetValue() == fonte._camara.GainRaw.GetMax()
+    roi = dataclasses.replace(cfg, aquisicao=dataclasses.replace(cfg.aquisicao, roi_x_px=10, roi_y_px=20,
+                                                                  roi_largura_px=200, roi_altura_px=100))
+    with criar_fonte(roi) as fonte:  # só a ROI segue para a inspeção
+        assert fonte.ler().imagem.shape[:2] == (100, 200)
     with pytest.raises(RuntimeError, match="não encontrada"):
         criar_fonte(config_teste(camara={"serial": "999"}))
 
@@ -286,6 +290,14 @@ def test_passagem_da_o_id_do_saco_as_candidatas():
     img = np.zeros((4, 6, 3), np.uint8)
     p = Passagem(7, [Captura(img, "a", 0.0), Captura(img, "b", 0.1)], [0.1, 0.2], 2, 0.0, 0.1, "ao_vivo")
     assert [c.id_saco for c in p.candidatas] == [7, 7]
+
+
+def test_roi_recorta_dentro_da_imagem():
+    img = np.arange(60 * 80, dtype=np.uint16).reshape(60, 80)
+    assert pre.recortar(img, None) is img
+    assert np.array_equal(pre.recortar(img, (10, 5, 30, 20)), img[5:25, 10:40])
+    assert pre.recortar(img, (70, 50, 30, 20)).shape == (10, 10), "a parte fora da imagem fica de fora"
+    assert config_teste(aquisicao={"roi_largura_px": 30}).aquisicao.roi() is None, "sem altura: a imagem toda"
 
 
 def test_debayer_bayer_rg8_recupera_as_cores():

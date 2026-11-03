@@ -24,7 +24,7 @@ from modulos.m2_localizacao.segmentadores import ResultadoSegmentacao, Segmentad
 from nucleo import defines as D
 from nucleo.config import RAIZ, Config
 from nucleo.contrato import SemSaco
-from nucleo.imagens import ler_imagem
+from nucleo.imagens import ler_imagem, recortar
 
 
 class SegmentadorDeltaE(Segmentador):
@@ -33,7 +33,8 @@ class SegmentadorDeltaE(Segmentador):
     nome = "delta_e"
 
     def __init__(self, cfg: Config) -> None:
-        """Se houver fundo_referencia, lê-a já (erro claro logo no arranque)."""
+        """Se houver fundo_referencia, lê-a já (erro claro logo no arranque). É a imagem inteira da
+        câmara (como a guarda o Fundo vazio da BIapp): corta-se com a ROI, como as imagens."""
         self.cfg = cfg
         self._referencia: np.ndarray | None = None
         self._referencia_lab: dict[tuple[int, int], np.ndarray] = {}  # por tamanho da imagem reduzida
@@ -43,9 +44,13 @@ class SegmentadorDeltaE(Segmentador):
             caminho_abs = Path(caminho) if Path(caminho).is_absolute() else RAIZ / caminho
             if not caminho_abs.is_file():
                 raise FileNotFoundError(f"localizacao.fundo_referencia não encontrada: {caminho_abs}")
-            self._referencia = ler_imagem(caminho_abs)
-            if self._referencia is None:
+            referencia = ler_imagem(caminho_abs)
+            if referencia is None:
                 raise ValueError(f"localizacao.fundo_referencia não é uma imagem válida: {caminho_abs}")
+            roi = cfg.aquisicao.roi()
+            if roi is not None and referencia.shape[0] * referencia.shape[1] > roi[2] * roi[3]:
+                referencia = recortar(referencia, roi)  # a imagem inteira; uma já cortada fica como está
+            self._referencia = referencia
 
     def segmentar(self, img: np.ndarray, px_por_mm: float, guardar_intermedios: bool = False) -> ResultadoSegmentacao:
         inicio = perf_counter()
@@ -53,13 +58,24 @@ class SegmentadorDeltaE(Segmentador):
         escala = min(1.0, p.resolucao_px_por_mm / px_por_mm)
         pequena = img if escala == 1.0 else cv2.resize(img, None, fx=escala, fy=escala, interpolation=cv2.INTER_AREA)
         px_mm = px_por_mm * pequena.shape[1] / img.shape[1]  # px/mm na imagem reduzida
-        self._sigma_px = D.M2_SUAVIZACAO_MM * px_mm
+        self._sigma_px = p.suavizacao_mm * px_mm
         lab = fundo.lab(pequena, self._sigma_px)
         faixa = fundo.faixa_da_borda(lab.shape[:2], max(2, round(p.faixa_fundo_mm * px_mm)))
-        diferenca = fundo.diferenca(lab, self._fundo(lab, faixa, img.shape[:2]), p.peso_luminosidade)
-
-        limiar = p.limiar_delta_e or max(segmentacao.otsu(diferenca), p.delta_e_min)
-        mascara = (diferenca > limiar).astype(np.uint8) * 255
+        modelo = self._fundo(lab, faixa, img.shape[:2])
+        if self._referencia is None:
+            diferenca = fundo.diferenca(lab, modelo, p.peso_luminosidade)
+            limiar = p.limiar_delta_e or max(segmentacao.otsu(diferenca), p.delta_e_min)
+            mascara = (diferenca > limiar).astype(np.uint8) * 255
+        else:
+            # A luz muda um pouco entre a foto do fundo e esta (exposição, luz do dia): tira-se o desvio
+            # mediano da faixa da borda, onde só há fundo. Depois, o limiar sai do ruído do fundo.
+            modelo = modelo + np.median((lab - modelo)[faixa], axis=0)
+            diferenca = fundo.diferenca(lab, modelo, p.peso_luminosidade)
+            suave = cv2.GaussianBlur(diferenca, (0, 0), D.M2_REFERENCIA_SUAVIZACAO_PX)
+            mediana = float(np.median(suave[faixa]))
+            ruido = 1.4826 * float(np.median(np.abs(suave[faixa] - mediana)))
+            limiar = p.limiar_delta_e or max(mediana + D.M2_REFERENCIA_DESVIOS * ruido, D.M2_REFERENCIA_LIMIAR_MIN)
+            mascara = (suave > limiar).astype(np.uint8) * 255
         fecho_px, abertura_px = p.fecho_mm * px_mm, p.abertura_mm * px_mm
         regiao = segmentacao.maior_regiao(segmentacao.limpar(mascara, fecho_px, abertura_px))
         # As arestas só entram se a cor não chegar (sacos transparentes): somá-las

@@ -16,6 +16,7 @@ inspeção nunca espera pela janela, e o tempo de cada saco não muda por ela ex
 
 Antes de produzir, a Afinacao mostra só a câmara (sem inspeção nem registo), para
 acertar a luz, o foco e a posição; a exposição e o ganho mudam sem parar de captar.
+Com medir_contorno, mede também o contorno do saco na ROI só com o M2 (MedicaoContorno).
 """
 
 from __future__ import annotations
@@ -35,8 +36,10 @@ from mestre import Mestre
 from modulos.m1_aquisicao import AquisicaoEmParalelo, criar_disparo, criar_fonte
 from modulos.m1_aquisicao.fontes import FonteImagem
 from modulos.m7_saida import Depuracao, Saida
+from modulos.m2_localizacao import Diagnostico, Localizador
 from nucleo.config import RAIZ, Config, ConfigAquisicao, ModoDisparo
 from nucleo.contrato import Captura, Estado, Resultado
+from nucleo.imagens import limites_roi, recortar
 from nucleo.especificacoes import ErroRepositorio, Repositorio
 
 
@@ -98,6 +101,7 @@ def _ms_desde(inicio: float) -> float:
 
 QUADRO_INTERVALO_S = 0.1  # intervalo entre as imagens mostradas ao vivo
 MEDIDAS_INTERVALO_S = 0.5  # intervalo entre as medidas da imagem ao afinar (brilho, nitidez...)
+MEDIR_INTERVALO_S = 0.3  # ao afinar Ao vivo com o Contorno ligado: intervalo entre medições do M2
 
 
 # --- O ciclo ------------------------------------------------------------------------------
@@ -251,6 +255,17 @@ def no_modo(cfg: Config, modo: ModoDisparo) -> Config:
     return dataclasses.replace(cfg, disparo=dataclasses.replace(cfg.disparo, modo=modo))
 
 
+@dataclass
+class MedicaoContorno:
+    """Uma medição do M2 a afinar (modo Contorno): o contorno em px da imagem inteira, ou o erro."""
+
+    contorno: np.ndarray | None  # N×2, centros dos píxeis da borda do saco
+    comprimento_mm: float
+    largura_mm: float
+    medidas: dict[str, float]  # as do M2: contorno_rms_px, rejeitados_<lado>_pct, solidez...
+    erro: str = ""  # porque não mediu (sem saco, contorno incompleto...)
+
+
 class Afinacao(QThread):
     """A câmara sem inspeção nem registo: para acertar a luz, o foco, a posição e o trigger antes de produzir.
 
@@ -260,13 +275,17 @@ class Afinacao(QThread):
     """
 
     quadro = Signal(object)  # a imagem (BGR): ao vivo umas 10 por segundo; em Trigger, uma por sinal
+    contorno = Signal(object)  # MedicaoContorno, com medir_contorno: ao vivo ~3 por segundo; em Trigger, por sinal
     medidas = Signal(str)  # brilho, saturados, nitidez (medidas_imagem) e imagens por segundo ou nº do sinal
     mensagem = Signal(str)
 
     def __init__(self, cfg: Config, modo: ModoDisparo = "ao_vivo") -> None:
         super().__init__()
         self.modo = modo
-        self._cfg = no_modo(cfg, modo)
+        self.medir_contorno = False  # a janela liga-o: o M2 mede o saco na ROI
+        self._cfg = _sem_roi(no_modo(cfg, modo))
+        self._cfg_medir = no_modo(cfg, modo)  # com a ROI e o resto do M2
+        self._localizador: Localizador | None = None  # criado na 1.ª medição (e de novo a cada aplicar)
         self._nova: Config | None = None
         self._trinco = threading.Lock()
         self._parar = threading.Event()
@@ -275,7 +294,8 @@ class Afinacao(QThread):
     def aplicar(self, cfg: Config) -> None:
         """Valores novos: a exposição e o ganho mudam já; o resto da câmara, reabrindo-a.
         Em Trigger a câmara está à espera do sinal: sai da espera, para a imagem seguinte já os usar."""
-        nova = no_modo(cfg, self.modo)
+        self._cfg_medir, self._localizador = no_modo(cfg, self.modo), None
+        nova = _sem_roi(no_modo(cfg, self.modo))  # mudar a ROI não mexe na câmara
         with self._trinco:
             self._nova = nova
         if self.modo == "trigger" and self._fonte is not None and _da_camara(nova) != _da_camara(self._cfg):
@@ -305,6 +325,7 @@ class Afinacao(QThread):
         ultimo_quadro = ultima_medida = monotonic()
         imagens = sinais = 0
         ultimo_sinal: float | None = None
+        ultima_medicao = 0.0
         while not self._parar.is_set():
             self._trocar()
             captura = self._fonte.ler()
@@ -322,6 +343,8 @@ class Afinacao(QThread):
                 sinais += 1
                 self.quadro.emit(imagem)
                 self.medidas.emit(f"{medidas_imagem(imagem)}   ·   sinal n.º {sinais}")
+                if self.medir_contorno:
+                    self.contorno.emit(self._medir(imagem))
                 continue
             imagens += 1
             agora = monotonic()
@@ -331,6 +354,24 @@ class Afinacao(QThread):
             if agora - ultima_medida >= MEDIDAS_INTERVALO_S:
                 self.medidas.emit(f"{medidas_imagem(imagem)}   ·   {imagens / (agora - ultima_medida):.0f} img/s")
                 ultima_medida, imagens = agora, 0
+            if self.medir_contorno and agora - ultima_medicao >= MEDIR_INTERVALO_S:
+                ultima_medicao = agora
+                self.contorno.emit(self._medir(imagem))
+
+    def _medir(self, imagem: np.ndarray) -> MedicaoContorno:
+        """O M2 (só ele) na ROI desta imagem inteira; o contorno volta às coordenadas da imagem inteira."""
+        cfg = self._cfg_medir
+        roi = cfg.aquisicao.roi()
+        x0, y0, _, _ = limites_roi(imagem.shape, roi)
+        diagnostico = Diagnostico()
+        try:
+            if self._localizador is None:
+                self._localizador = Localizador(cfg)
+            saco = self._localizador.localizar(recortar(imagem, roi), diagnostico=diagnostico)
+        except Exception as erro:  # sem saco, contorno incompleto, fundo_referencia de outro tamanho...
+            return MedicaoContorno(None, 0.0, 0.0, diagnostico.medidas, str(erro))
+        contorno = saco.contorno.reshape(-1, 2).astype(np.float64) + (x0 + 0.5, y0 + 0.5)
+        return MedicaoContorno(contorno, saco.comprimento_mm, saco.largura_mm, diagnostico.medidas)
 
     def _trocar(self) -> None:
         """Os valores pedidos com aplicar(), se os houver."""
@@ -349,6 +390,12 @@ class Afinacao(QThread):
             self._cfg = nova
         except RuntimeError as erro:
             self.mensagem.emit(f"Câmara: valores não aplicados ({erro})")
+
+
+def _sem_roi(cfg: Config) -> Config:
+    """A afinar vê-se a imagem inteira (a ROI desenha-se por cima, para a poder mudar)."""
+    inteira = dataclasses.replace(cfg.aquisicao, roi_x_px=0, roi_y_px=0, roi_largura_px=0, roi_altura_px=0)
+    return dataclasses.replace(cfg, aquisicao=inteira)
 
 
 def _da_camara(cfg: Config) -> tuple:

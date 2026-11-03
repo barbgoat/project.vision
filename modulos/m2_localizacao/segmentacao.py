@@ -63,6 +63,14 @@ def maior_regiao(mascara: np.ndarray) -> np.ndarray | None:
     return regiao
 
 
+def solidez(regiao: np.ndarray) -> float:
+    """Área da região / área do seu invólucro convexo: perto de 1 num saco (mesmo com defeitos),
+    menos quando o contorno não fechou e falta uma "baía" do saco."""
+    contornos, _ = cv2.findContours(regiao, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    maior = max(contornos, key=cv2.contourArea)
+    return float(cv2.contourArea(maior) / max(cv2.contourArea(cv2.convexHull(maior)), 1.0))
+
+
 def toca_na_borda(regiao: np.ndarray) -> bool:
     return bool(regiao[0].any() or regiao[-1].any() or regiao[:, 0].any() or regiao[:, -1].any())
 

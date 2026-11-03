@@ -133,7 +133,7 @@ class SegmentadorAprendido(Segmentador):
         if score < p.aprendido_score_min:
             raise SegmentacaoIncerta(f"segmentação incerta: o modelo aprendido mal separa o saco do que o rodeia "
                                      f"({score:.2f} < {p.aprendido_score_min:g}); anota mais fotos deste fundo")
-        lab = fundo.lab(pequena, D.M2_SUAVIZACAO_MM * px_mm)
+        lab = fundo.lab(pequena, p.suavizacao_mm * px_mm)
         return ResultadoSegmentacao(saco, score, self.nome, (perf_counter() - inicio) * 1000, lab,
                                     {"score_aprendido": score, "fotos_aprendidas": float(self.modelo.fotos)},
                                     intermedios)

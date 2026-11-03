@@ -9,7 +9,8 @@ sem distorção da lente e (com calibração) já no espaço métrico.
                                   matriz da câmara, coeficientes de distorção e homografia
                                   para o plano do tapete, num ficheiro .npz (aquisicao.calibracao)
     corrigir(img, calibracao)     tira a distorção da lente e leva ao plano do tapete
-    preparar(bruta, formato, cal) debayer + corrigir
+    recortar(img, roi)            só a ROI (aquisicao.roi_*), dentro da imagem (de nucleo.imagens)
+    preparar(bruta, formato, cal, roi)  debayer + corrigir + recortar
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import cv2
 import numpy as np
 
 from nucleo.config import RAIZ
+from nucleo.imagens import recortar
 
 
 # Formato de uma camada (GenICam PixelFormat) → conversão do OpenCV para BGR.
@@ -126,7 +128,8 @@ def corrigir(img: np.ndarray, calibracao: Calibracao) -> np.ndarray:
                                borderMode=cv2.BORDER_REPLICATE)
 
 
-def preparar(bruta: np.ndarray, formato: str, calibracao: Calibracao | None = None) -> np.ndarray:
-    """Imagem bruta do sensor → BGR uint8 corrigida (o que o resto do projeto recebe)."""
+def preparar(bruta: np.ndarray, formato: str, calibracao: Calibracao | None = None,
+             roi: tuple[int, int, int, int] | None = None) -> np.ndarray:
+    """Imagem bruta do sensor → BGR uint8 corrigida e recortada (o que o resto do projeto recebe)."""
     bgr = debayer(bruta, formato)
-    return bgr if calibracao is None else corrigir(bgr, calibracao)
+    return recortar(bgr if calibracao is None else corrigir(bgr, calibracao), roi)

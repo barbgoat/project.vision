@@ -58,3 +58,16 @@ python -m ferramentas.testar_disparo --config configuracoes\linha.json --guardar
 ```
 
 Confirmar: uma passagem por saco e a 1.ª candidata com o saco inteiro e centrado.
+
+## Afinar na BIapp e ROI
+
+**Afinar câmara** (na barra) mostra só a câmara, sem inspeção nem registo, no modo escolhido:
+Ao vivo em contínuo, Trigger uma imagem por sinal. A exposição e o ganho (📷 Câmara) veem-se
+logo; o brilho, os saturados e a nitidez ajudam a acertar a luz e o foco. **Definir ROI**:
+arrastar na imagem o retângulo que segue para a inspeção (`aquisicao.roi_*`, px da imagem
+inteira); o M2 estima o fundo pela borda dele, por isso deixar fundo à volta do saco.
+**Imagem inteira** tira a ROI. **Fundo vazio** (sem saco à vista) guarda a imagem como o fundo de
+referência do M2. **Contorno** mede o saco na ROI só com o M2 e desenha o contorno, com o resíduo às
+retas dos lados, os pontos rejeitados e, por série, a média, o erro face ao nominal e o σ (ao vivo com
+o saco parado: ruído; em Trigger reposicionando: repetibilidade). **Calibrar escala** acerta o
+`px_por_mm` com um saco de medidas conhecidas. Guardar no perfil para manter.

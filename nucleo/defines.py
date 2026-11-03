@@ -92,6 +92,13 @@ AQUISICAO_CALIBRACAO: Final = ""  # ficheiro .npz da calibração da montagem (l
 AQUISICAO_GANHO_DB: Final = 0.0  # Blackfly: ganho em dB; subir só se faltar luz (aumenta o ruído)
 AQUISICAO_GANHO_RAW: Final = -1  # Basler legacy: GainRaw (unidades da câmara); -1 = não alterar
 AQUISICAO_TIMEOUT_MS: Final = 1000  # espera máxima por cada imagem; com trigger, sem sinal, volta a esperar
+# ROI: só este retângulo da imagem da câmara (px da imagem inteira, já corrigida) segue para a inspeção;
+# o fundo estima-se pela borda dele, por isso deixar fundo à volta do saco. Define-se na BIapp a afinar
+# (📷 Câmara → Definir ROI, arrastando na imagem). Largura ou altura 0 = a imagem inteira.
+AQUISICAO_ROI_X_PX: Final = 0
+AQUISICAO_ROI_Y_PX: Final = 0
+AQUISICAO_ROI_LARGURA_PX: Final = 0
+AQUISICAO_ROI_ALTURA_PX: Final = 0
 
 # =============================================================================
 # M1 AQUISIÇÃO: DISPARO (trigger) — quando começa e acaba a passagem de cada saco
@@ -160,7 +167,12 @@ LOCALIZACAO_SAM3_SCORE_MIN: Final = 0.5  # confiança mínima (0–1); abaixo: E
 LOCALIZACAO_SAM3_FECHO_MM: Final = 0.0  # fecho morfológico com o SAM 3 (0 = nenhum: não tapa entalhes)
 LOCALIZACAO_DUPLO_IOU_MIN: Final = 0.95  # "duplo": coincidência mínima (IoU) das duas máscaras
 LOCALIZACAO_RESOLUCAO_PX_POR_MM: Final = 4.0  # resolução da segmentação (a imagem é reduzida para isto)
-LOCALIZACAO_FUNDO_REFERENCIA: Final = ""  # foto do fundo vazio (recomendado); "" = estimar pela borda da imagem
+# Desfoque antes de comparar com o fundo (tira o ruído do sensor). Bordas do saco finas e escuras ao lado
+# de soldaduras brilhantes perdem-se com ele: então baixá-lo (p.ex. 0,04) e segmentar sem reduzir.
+LOCALIZACAO_SUAVIZACAO_MM: Final = 0.25
+# Foto do fundo vazio (recomendado): a imagem inteira da câmara, sem saco, com a mesma luz; corta-se com a
+# ROI, como as imagens. Na BIapp: Afinar câmara → Fundo vazio. "" = estimar o fundo pela borda da imagem.
+LOCALIZACAO_FUNDO_REFERENCIA: Final = ""
 LOCALIZACAO_FAIXA_FUNDO_MM: Final = 5.0  # faixa junto à borda da imagem usada para estimar o fundo
 LOCALIZACAO_LIMIAR_DELTA_E: Final = 0.0  # diferença de cor (ΔE) a partir da qual é saco; 0 = automático (Otsu)
 LOCALIZACAO_DELTA_E_MIN: Final = 5.0  # o limiar automático nunca desce abaixo disto (ruído do fundo)
@@ -170,6 +182,11 @@ LOCALIZACAO_ARESTAS_FATOR: Final = 3.0  # aresta = gradiente acima de fator × o
 LOCALIZACAO_FECHO_MM: Final = 3.0  # fecho morfológico: tapa reflexos e falhas na máscara
 LOCALIZACAO_ABERTURA_MM: Final = 1.5  # abertura morfológica: tira pontos soltos e fios
 LOCALIZACAO_REJEITAR_BORDA: Final = True  # ignorar sacos que tocam na borda da imagem (incompletos)
+# Solidez = área da região / área do invólucro convexo. Um saco, mesmo com defeitos, fica perto de 1;
+# um contorno que não fechou (parte do saco igual ao fundo) fica abaixo: fotos do PreVital com fundo
+# escuro 0,84–0,88, com fundo claro 0,99. Abaixo disto: ERRO "contorno incompleto" em vez de medidas
+# sem sentido. 0 = não verificar.
+LOCALIZACAO_SOLIDEZ_MIN: Final = 0.95
 # Limites LARGOS, só para "isto é um saco?" (as tolerâncias do produto são do M3).
 LOCALIZACAO_COMPRIMENTO_MIN_MM: Final = 80.0
 LOCALIZACAO_COMPRIMENTO_MAX_MM: Final = 230.0
@@ -197,8 +214,7 @@ M2_REVISAO: Final = "dataset/revisao"  # "duplo": onde ficam as fotos em que os 
 # precisão da máscara grosseira na sua própria resolução, não uma tolerância do saco.
 M2_AFINAR_PROCURA: Final = 3
 M2_AFINAR_VIZINHOS: Final = 4  # pontos de cada lado usados para a direção da normal ao contorno
-M2_AFINAR_GRADIENTE_MIN: Final = 2.0  # transição mais fraca do que isto (ΔE/px) não move o ponto
-M2_SUAVIZACAO_MM: Final = 0.25  # desfoque antes de comparar com o fundo (tira o ruído do sensor)
+M2_AFINAR_GRADIENTE_MIN: Final = 1.0  # transição mais fraca do que isto (ΔE/px) não move o ponto (2,0 deixava por afinar as bordas de sacos claros em fundo claro, ~6 ΔE)
 M2_SUAVIZACAO_MIN_PX: Final = 0.3  # esse desfoque nunca é menor do que isto (px)
 M2_GRADIENTE_FUNDO_MIN: Final = 0.5  # piso do "gradiente normal do fundo" (ΔE/px), para fundos muito lisos
 M2_RETANGULARIDADE_SO_COR: Final = 0.8  # abaixo disto a região de cor é um pedaço de saco → tentar com arestas
@@ -209,6 +225,12 @@ M2_FUNDO_PONTOS_MAX: Final = 5000  # pontos da faixa da borda usados no modelo d
 M2_FUNDO_ITERACOES: Final = 3  # voltas do ajuste robusto do modelo do fundo
 M2_FUNDO_DESVIOS: Final = 3.0  # num ajuste, descarta pontos a mais de N desvios (sujidade, cantos de saco)
 M2_FUNDO_TOLERANCIA_DELTA_E: Final = 1.0  # folga fixa nesse descarte (ΔE)
+# Com a foto do fundo, o fundo quase não difere dela: o limiar é o ruído do fundo (na faixa da borda)
+# vezes isto, nunca abaixo do mínimo. Sacos claros em fundo claro diferem só uns 6 ΔE em partes do
+# contorno, que o Otsu (feito para separar duas cores) deixaria de fora.
+M2_REFERENCIA_DESVIOS: Final = 6.0
+M2_REFERENCIA_LIMIAR_MIN: Final = 2.0  # ΔE
+M2_REFERENCIA_SUAVIZACAO_PX: Final = 1.5  # desfoque do mapa de diferenças só para o limiar (o ruído cai)
 
 # =============================================================================
 # M3 DIMENSÕES (o saco tem o tamanho e a forma certos?)

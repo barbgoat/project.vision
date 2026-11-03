@@ -65,6 +65,53 @@ def pose(arestas: np.ndarray, px_por_mm: float) -> tuple[np.ndarray, float, floa
     return centro, angulo, comprimento, largura
 
 
+LADOS = ("esquerda", "direita", "cima", "baixo")
+
+
+def qualidade(arestas: np.ndarray, centro: np.ndarray, angulo: float, desvio_px: float) -> dict[str, float]:
+    """Quão bem o contorno segue quatro lados retos, para avaliar o contorno (não o saco).
+
+    A parte central de cada lado (sem os cantos, como em _lados) contra a sua reta robusta:
+    pontos a mais de desvio_px da reta são rejeitados (um vinco, uma sombra, um pedaço de
+    fundo... ou um defeito do saco). Devolve contorno_rms_px, o resíduo RMS dos pontos válidos
+    dos quatro lados, rejeitados_<lado>_pct e rejeitados_max_pct, o do pior lado.
+    """
+    u, v = _projetar(arestas.reshape(-1, 2).astype(np.float64) - centro, angulo)
+    meio_u, meio_v = (u.max() + u.min()) / 2, (v.max() + v.min()) / 2
+    metade = D.M2_PARTE_CENTRAL_LADOS / 2
+    central_u = np.abs(u - meio_u) < metade * np.ptp(u)
+    central_v = np.abs(v - meio_v) < metade * np.ptp(v)
+    lados = {  # (posição ao longo do lado, distância ao eixo)
+        "esquerda": (v[central_v & (u < meio_u)], u[central_v & (u < meio_u)]),
+        "direita": (v[central_v & (u > meio_u)], u[central_v & (u > meio_u)]),
+        "cima": (u[central_u & (v < meio_v)], v[central_u & (v < meio_v)]),
+        "baixo": (u[central_u & (v > meio_v)], v[central_u & (v > meio_v)]),
+    }
+    medidas: dict[str, float] = {}
+    quadrados, validos_total = 0.0, 0
+    for nome, (ao_longo, distancia) in lados.items():
+        if len(ao_longo) < 10:
+            medidas[f"rejeitados_{nome}_pct"] = 100.0
+            continue
+        # Começa pela reta paralela ao eixo, na mediana (o ângulo já vem afinado pelos lados), e
+        # afina-a só com os pontos perto dela: um vinco colado ao lado não a puxa.
+        a, b = 0.0, float(np.median(distancia))
+        for _ in range(3):
+            residuo = distancia - (a * ao_longo + b)
+            validos = np.abs(residuo) <= desvio_px
+            if validos.sum() < 10:
+                break
+            a, b = np.polyfit(ao_longo[validos], distancia[validos], 1)
+        residuo = distancia - (a * ao_longo + b)
+        validos = np.abs(residuo) <= desvio_px
+        medidas[f"rejeitados_{nome}_pct"] = float(100 * (1 - validos.mean()))
+        quadrados += float(np.sum(residuo[validos] ** 2))
+        validos_total += int(validos.sum())
+    medidas["contorno_rms_px"] = math.sqrt(quadrados / validos_total) if validos_total else float("nan")
+    medidas["rejeitados_max_pct"] = max(medidas[f"rejeitados_{nome}_pct"] for nome in LADOS)
+    return medidas
+
+
 def _projetar(pontos: np.ndarray, angulo: float) -> tuple[np.ndarray, np.ndarray]:
     """Coordenadas dos pontos ao longo do eixo maior (u) e do eixo menor (v)."""
     cos, sen = math.cos(angulo), math.sin(angulo)

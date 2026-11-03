@@ -21,7 +21,7 @@ from typing import Any
 import cv2
 import numpy as np
 from PySide6.QtCore import QObject, QPointF, QRectF, QSize, QSizeF, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
+from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QAbstractItemView, QHBoxLayout, QHeaderView, QLabel, QListView, QListWidget, QListWidgetItem, QPlainTextEdit,
     QSizePolicy, QTableWidget, QTableWidgetItem, QWidget,
@@ -78,7 +78,11 @@ class VistaImagem(QWidget):
     Roda do rato: amplia ou desamplia à volta do cursor. Arrastar: move a imagem
     ampliada. Duplo clique: volta a ajustar ao espaço. Uma imagem nova do mesmo
     tamanho (p.ex. outra etapa) fica com o mesmo zoom, para comparar a mesma zona.
+    Com desenhar_roi, arrastar desenha um retângulo (roi_desenhada, em px da imagem);
+    os auxilios (a ROI, a faixa da barreira...) ficam desenhados por cima da imagem.
     """
+
+    roi_desenhada = Signal(int, int, int, int)  # x, y, largura, altura (px da imagem), ao largar o rato
 
     _FUNDO, _TEXTO = QColor("#1e1e1e"), QColor("#9e9e9e")
     _ZOOM_MAX = 20.0  # em relação a ajustada ao espaço
@@ -94,6 +98,11 @@ class VistaImagem(QWidget):
         self._zoom = 1.0  # 1 = a imagem inteira ajustada ao espaço
         self._centro = QPointF()  # o ponto da imagem (px) que fica no centro da vista
         self._arrasto: tuple[QPointF, QPointF] | None = None  # (posição do rato, centro) ao carregar
+        self.desenhar_roi = False  # arrastar desenha uma ROI em vez de mover a imagem
+        # Desenhados por cima: ((x, y, largura, altura) em px da imagem, cor, nome), p.ex. a ROI.
+        self.auxilios: list[tuple[tuple[int, int, int, int], str, str]] = []
+        self.contorno: np.ndarray | None = None  # N×2 em px da imagem, desenhado a verde (o M2 a afinar)
+        self._roi_arrasto: tuple[QPointF, QPointF] | None = None  # (início, fim) em px da imagem
 
     def mostrar(self, imagem: np.ndarray | None) -> None:
         anterior = self._original.size() if self._original is not None else None
@@ -139,6 +148,20 @@ class VistaImagem(QWidget):
                        visivel.width() / escala, visivel.height() / escala)
         pintor.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, self._zoom < 4)  # muito ampliada: píxeis
         pintor.drawPixmap(visivel, self._original, fonte)
+        retangulos = [(r, cor, nome, Qt.PenStyle.SolidLine) for r, cor, nome in self.auxilios]
+        if self._roi_arrasto is not None:
+            retangulos.append((self._retangulo(*self._roi_arrasto), "#ef6c00", "", Qt.PenStyle.DashLine))
+        pintor.setBrush(Qt.BrushStyle.NoBrush)
+        if self.contorno is not None and len(self.contorno) > 2:
+            pintor.setPen(QPen(QColor("#00c853"), 2))
+            pintor.drawPolygon(QPolygonF([QPointF(canto.x() + x * escala, canto.y() + y * escala)
+                                          for x, y in self.contorno]))
+        for (x, y, largura, altura), cor, nome, estilo in retangulos:
+            caixa = QRectF(canto.x() + x * escala, canto.y() + y * escala, largura * escala, altura * escala)
+            pintor.setPen(QPen(QColor(cor), 2, estilo))
+            pintor.drawRect(caixa)
+            if nome:
+                pintor.drawText(caixa.topLeft() + QPointF(6, 16), nome)
         if self._zoom > 1.0:  # quanto está ampliada, no canto
             texto = f"{self._zoom:.1f}×"
             caixa = QRectF(self.width() - 70, self.height() - 30, 62, 22)
@@ -163,12 +186,32 @@ class VistaImagem(QWidget):
         self.update()
         evento.accept()
 
+    def _na_imagem(self, posicao: QPointF) -> QPointF:
+        """O ponto da imagem (px) sob esta posição do rato, dentro da imagem."""
+        escala = self._escala()
+        x = self._centro.x() + (posicao.x() - self.width() / 2) / escala
+        y = self._centro.y() + (posicao.y() - self.height() / 2) / escala
+        return QPointF(min(max(x, 0), self._original.width()), min(max(y, 0), self._original.height()))
+
+    @staticmethod
+    def _retangulo(a: QPointF, b: QPointF) -> tuple[int, int, int, int]:
+        x0, y0 = round(min(a.x(), b.x())), round(min(a.y(), b.y()))
+        return x0, y0, round(max(a.x(), b.x())) - x0, round(max(a.y(), b.y())) - y0
+
     def mousePressEvent(self, evento) -> None:
+        if self._original is not None and self.desenhar_roi and evento.button() == Qt.MouseButton.LeftButton:
+            inicio = self._na_imagem(evento.position())
+            self._roi_arrasto = (inicio, inicio)
+            return
         if self._original is not None and self._zoom > 1.0 and evento.button() == Qt.MouseButton.LeftButton:
             self._arrasto = (evento.position(), QPointF(self._centro))
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
 
     def mouseMoveEvent(self, evento) -> None:
+        if self._roi_arrasto is not None:
+            self._roi_arrasto = (self._roi_arrasto[0], self._na_imagem(evento.position()))
+            self.update()
+            return
         if self._arrasto is not None:
             inicio, centro = self._arrasto
             self._centro = centro - (evento.position() - inicio) / self._escala()
@@ -176,6 +219,13 @@ class VistaImagem(QWidget):
             self.update()
 
     def mouseReleaseEvent(self, evento) -> None:
+        if self._roi_arrasto is not None:
+            x, y, largura, altura = self._retangulo(self._roi_arrasto[0], self._na_imagem(evento.position()))
+            self._roi_arrasto = None
+            self.update()
+            if largura >= 8 and altura >= 8:  # um clique sem arrastar não conta
+                self.roi_desenhada.emit(x, y, largura, altura)
+            return
         if self._arrasto is not None:
             self._arrasto = None
             self.setCursor(Qt.CursorShape.OpenHandCursor)

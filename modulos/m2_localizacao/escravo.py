@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 
 from modulos.m2_localizacao import medicao, normalizacao, segmentacao, segmentadores
+from nucleo import defines as D
 from nucleo.config import Config
 from nucleo.contrato import Saco, SemSaco
 
@@ -77,6 +78,13 @@ class Localizador:
         regiao = seg.mascara.astype(np.uint8) * 255
         if p.rejeitar_borda and segmentacao.toca_na_borda(regiao):
             raise SemSaco("o saco toca na borda da imagem (incompleto)")
+        # Um contorno que não fechou daria medidas sem sentido: melhor ERRO, que diz a verdade.
+        solidez = segmentacao.solidez(regiao)
+        diag.medidas["solidez"] = solidez
+        if solidez < p.solidez_min:
+            raise segmentadores.SegmentacaoIncerta(
+                f"contorno incompleto: solidez {solidez:.2f} < {p.solidez_min:g} (parte do saco confunde-se "
+                "com o fundo: rever a luz, o fundo ou a exposição)")
 
         # 2. Contorno na resolução original
         # e cada ponto na aresta verdadeira (subpíxel), seja qual for o limiar
@@ -89,6 +97,8 @@ class Localizador:
         # 3. Orientação e medidas
         centro, angulo, comprimento_px, largura_px = medicao.pose(arestas, self.cfg.geral.px_por_mm)
         ppm = self.cfg.geral.px_por_mm
+        # Qualidade do contorno (resíduo às retas dos lados, pontos rejeitados): só diagnóstico, por agora.
+        diag.medidas.update(medicao.qualidade(arestas, centro, angulo, D.M2_ANGULO_DESVIO_MM * ppm))
         comprimento_mm, largura_mm = comprimento_px / ppm, largura_px / ppm
         if not (p.comprimento_min_mm <= comprimento_mm <= p.comprimento_max_mm
                 and p.largura_min_mm <= largura_mm <= p.largura_max_mm):

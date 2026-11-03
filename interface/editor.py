@@ -29,7 +29,7 @@ SECOES_CAMARA = ("aquisicao", "disparo", "lente")
 NOMES_SECOES = {
     "geral": "Geral (px/mm, orçamento)", "localizacao": "M2 Localização", "dimensoes": "M3 Dimensões",
     "cor": "M4 Cor", "relevo": "M5 Relevo", "manchas": "M6 Manchas", "saida": "M7 Saída (imagens, registos)",
-    "aquisicao": "Exposição e ganho", "disparo": "Trigger (disparo)", "lente": "Lente",
+    "aquisicao": "Exposição, ganho e ROI", "disparo": "Trigger (disparo)", "lente": "Lente",
 }
 
 

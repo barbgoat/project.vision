@@ -17,6 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # sem janelas no ecrã; t
 
 from PySide6.QtCore import QPoint, QPointF, QSettings, Qt  # noqa: E402
 from PySide6.QtGui import QPixmap, QWheelEvent  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox  # noqa: E402
 
 import biapp_dashboard  # noqa: E402
@@ -38,7 +39,8 @@ from nucleo.imagens import guardar_imagem  # noqa: E402
 from nucleo.servidor_dashboard import Servidor  # noqa: E402
 from interface import ciclo  # noqa: E402
 from testes.apoio import (  # noqa: E402
-    CORES, FORMAS, CamaraSimulada, cena_forma, com_camara, config_teste, correr, execucao, ler_csv, montagem,
+    COMPRIMENTO, CORES, FORMAS, LARGURA, CamaraSimulada, cena_forma, cena_saco, com_camara, config_teste, correr,
+    execucao, ler_csv, montagem,
 )
 from testes.test_especificacoes import _produto  # noqa: E402
 
@@ -199,6 +201,23 @@ def test_zoom_da_imagem(app):
     assert vista._zoom == 1, "uma imagem de outro tamanho volta a ficar ajustada"
 
 
+def test_desenhar_a_roi_na_imagem(app):
+    vista = VistaImagem()
+    vista.resize(400, 300)
+    vista.mostrar(np.zeros((150, 200, 3), np.uint8))  # ajustada: 2 px do ecrã por px da imagem
+    desenhadas = []
+    vista.roi_desenhada.connect(lambda *roi: desenhadas.append(roi))
+    QTest.mouseClick(vista, Qt.MouseButton.LeftButton, pos=QPoint(100, 100))
+    assert vista._zoom == 1 and not desenhadas, "sem desenhar_roi, carregar não desenha nada"
+    vista.desenhar_roi = True
+    QTest.mousePress(vista, Qt.MouseButton.LeftButton, pos=QPoint(40, 20))
+    QTest.mouseMove(vista, QPoint(500, 120))  # para lá da imagem: fica na borda dela
+    QTest.mouseRelease(vista, Qt.MouseButton.LeftButton, pos=QPoint(500, 120))
+    assert desenhadas == [(20, 10, 180, 50)]
+    QTest.mouseClick(vista, Qt.MouseButton.LeftButton, pos=QPoint(60, 60))
+    assert len(desenhadas) == 1, "um clique sem arrastar não é uma ROI"
+
+
 def test_operador_so_ve_a_vista_operador(app, janela):
     janela._definir_utilizador("op")
     so_admin = (janela.acao_engenharia, janela.acao_historico, janela.acao_camara, janela.acao_definicoes,
@@ -334,6 +353,17 @@ def test_afinar_segue_o_modo_sem_inspecionar_e_passa_a_inspecao(app, janela, tmp
     _campo(janela.editor_camara, "aquisicao", "exposicao_us").setValue(1234.0)
     esperar(app, lambda: abertas[-1].exposicoes[-1] == 1234.0)
     assert len(abertas) == 1, "a exposição muda sem reabrir a câmara"
+    assert janela.btn_roi.isEnabled()
+    janela.btn_roi.setChecked(True)
+    assert janela.imagem_eng.desenhar_roi
+    assert janela.btn_roi_imagem.isChecked(), "os dois botões Definir ROI andam juntos"
+    janela.imagem_eng.roi_desenhada.emit(2, 3, 20, 10)  # como se a tivesse arrastado na imagem (30 × 20 px)
+    assert janela._cfg_edicao.aquisicao.roi() == (2, 3, 20, 10)
+    assert [nome for _, _, nome in janela.imagem_eng.auxilios] == ["ROI", "barreira"]
+    assert not janela.btn_roi.isChecked() and not janela.btn_roi_imagem.isChecked()
+    assert _campo(janela.editor_camara, "aquisicao", "roi_largura_px").value() == 20
+    app.processEvents()
+    assert len(abertas) == 1, "a afinar vê-se a imagem inteira: a ROI não reabre a câmara"
     _campo(janela.editor_camara, "aquisicao", "timeout_ms").setValue(2500)
     esperar(app, lambda: len(abertas) == 2 and abertas[0].fechada)
 
@@ -341,13 +371,61 @@ def test_afinar_segue_o_modo_sem_inspecionar_e_passa_a_inspecao(app, janela, tmp
     esperar(app, lambda: "sinal n.º" in janela.lbl_medidas.text())
     assert janela.afinacao.modo == "trigger" and abertas[-1].modo == "trigger" and abertas[-2].fechada
     assert janela.editor_camara.secao.currentData() == "disparo"
+    assert [nome for _, _, nome in janela.imagem_eng.auxilios] == ["ROI"], "em Trigger não há barreira"
+    assert janela.btn_roi_imagem.isEnabled(), "a ROI também se define a afinar em Trigger"
     _campo(janela.editor_camara, "aquisicao", "exposicao_us").setValue(2000.0)  # sai da espera do sinal
     esperar(app, lambda: abertas[-1].exposicoes[-1] == 2000.0)
     assert not (tmp_path / "res").exists(), "a afinar não se regista nada"
 
     _producao_ate_ao_fim(app, janela)  # Iniciar: a afinação para e a inspeção abre a câmara
     assert all(c.fechada for c in abertas) and janela.afinacao is None and not janela.btn_afinar.isChecked()
+    assert janela.imagem_eng.auxilios == [] and not janela.btn_roi_imagem.isEnabled()
     assert janela.historico.rowCount() == 3
+
+
+def test_afinar_com_contorno_mede_o_saco_na_roi(app, janela, monkeypatch):
+    cena, (cx, cy) = cena_saco(np.random.default_rng(3), angulo=10.0)
+
+    class CamaraSaco(CamaraAfinar):
+        def ler(self) -> Captura | None:
+            time.sleep(0.01)
+            return None if self.parada else Captura(cena, "saco.png", time.time(), fonte="simulada")
+
+    com_camara(monkeypatch, ciclo, CamaraSaco)
+    janela.btn_ao_vivo.click()
+    janela.btn_afinar.click()
+    janela._definir_roi(150, 200, 1000, 600)  # o saco (≈ 790 × 400 px) inteiro lá dentro, com fundo à volta
+    janela.btn_contorno.setChecked(True)
+    esperar(app, lambda: len(janela._medicoes) >= 2)
+    comprimentos, larguras = np.array(janela._medicoes).T
+    assert np.allclose(comprimentos, COMPRIMENTO, atol=0.5) and np.allclose(larguras, LARGURA, atol=0.5)
+    contorno = janela.imagem_eng.contorno
+    assert abs(contorno[:, 0].mean() - cx) < 10 and abs(contorno[:, 1].mean() - cy) < 10, "na imagem inteira"
+    texto = janela.lbl_medidas.text()
+    assert "RMS" in texto and "rejeitados" in texto and "σ C" in texto and "face ao nominal" in texto
+    janela.btn_recomecar.click()
+    assert janela._medicoes == [] and janela.imagem_eng.contorno is None
+    janela.btn_contorno.setChecked(False)
+    assert janela.afinacao.medir_contorno is False
+
+
+def test_fundo_vazio_e_calibrar_escala_a_afinar(app, janela, tmp_path, monkeypatch):
+    com_camara(monkeypatch, ciclo, CamaraAfinar)
+    janela._dataset = tmp_path / "dataset"
+    janela.btn_ao_vivo.click()
+    janela.btn_afinar.click()
+    esperar(app, lambda: janela._imagem_afinacao is not None)
+    janela.btn_fundo.click()  # sem saco à vista: a imagem inteira passa a ser o fundo do perfil
+    assert (tmp_path / "dataset" / "fundo.png").is_file()
+    assert janela._cfg_edicao.localizacao.fundo_referencia == str(tmp_path / "dataset" / "fundo.png")
+
+    ppm = janela._cfg_edicao.geral.px_por_mm
+    d = janela._cfg_edicao.dimensoes
+    janela._medicoes[:] = [(d.comprimento_nominal_mm * 1.04, d.largura_nominal_mm * 1.04)] * 3  # 4 % maior
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    janela.btn_escala.click()
+    assert janela._cfg_edicao.geral.px_por_mm == pytest.approx(ppm * 1.04, abs=1e-3)
+    assert janela._medicoes == [], "com outra escala, a contagem recomeça"
 
 
 def test_pre_visualizar_e_guardar_no_perfil(app, janela, tmp_path, monkeypatch):

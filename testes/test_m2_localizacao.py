@@ -11,9 +11,9 @@ import numpy as np
 import pytest
 
 import mestre as m
-from modulos.m2_localizacao import Localizador
+from modulos.m2_localizacao import Diagnostico, Localizador
 from nucleo.contrato import Estado, SemSaco
-from nucleo.imagens import guardar_imagem
+from nucleo.imagens import guardar_imagem, recortar
 from testes.apoio import (CORES, alfa_retangulo, cena_saco, com_acentos, config_teste, diferenca_angulo,
                           fundo)
 
@@ -112,6 +112,37 @@ def test_referencia_de_outro_tamanho_da_erro(fundo_com_textura, tmp_path):
     guardar_imagem(pasta / "fundo.png", foto_vazia)
     with pytest.raises(ValueError, match="mesma câmara"):
         Localizador(_com_referencia(pasta / "fundo.png")).localizar(cv2.resize(img, (1000, 800)))
+
+
+def _saco_claro_em_fundo_claro(rng, deriva: float = 0.0):
+    """Como o saco Garnier: cinzento só 15 níveis mais escuro do que o papel, luz desigual (o fundo
+    varia ~70 níveis) e um bloco de texto escuro no meio. Devolve (imagem, foto do fundo vazio)."""
+    altura, largura = 1000, 1250
+    y = np.linspace(-1, 1, altura)[:, None, None]
+    luz = fundo(altura, largura, rng, base=(125, 125, 125), gradiente=50, ruido=0) + 20 * y
+    a = alfa_retangulo(altura, largura, 645, 485, 150 * PPM, 55 * PPM, 23)[..., None]
+    texto = alfa_retangulo(altura, largura, 645, 485, 100 * PPM, 30 * PPM, 23)[..., None]
+    riscas = (np.sin(np.arange(largura) / 2.5) > 0.2)[None, :, None]
+    img = (luz * (1 - a) + (luz - 15) * a) * (1 - 0.7 * texto * riscas)
+    img = np.clip(img + deriva + rng.normal(0, 3.4, img.shape), 0, 255).astype(np.uint8)
+    return img, np.clip(luz + rng.normal(0, 3.4, luz.shape), 0, 255).astype(np.uint8)
+
+
+def test_saco_claro_em_fundo_claro_com_foto_do_fundo(rng, tmp_path):
+    """Sem a foto do fundo, o limiar automático só vê o texto; com ela, o saco todo, e ao centésimo
+    de mm mesmo com a luz mais forte do que na foto e com a ROI (a foto é a imagem inteira)."""
+    img, vazio = _saco_claro_em_fundo_claro(rng)
+    guardar_imagem(tmp_path / "fundo.png", vazio)
+    com_ref = _com_referencia(tmp_path / "fundo.png")
+    assert Localizador(CFG).localizar(img).comprimento_mm < 120, "sem a foto do fundo mede o texto"
+    for imagem in (img, _saco_claro_em_fundo_claro(np.random.default_rng(8), deriva=8)[0]):
+        saco = Localizador(com_ref).localizar(imagem)
+        assert abs(saco.comprimento_mm - 150) < 0.1 and abs(saco.largura_mm - 55) < 0.1,             (saco.comprimento_mm, saco.largura_mm)
+    roi = (150, 100, 1000, 800)
+    com_roi = dataclasses.replace(com_ref, aquisicao=dataclasses.replace(
+        com_ref.aquisicao, roi_x_px=roi[0], roi_y_px=roi[1], roi_largura_px=roi[2], roi_altura_px=roi[3]))
+    saco = Localizador(com_roi).localizar(recortar(img, roi))
+    assert abs(saco.comprimento_mm - 150) < 0.1 and abs(saco.largura_mm - 55) < 0.1
 
 
 def test_referencia_em_falta_da_erro_no_arranque():
@@ -215,6 +246,38 @@ def test_contorno_subpixel_com_o_mapa_de_cor(rng):
     saco = Localizador(CFG, segmentador=_Fixo(grosseira)).localizar(img)
     assert abs(saco.comprimento_mm - 150) < 0.3 and abs(saco.largura_mm - 55) < 0.3, \
         (saco.comprimento_mm, saco.largura_mm)
+
+
+def test_qualidade_do_contorno(rng):
+    """Um contorno limpo segue as retas dos lados (RMS < 0,5 px, quase nada rejeitado); um vinco
+    colado a um lado aparece nos rejeitados desse lado, e só desse."""
+    img, verdade = _verdade(rng, angulo=0.0)
+    diagnostico = Diagnostico()
+    Localizador(CFG).localizar(img, diagnostico=diagnostico)
+    assert diagnostico.medidas["contorno_rms_px"] < 0.5 and diagnostico.medidas["rejeitados_max_pct"] < 10
+    ys, xs = np.nonzero(verdade)
+    meio = (xs.min() + xs.max()) // 2
+    com_vinco = verdade.copy()
+    com_vinco[ys.min() - 15: ys.min(), meio - 60: meio + 60] = True  # 3 × 24 mm colado ao lado de cima
+    diagnostico = Diagnostico()
+    Localizador(CFG, segmentador=_Fixo(com_vinco)).localizar(img, diagnostico=diagnostico)
+    assert diagnostico.medidas["rejeitados_cima_pct"] > 10
+    assert max(diagnostico.medidas[f"rejeitados_{lado}_pct"] for lado in ("esquerda", "direita", "baixo")) < 5
+
+
+def test_contorno_que_nao_fechou_e_erro_e_nao_medidas(rng):
+    """Uma parte do saco igual ao fundo deixa uma "baía" na região (a solidez cai): ERRO, não medidas."""
+    img, verdade = _verdade(rng, angulo=0.0)
+    ys, xs = np.nonzero(verdade)
+    altura, largura = ys.max() - ys.min(), xs.max() - xs.min()
+    em_c = verdade.copy()
+    em_c[ys.min() + altura // 4: ys.max() - altura // 4, xs.min(): xs.min() + largura * 2 // 5] = False
+    diagnostico = Diagnostico()
+    with pytest.raises(SegmentacaoIncerta, match="contorno incompleto"):
+        Localizador(CFG, segmentador=_Fixo(em_c)).localizar(img, diagnostico=diagnostico)
+    assert diagnostico.medidas["solidez"] < 0.85
+    saco = Localizador(CFG, segmentador=_Fixo(verdade)).localizar(img)  # o saco inteiro passa
+    assert abs(saco.comprimento_mm - 150) < 0.3
 
 
 def test_sam3_escolhe_a_maior_mascara_confiante_e_completa():

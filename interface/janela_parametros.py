@@ -7,8 +7,10 @@ e Guardar no dataset.
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QFormLayout, QHBoxLayout, QLabel, QMessageBox, QTabWidget, QVBoxLayout, QWidget
 
 from interface.ciclo import Previsao, Visto
@@ -16,6 +18,7 @@ from interface.editor import SECOES_CAMARA, SECOES_DEFINICOES, EditorParametros,
 from interface.estilo import icone
 from interface.janelas import JanelaAuxiliar
 from interface.registos import guardar_correcao, pasta_dataset
+from modulos.m1_aquisicao.disparo import faixa_da_barreira
 from nucleo.config import CAMINHO_POR_OMISSAO, RAIZ, Config, carregar_configuracao
 from nucleo.especificacoes import repor_medidas
 
@@ -57,11 +60,17 @@ class Parametros:
                                   dica="Passa a Trigger e mostra uma imagem por sinal do botão ou do sensor "
                                        "(parado: afina, sem inspeção).")
         ver_trigger.clicked.connect(lambda: self._ver_camara("trigger"))
+        self.btn_roi = self._botao("Definir ROI", True, dica="A afinar (Ao vivo ou Trigger): arrastar na imagem o "
+                                                              "retângulo que segue para a inspeção (com fundo à "
+                                                              "volta do saco).")
+        self.btn_roi.toggled.connect(self._desenhar_roi)
+        sem_roi = self._botao("Imagem inteira", dica="Sem ROI: a imagem toda da câmara segue para a inspeção.")
+        sem_roi.clicked.connect(lambda: self._definir_roi(0, 0, 0, 0))
         self.lbl_medidas = QLabel()  # ao afinar: brilho, saturados, nitidez (Afinacao.medidas)
         topo = QHBoxLayout()
         topo.addWidget(self.lbl_medidas, 1)
-        topo.addWidget(ver)
-        topo.addWidget(ver_trigger)
+        for botao in (ver, ver_trigger, self.btn_roi, sem_roi):
+            topo.addWidget(botao)
         self.editor_camara = EditorParametros(SECOES_CAMARA)
         # A afinar, a exposição e o ganho mudam logo; a inspeção só os usa no próximo Iniciar.
         self.editor_camara.btn_aplicar.hide()
@@ -72,6 +81,48 @@ class Parametros:
         coluna.addLayout(topo)
         coluna.addWidget(self.editor_camara, 1)
         return JanelaAuxiliar(self, "Câmara", icone("camara"), conteudo, (1000, 620))
+
+    def _desenhar_roi(self, ligado: bool) -> None:
+        """Arrastar na imagem desenha a ROI (só a afinar: é a imagem inteira da câmara). Os dois
+        botões Definir ROI (na janela da câmara e por cima da imagem) andam juntos."""
+        for botao in (self.btn_roi, getattr(self, "btn_roi_imagem", None)):
+            if botao is not None and botao.isChecked() != ligado:
+                botao.blockSignals(True)
+                botao.setChecked(ligado)
+                botao.blockSignals(False)
+        for vista in (self.imagem_op, self.imagem_eng):
+            vista.desenhar_roi = ligado
+            vista.setCursor(Qt.CursorShape.CrossCursor if ligado else Qt.CursorShape.ArrowCursor)
+
+    def _definir_roi(self, x: int, y: int, largura: int, altura: int) -> None:
+        a = self._cfg_edicao.aquisicao
+        roi = dataclasses.replace(a, roi_x_px=x, roi_y_px=y, roi_largura_px=largura, roi_altura_px=altura)
+        self._desenhar_roi(False)
+        self._parametros_mudaram(dataclasses.replace(self._cfg_edicao, aquisicao=roi))
+        self._mensagem(f"ROI {largura} × {altura} px em ({x}, {y}): Guardar no perfil para a manter."
+                       if largura else "Sem ROI: a imagem inteira. Guardar no perfil para o manter.")
+
+    def _mostrar_auxilios(self) -> None:
+        """A afinar, por cima da imagem inteira: a ROI e, Ao vivo, a faixa vigiada pela barreira virtual
+        (no meio da ROI, como na inspeção). Parado ou a inspecionar, nada."""
+        if not hasattr(self, "imagem_eng"):  # ainda a construir a janela
+            return
+        auxilios = []
+        if self.afinacao is not None:
+            cfg = self._cfg_edicao
+            roi = cfg.aquisicao.roi()
+            if roi is not None:
+                auxilios.append((roi, "#ef6c00", "ROI"))
+            if self.afinacao.modo == "ao_vivo" and self._forma_afinacao is not None:
+                altura, largura = self._forma_afinacao
+                x, y, w, h = roi or (0, 0, largura, altura)
+                x0, y0 = min(max(x, 0), largura - 1), min(max(y, 0), altura - 1)  # como recortar()
+                w, h = min(x + w, largura) - x0, min(y + h, altura) - y0
+                fx, fy, fw, fh = faixa_da_barreira(cfg, w, h)
+                auxilios.append(((x0 + fx, y0 + fy, fw, fh), "#1e88e5", "barreira"))
+        for vista in (self.imagem_op, self.imagem_eng):
+            vista.auxilios = auxilios
+            vista.update()
 
     def _ligar_editor(self, editor: EditorParametros) -> None:
         editor.mudou.connect(self._parametros_mudaram)
@@ -108,6 +159,7 @@ class Parametros:
         self._atualizar_resumo()
         if self.afinacao is not None:
             self.afinacao.aplicar(cfg)  # a afinar: a exposição e o ganho veem-se já
+        self._mostrar_auxilios()
         if all(getattr(cfg, s) == getattr(anterior, s) for s in SECOES_DEFINICOES):
             return  # só mudou a câmara: entra no próximo Iniciar, não há nada a pré-visualizar
         # Pré-visualizar no saco que está no ecrã, sem mexer na linha.

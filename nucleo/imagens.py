@@ -24,6 +24,24 @@ def listar_imagens(pasta: str | Path) -> list[Path]:
     return sorted(p for p in Path(pasta).rglob("*") if p.suffix.lower() in EXTENSOES_IMAGEM and p.is_file())
 
 
+def limites_roi(forma: tuple[int, ...], roi: tuple[int, int, int, int] | None) -> tuple[int, int, int, int]:
+    """(x0, y0, x1, y1) da ROI dentro de uma imagem com esta forma (altura, largura...); None = toda."""
+    alto, largo = forma[:2]
+    if roi is None:
+        return 0, 0, largo, alto
+    x, y, largura, altura = roi
+    x0, y0 = min(max(x, 0), largo - 1), min(max(y, 0), alto - 1)
+    return x0, y0, min(x + largura, largo), min(y + altura, alto)
+
+
+def recortar(img: np.ndarray, roi: tuple[int, int, int, int] | None) -> np.ndarray:
+    """Só a ROI (x, y, largura, altura em px; aquisicao.roi()); a parte fora da imagem fica de fora. None = toda."""
+    if roi is None:
+        return img
+    x0, y0, x1, y1 = limites_roi(img.shape, roi)
+    return img[y0:y1, x0:x1].copy()
+
+
 def ler_imagem(caminho: str | Path) -> np.ndarray | None:
     """Lê um ficheiro de imagem para BGR uint8.
 

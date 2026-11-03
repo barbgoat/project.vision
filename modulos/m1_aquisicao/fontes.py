@@ -251,7 +251,7 @@ class FonteBasler(FonteImagem):
                 self._relogio = (resultado.GetTimeStamp(), time.time())
             instante = self._relogio[1] + (resultado.GetTimeStamp() - self._relogio[0]) / self._frequencia
         cal = self.calibracao
-        return Captura(preparar(bruta, self.cfg.camara.formato_pixel, cal),
+        return Captura(preparar(bruta, self.cfg.camara.formato_pixel, cal, self.cfg.aquisicao.roi()),
                        f"basler:{self.numero_serie}#{resultado.GetBlockID()}", instante,
                        sensor=True if self.trigger else None, fonte="basler",
                        px_por_mm=cal.px_por_mm if cal else None, calibracao_id=cal.id if cal else None)
@@ -335,7 +335,7 @@ class FonteBasler(FonteImagem):
 #                 bruta, numero = img.GetNDArray().copy(), img.GetFrameID()
 #             finally:
 #                 img.Release()
-#             bgr = preparar(bruta, self.cfg.camara.formato_pixel, self.calibracao)
+#             bgr = preparar(bruta, self.cfg.camara.formato_pixel, self.calibracao, self.cfg.aquisicao.roi())
 #             cal = self.calibracao
 #             return Captura(bgr, f"spinnaker:{self.numero_serie}#{numero}", time.time(),
 #                            sensor=True if self.trigger else None, fonte="spinnaker",

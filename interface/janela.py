@@ -34,20 +34,22 @@ perfil" escreve-os no perfil escolhido. O perfil fica lembrado (QSettings).
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import html
 import logging
 from collections import Counter
 from pathlib import Path
 from time import monotonic
 
+import numpy as np
 from PySide6.QtCore import QSettings, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QPushButton, QSizePolicy, QSplitter,
-    QStackedWidget, QStyle, QTabWidget, QToolButton, QVBoxLayout, QWidget,
+    QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QSizePolicy,
+    QSplitter, QStackedWidget, QStyle, QTabWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
-from interface.ciclo import Afinacao, Ciclo, Pedido, Previsao, Visto, preparar
+from interface.ciclo import Afinacao, Ciclo, MedicaoContorno, Pedido, Previsao, Visto, preparar
 from interface.estilo import AZUL, CORES_ESTADO, NOME_APP, icone
 from interface.janela_conta import Conta
 from interface.janela_parametros import Parametros
@@ -57,14 +59,19 @@ from interface.paineis import (
     Contadores, Etapas, Faixa, PainelLog, RegistoQt, TabelaDefeitos, TabelaModulos, VistaImagem,
 )
 from interface.registos import registar_revisao
-from nucleo.config import CAMINHO_POR_OMISSAO, Config
+from modulos.m2_localizacao.medicao import LADOS
+from nucleo.config import CAMINHO_POR_OMISSAO, RAIZ, Config
 from nucleo.contrato import CLASSES_DATASET, Estado
 from nucleo.especificacoes import ErroRepositorio, Escolha, Repositorio
+from nucleo.imagens import guardar_imagem
 
 
 log = logging.getLogger("interface")
 
 SEM_IMAGEM = "Carrega em ▶ Iniciar"
+# Objetivos indicativos da qualidade do contorno (a afinar, modo Contorno): acima, a vermelho.
+CONTORNO_RMS_MAX_PX = 0.5
+CONTORNO_REJEITADOS_MAX_PCT = 10.0
 SEGURAR_SACO_S = 3.0  # quanto tempo um saco analisado fica no ecrã antes de voltar a imagem ao vivo
 # Cor do indicador do estado (à direita da barra): parado, ao vivo a correr, trigger a correr, a afinar.
 CORES_INDICADOR = {None: "#78909c", "ao_vivo": AZUL, "trigger": "#2e7d32", "afinar": "#ef6c00"}
@@ -80,6 +87,10 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         self.utilizador, self.papel = utilizador, "admin"
         self.ciclo: Ciclo | None = None
         self.afinacao: Afinacao | None = None  # a câmara ao vivo, sem inspeção (Afinar câmara)
+        self._forma_afinacao: tuple[int, int] | None = None  # (altura, largura) da imagem inteira a afinar
+        self._medicoes: list[tuple[float, float]] = []  # (comprimento, largura) mm, desde o último Recomeçar
+        self._imagem_afinacao: np.ndarray | None = None  # a última imagem inteira a afinar (para o Fundo vazio)
+        self._texto_imagem = self._texto_contorno = ""  # o que a afinação mostra: a imagem e o contorno
         self._previsao: Previsao | None = None
         self._previsao_pendente: tuple[Visto, Config] | None = None
         lembrado = self._lembrado("perfil")
@@ -238,6 +249,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
     def _criar_operador(self) -> QWidget:
         self.faixa_op = Faixa(40)
         self.imagem_op = VistaImagem(SEM_IMAGEM)
+        self.imagem_op.roi_desenhada.connect(self._definir_roi)
         self.contadores_op = Contadores(26)
         vista = QWidget()
         layout = QVBoxLayout(vista)
@@ -250,12 +262,37 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         self.titulo_imagem = QLabel()
         self.titulo_imagem.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.imagem_eng = VistaImagem(SEM_IMAGEM)
+        self.imagem_eng.roi_desenhada.connect(self._definir_roi)
         # Por cima da imagem: congelar o ecrã.
         self.btn_congelar = self._botao("Congelar", True, self._icone_qt("SP_MediaPause"),
                                         "O ecrã fica neste saco, para afinar nele (a linha continua e é registada).")
         self.btn_congelar.toggled.connect(self._congelar)
+        # A afinar (Ao vivo ou Trigger): desenhar a ROI aqui, por cima da imagem inteira.
+        self.btn_roi_imagem = self._botao("Definir ROI", True, dica=self.btn_roi.toolTip())
+        self.btn_roi_imagem.toggled.connect(self._desenhar_roi)
+        # A afinar: o M2 (só ele) mede o saco na ROI e desenha o contorno, com a qualidade e as estatísticas.
+        self.btn_contorno = self._botao("Contorno", True, dica="A afinar: medir o saco na ROI só com o M2 e "
+                                                               "desenhar o contorno. Ao vivo: saco parado, dá o "
+                                                               "ruído; Trigger: reposicionar a cada sinal, dá a "
+                                                               "repetibilidade.")
+        self.btn_contorno.toggled.connect(self._ligar_contorno)
+        self.btn_recomecar = self._botao("Recomeçar", dica="Recomeçar a contagem das medições do contorno.")
+        self.btn_recomecar.clicked.connect(self._recomecar_contagem)
+        self.btn_escala = self._botao("Calibrar escala", dica="Com um saco de medidas conhecidas (as nominais do "
+                                                              "produto ou do perfil) e o Contorno ligado: acerta o "
+                                                              "px_por_mm pela média das medições.")
+        self.btn_escala.clicked.connect(self._calibrar_escala)
+        self.btn_fundo = self._botao("Fundo vazio", dica="A afinar, SEM saco à vista: guarda esta imagem como o "
+                                                         "fundo de referência do perfil. O M2 compara cada imagem "
+                                                         "com ela (repetir se a luz, o papel ou a câmara mudarem).")
+        self.btn_fundo.clicked.connect(self._guardar_fundo)
         cabeca = QHBoxLayout()
         cabeca.addWidget(self.titulo_imagem, 1)
+        cabeca.addWidget(self.btn_fundo)
+        cabeca.addWidget(self.btn_contorno)
+        cabeca.addWidget(self.btn_recomecar)
+        cabeca.addWidget(self.btn_escala)
+        cabeca.addWidget(self.btn_roi_imagem)
         cabeca.addWidget(self.btn_congelar)
         imagem = QWidget()
         coluna = QVBoxLayout(imagem)
@@ -355,6 +392,9 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         a_afinar = self.afinacao is not None
         self.cb_perfil.setEnabled(not a_correr and not a_afinar)
         self.btn_afinar.setEnabled(not a_correr)
+        for botao in (self.btn_roi, self.btn_roi_imagem, self.btn_contorno, self.btn_recomecar, self.btn_escala,
+                      self.btn_fundo):
+            botao.setEnabled(a_afinar)  # a ROI e o contorno desenham-se sobre a imagem inteira: só a afinar
         self.btn_iniciar.setEnabled(not a_correr)
         self.btn_parar.setEnabled(a_correr)
         for editor in (self.editor, self.editor_camara):
@@ -432,6 +472,8 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         afinacao = self.afinacao = Afinacao(self._cfg_edicao, modo)
         afinacao.quadro.connect(self._ver_afinacao)
         afinacao.medidas.connect(self._medidas_afinacao)
+        afinacao.contorno.connect(self._contorno_medido)
+        afinacao.medir_contorno = self.btn_contorno.isChecked()
         afinacao.mensagem.connect(self._mensagem)
         afinacao.finished.connect(lambda: self._afinacao_terminou(afinacao))
         afinacao.start()
@@ -440,11 +482,12 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
             faixa.mostrar(None, "a afinar: trigger" if trigger else "a afinar: ao vivo")
         self.titulo_imagem.setText(f"<b style='color:{CORES_INDICADOR['afinar']}'>AFINAR CÂMARA</b>"
                                    f"   {'Trigger' if trigger else 'Ao vivo'} (sem inspeção nem registo)")
-        espera = "À espera do sinal do botão ou do sensor…" if trigger else ""
-        self.lbl_medidas.setText(espera)
-        self.info.setText(espera)
+        self._texto_imagem = "À espera do sinal do botão ou do sensor…" if trigger else ""
+        self._recomecar_contagem()
         self.editor_camara.mostrar_secao("disparo" if trigger else "aquisicao")
         self.janela_camara.abrir()
+        self._forma_afinacao = None
+        self._mostrar_auxilios()
         self._atualizar_botoes()
 
     def _parar_afinacao(self) -> None:
@@ -458,8 +501,10 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         if self.afinacao is afinacao:
             self.afinacao = None
             self.btn_afinar.setChecked(False)
-            self.lbl_medidas.setText("")
-            self.info.setText("")  # as medidas eram da afinação: não ficam como se fossem atuais
+            self._texto_imagem = ""  # as medidas eram da afinação: não ficam como se fossem atuais
+            self._recomecar_contagem()
+            self._desenhar_roi(False)
+            self._mostrar_auxilios()
             if self.ciclo is None:
                 self.titulo_imagem.setText("")
                 for faixa in (self.faixa_op, self.faixa_eng):
@@ -467,12 +512,89 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
             self._atualizar_botoes()
 
     def _ver_afinacao(self, imagem) -> None:
+        self._imagem_afinacao = imagem
         self.imagem_op.mostrar(imagem)
         self.imagem_eng.mostrar(imagem)
+        if imagem.shape[:2] != self._forma_afinacao:  # a 1.ª imagem: já se sabe onde fica a barreira
+            self._forma_afinacao = imagem.shape[:2]
+            self._mostrar_auxilios()
 
     def _medidas_afinacao(self, texto: str) -> None:
-        self.lbl_medidas.setText(texto)
-        self.info.setText(texto.replace("   ·   ", "<br>"))
+        self._texto_imagem = texto
+        self._mostrar_textos_afinacao()
+
+    def _guardar_fundo(self) -> None:
+        """A afinar, sem saco: a imagem inteira passa a ser o fundo de referência (dataset/<perfil>/fundo.png)."""
+        if self.afinacao is None or self._imagem_afinacao is None:
+            self._mensagem("Fundo vazio: primeiro Afinar câmara, sem saco à vista.")
+            return
+        caminho = self._dataset / "fundo.png"
+        try:
+            guardar_imagem(caminho, self._imagem_afinacao)
+        except OSError as erro:
+            QMessageBox.critical(self, "Fundo vazio", str(erro))
+            return
+        texto = caminho.relative_to(RAIZ).as_posix() if caminho.is_relative_to(RAIZ) else str(caminho)
+        loc = dataclasses.replace(self._cfg_edicao.localizacao, fundo_referencia=texto)
+        self._parametros_mudaram(dataclasses.replace(self._cfg_edicao, localizacao=loc))
+        self._recomecar_contagem()
+        self._mensagem(f"Fundo vazio guardado em {texto}: Guardar no perfil para o manter.")
+
+    def _calibrar_escala(self) -> None:
+        """px_por_mm a partir das medições do Contorno de um saco de medidas conhecidas (as nominais)."""
+        if len(self._medicoes) < 3:
+            self._mensagem("Calibrar escala: ligar o Contorno com o saco à vista e esperar por 3 medições ou mais.")
+            return
+        c, lg = np.array(self._medicoes).T
+        d, ppm = self._cfg_edicao.dimensoes, self._cfg_edicao.geral.px_por_mm
+        fator_c, fator_l = c.mean() / d.comprimento_nominal_mm, lg.mean() / d.largura_nominal_mm
+        novo = ppm * (fator_c + fator_l) / 2
+        resposta = QMessageBox.question(
+            self, "Calibrar escala",
+            f"Medido {c.mean():.2f} × {lg.mean():.2f} mm ({len(c)} medições); nominal "
+            f"{d.comprimento_nominal_mm:g} × {d.largura_nominal_mm:g} mm.\n"
+            f"px_por_mm: {ppm:.4f} → {novo:.4f}\n\n"
+            f"O comprimento e a largura pedem escalas {abs(fator_c - fator_l) * 100:.1f} % diferentes "
+            "(muito acima de 0,5 %: câmara inclinada ou nominal que não é a medida real).\n"
+            "O nominal tem de ser a medida real deste saco (paquímetro). Aplicar?")
+        if resposta != QMessageBox.StandardButton.Yes:
+            return
+        geral = dataclasses.replace(self._cfg_edicao.geral, px_por_mm=round(novo, 4))
+        self._parametros_mudaram(dataclasses.replace(self._cfg_edicao, geral=geral))
+        self._recomecar_contagem()
+        self._mensagem(f"px_por_mm = {novo:.4f}: Guardar no perfil para o manter.")
+
+    def _ligar_contorno(self, ligado: bool) -> None:
+        if self.afinacao is not None:
+            self.afinacao.medir_contorno = ligado
+        self._recomecar_contagem()
+
+    def _recomecar_contagem(self) -> None:
+        """Esquece as medições do contorno (p.ex. antes de uma série de ruído ou de repetibilidade)."""
+        self._medicoes.clear()
+        self._texto_contorno = ""
+        for vista in (self.imagem_op, self.imagem_eng):
+            vista.contorno = None
+            vista.update()
+        self._mostrar_textos_afinacao()
+
+    def _contorno_medido(self, medicao: MedicaoContorno) -> None:
+        if self.afinacao is None or not self.btn_contorno.isChecked():
+            return  # chegou depois de desligar
+        if medicao.erro:
+            self._texto_contorno = f"<span style='color:#c62828'>Contorno: {html.escape(medicao.erro)}</span>"
+        else:
+            self._medicoes.append((medicao.comprimento_mm, medicao.largura_mm))
+            self._texto_contorno = _texto_contorno(medicao, self._medicoes, self._cfg_edicao)
+        for vista in (self.imagem_op, self.imagem_eng):
+            vista.contorno = medicao.contorno
+            vista.update()
+        self._mostrar_textos_afinacao()
+
+    def _mostrar_textos_afinacao(self) -> None:
+        self.lbl_medidas.setText("<br>".join(t for t in (self._texto_imagem, self._texto_contorno) if t))
+        self.info.setText("<br>".join(t for t in (self._texto_imagem.replace("   ·   ", "<br>"),
+                                                  self._texto_contorno) if t))
 
     def _terminou(self) -> None:
         ciclo, self.ciclo = self.ciclo, None
@@ -640,6 +762,24 @@ def _par(esquerdo: QWidget, direito: QWidget) -> QHBoxLayout:
     par.addWidget(esquerdo)
     par.addWidget(direito)
     return par
+
+
+def _texto_contorno(medicao: MedicaoContorno, medicoes: list[tuple[float, float]], cfg: Config) -> str:
+    """A medição do contorno (medidas e qualidade, a vermelho fora do objetivo) e as estatísticas da série:
+    ao vivo com o saco parado, σ é o ruído; em Trigger, reposicionando a cada sinal, a repetibilidade."""
+    q = medicao.medidas
+    rms, rejeitados = q.get("contorno_rms_px", float("nan")), q.get("rejeitados_max_pct", float("nan"))
+    pior = max(LADOS, key=lambda lado: q.get(f"rejeitados_{lado}_pct", 0.0))
+    cor = "#2e7d32" if rms < CONTORNO_RMS_MAX_PX and rejeitados < CONTORNO_REJEITADOS_MAX_PCT else "#c62828"
+    c, lg = np.array(medicoes).T
+    d = cfg.dimensoes
+    linhas = [f"<b>C {medicao.comprimento_mm:.2f} · L {medicao.largura_mm:.2f} mm</b>",
+              f"<span style='color:{cor}'>RMS {rms:.2f} px · rejeitados {rejeitados:.0f} % (pior: {pior})</span>",
+              f"n {len(c)} · média C {c.mean():.2f} · L {lg.mean():.2f} mm · face ao nominal "
+              f"C {c.mean() - d.comprimento_nominal_mm:+.2f} · L {lg.mean() - d.largura_nominal_mm:+.2f} mm"]
+    if len(c) >= 2:
+        linhas.append(f"σ C {c.std(ddof=1):.3f} · σ L {lg.std(ddof=1):.3f} mm")
+    return "<br>".join(linhas)
 
 
 def _info(visto: Visto) -> str:

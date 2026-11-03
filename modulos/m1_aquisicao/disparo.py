@@ -160,6 +160,15 @@ class DisparoAoVivo(Disparo):
         return ha_saco, pontuacao
 
 
+def faixa_da_barreira(cfg: Config, largura: int, altura: int) -> tuple[int, int, int, int]:
+    """A faixa vigiada pela barreira virtual (x, y, largura, altura) numa imagem de largura × altura px:
+    no meio, perpendicular ao movimento, como em BarreiraVirtual._faixa. Para a desenhar ao afinar."""
+    meia = max(1, round(cfg.disparo.virtual_faixa_mm * cfg.geral.px_por_mm / 2))
+    if cfg.disparo.virtual_direcao == "horizontal":
+        return largura // 2 - meia, 0, 2 * meia, altura
+    return 0, altura // 2 - meia, largura, 2 * meia
+
+
 class BarreiraVirtual:
     """Compara uma miniatura de cada imagem com o fundo aprendido (tapete vazio).
 
