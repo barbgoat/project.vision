@@ -88,17 +88,21 @@ class Localizador:
 
         # 2. Contorno na resolução original
         # e cada ponto na aresta verdadeira (subpíxel), seja qual for o limiar
-        arestas, normais = segmentacao.afinar_contorno(segmentacao.contorno_original(regiao, img.shape[:2]),
-                                                       seg.mapa_aresta, img.shape[:2])
+        arestas, normais, validos = segmentacao.afinar_contorno(
+            segmentacao.contorno_original(regiao, img.shape[:2]), seg.mapa_aresta, img.shape[:2])
         # Centros dos píxeis de borda (meio píxel por dentro da aresta): o que o fillPoly e o desenho esperam
         borda = (arestas - 0.5 * normais).reshape(-1, 1, 2).astype(np.float32)
         contorno = np.round(borda).astype(np.int32)
+        # Os pontos com a aresta fora da janela não medem. Se forem mais de metade, a máscara está longe
+        # da aresta em todo o lado e mede-se com todos (na aresta da máscara), como sem afinação.
+        diag.medidas["aresta_fora_pct"] = float(100 * (1 - validos.mean()))
+        medir = arestas[validos] if 2 * np.count_nonzero(validos) >= len(validos) else arestas
 
         # 3. Orientação e medidas
-        centro, angulo, comprimento_px, largura_px = medicao.pose(arestas, self.cfg.geral.px_por_mm)
+        centro, angulo, comprimento_px, largura_px = medicao.pose(medir, self.cfg.geral.px_por_mm)
         ppm = self.cfg.geral.px_por_mm
         # Qualidade do contorno (resíduo às retas dos lados, pontos rejeitados): só diagnóstico, por agora.
-        diag.medidas.update(medicao.qualidade(arestas, centro, angulo, D.M2_ANGULO_DESVIO_MM * ppm))
+        diag.medidas.update(medicao.qualidade(medir, centro, angulo, D.M2_ANGULO_DESVIO_MM * ppm))
         comprimento_mm, largura_mm = comprimento_px / ppm, largura_px / ppm
         if not (p.comprimento_min_mm <= comprimento_mm <= p.comprimento_max_mm
                 and p.largura_min_mm <= largura_mm <= p.largura_max_mm):

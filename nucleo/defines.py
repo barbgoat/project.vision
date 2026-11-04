@@ -211,12 +211,22 @@ M2_APRENDIDO_GRABCUT_LADO_PX: Final = 400  # o GrabCut corre numa versão com es
 M2_APRENDIDO_GRABCUT_ITERACOES: Final = 3
 M2_REVISAO: Final = "dataset/revisao"  # "duplo": onde ficam as fotos em que os segmentadores discordam
 # A aresta subpíxel procura-se a ± isto px DO MAPA do segmentador. Fica em px (não em mm): é a
-# precisão da máscara grosseira na sua própria resolução, não uma tolerância do saco.
+# precisão da máscara grosseira na sua própria resolução (≥ 1: os degraus dos seus píxeis; mais o que
+# o limiar a engorda ou emagrece), não uma tolerância do saco. Mais larga entra na textura das
+# soldaduras (±14 px na bancada: serrilhado de 1,9 para 8 px); a máscara que erre mais do que isto
+# chega lá pelas passagens.
 M2_AFINAR_PROCURA: Final = 3
+M2_AFINAR_PASSAGENS: Final = 2  # procurar, suavizar, normais de novo e procurar outra vez (cada uma ± PROCURA)
+# Antes das normais, as coordenadas do contorno são suavizadas ao longo dele com este σ (px do mapa):
+# tira os degraus dos píxeis do mapa, que fariam as normais apontar para os lados deles.
+M2_AFINAR_SUAVIZACAO: Final = 1.0
 M2_AFINAR_VIZINHOS: Final = 4  # pontos de cada lado usados para a direção da normal ao contorno
 M2_AFINAR_GRADIENTE_MIN: Final = 1.0  # transição mais fraca do que isto (ΔE/px) não move o ponto (2,0 deixava por afinar as bordas de sacos claros em fundo claro, ~6 ΔE)
 M2_SUAVIZACAO_MIN_PX: Final = 0.3  # esse desfoque nunca é menor do que isto (px)
 M2_GRADIENTE_FUNDO_MIN: Final = 0.5  # piso do "gradiente normal do fundo" (ΔE/px), para fundos muito lisos
+# O fecho morfológico não acrescenta nada fora do invólucro convexo das regiões da máscara; as regiões
+# com menos do que esta fração da área da maior (manchas do fundo) não contam para ele.
+M2_INVOLUCRO_FRACAO_MIN: Final = 0.01
 M2_RETANGULARIDADE_SO_COR: Final = 0.8  # abaixo disto a região de cor é um pedaço de saco → tentar com arestas
 M2_PARTE_CENTRAL_LADOS: Final = 0.7  # fração central de cada lado usada para o medir (sem os cantos)
 M2_ANGULO_ITERACOES: Final = 2  # voltas de afinação do ângulo pelos lados compridos

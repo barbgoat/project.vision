@@ -331,6 +331,19 @@ def test_sam3_sem_fecho_nao_tapa_entalhes():
     assert seg_sam3.limpar(saco, 15.0)[60, 143], "um fecho largo tapa-o"
 
 
+def test_fecho_tapa_falhas_mas_nao_cola_manchas_do_fundo():
+    """Na bancada, manchas do fundo a poucos px da aresta ficavam coladas ao saco pelo fecho (bossas de ~3 mm)."""
+    from modulos.m2_localizacao import segmentacao
+    mascara = np.zeros((200, 300), np.uint8)
+    mascara[50:150, 50:250] = 255
+    mascara[50:62, 140:146] = 0  # falha na aresta de cima: 6 px de largura, 12 de fundo
+    mascara[90:100, 34:42] = 255  # mancha do fundo (0,4% da área do saco) a 8 px do lado esquerdo
+    limpa = segmentacao.maior_regiao(segmentacao.limpar(mascara, 21.0, 5.0))
+    assert limpa[55, 143], "a falha fica tapada"
+    assert not limpa[95, 38] and not limpa[95, 46], "a mancha e a ponte até ela ficam de fora"
+    assert limpa[95, 52], "o saco fica todo"
+
+
 @pytest.mark.parametrize("campo, valor", [("segmentador", "yolo"), ("sam3_score_min", 1.5), ("sam3_prompt", " "),
                                           ("sam3_fecho_mm", -1.0), ("duplo_iou_min", 0.0),
                                           ("aprendido_score_min", 1.5), ("aprendido_modelo", " ")])
