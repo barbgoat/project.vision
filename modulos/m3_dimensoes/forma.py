@@ -19,6 +19,11 @@ from nucleo.contrato import Defeito, Saco, TipoDefeito
 _COR_IDEAL = (0, 255, 255)  # retângulo ideal: amarelo
 _COR_FALTA = (0, 0, 255)  # falta material: vermelho
 _COR_SOBRA = (255, 0, 255)  # material a mais: magenta
+# Cores da imagem intermédia "nominal" (BGR).
+_COR_MEDIDO = (0, 200, 0)  # o retângulo medido: verde (o mesmo da afinação)
+_COR_NOMINAL = (255, 120, 0)  # o nominal do produto: azul
+_COR_TOLERANCIA = (255, 200, 140)  # nominal ± tolerância: azul claro
+_COR_SILHUETA = np.array((235, 190, 140))  # a silhueta, por cima da imagem: azulada
 
 # Uma zona está "numa ponta" / "num lado" se o seu centro estiver no último
 # quarto do saco nessa direção (só serve para a descrição em texto).
@@ -157,6 +162,42 @@ def reconhecer_cortes_tortos(faltas: list[Defeito], sobras: list[Defeito], saco:
     faltas = [novos.get(id(d), d) for d in faltas]
     sobras = [novos.get(id(d), d) for d in sobras]
     return faltas, sobras, [(faltas[i], sobras[j]) for i, j in pares_idx]
+
+
+def desenhar_nominal(saco: Saco, ppm: float, nominal_mm: tuple[float, float], tolerancia_mm: tuple[float, float],
+                     raios_mm: tuple[float, float] = (0.0, 0.0)) -> np.ndarray:
+    """Quanto o saco se afasta do que o produto pede (o nominal da OF e do dashboard): o recorte com a
+    silhueta (azulada), o retângulo medido (verde), o nominal (azul) e a banda nominal ± tolerância
+    (azul claro), com os desvios escritos em cima. Um saco bom tem o verde dentro da banda."""
+    (comprimento, largura), (tol_c, tol_l) = nominal_mm, tolerancia_mm
+    # Margem à volta do recorte para caberem o nominal e a banda, mesmo num saco mais pequeno.
+    falta_px = max(comprimento + tol_c - saco.comprimento_mm, largura + tol_l - saco.largura_mm, 0.0) / 2 * ppm
+    margem = int(np.ceil(falta_px)) + max(4, round(ppm))
+    imagem = cv2.copyMakeBorder(saco.imagem, margem, margem, margem, margem, cv2.BORDER_CONSTANT, value=(40, 40, 40))
+    base = replace(saco, mascara=np.pad(saco.mascara, margem))  # a mesma forma, no recorte com margem
+    silhueta = base.mascara > 0
+    imagem[silhueta] = (0.6 * imagem[silhueta] + 0.4 * _COR_SILHUETA).astype(np.uint8)
+    espessura = max(1, round(ppm / 4))
+
+    def contorno(c_mm: float, l_mm: float, cor: tuple[int, int, int], grossura: int) -> None:
+        retangulo = replace(base, comprimento_mm=max(c_mm, 1.0), largura_mm=max(l_mm, 1.0))
+        mascara = retangulo_ideal(retangulo, ppm, 0.0, raios_mm).astype(np.uint8)
+        linhas, _ = cv2.findContours(mascara, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        cv2.drawContours(imagem, linhas, -1, cor, grossura, cv2.LINE_AA)
+
+    for sinal in (-1, 1):
+        contorno(comprimento + sinal * tol_c, largura + sinal * tol_l, _COR_TOLERANCIA, max(1, espessura // 2))
+    contorno(comprimento, largura, _COR_NOMINAL, espessura)
+    contorno(saco.comprimento_mm, saco.largura_mm, _COR_MEDIDO, espessura)
+    texto = (f"medido {saco.comprimento_mm:.2f} x {saco.largura_mm:.2f} mm | nominal {comprimento:g} x {largura:g} "
+             f"+/- {tol_c:g}/{tol_l:g} | desvio C {saco.comprimento_mm - comprimento:+.2f} "
+             f"L {saco.largura_mm - largura:+.2f} mm")
+    escala = max(0.4, imagem.shape[1] / 1400)
+    altura_texto = int(28 * escala)
+    cv2.rectangle(imagem, (0, 0), (imagem.shape[1], altura_texto + 8), (0, 0, 0), cv2.FILLED)
+    cv2.putText(imagem, texto, (6, altura_texto), cv2.FONT_HERSHEY_SIMPLEX, escala, (255, 255, 255),
+                max(1, round(escala * 1.5)), cv2.LINE_AA)
+    return imagem
 
 
 def desenhar_forma(saco: Saco, ppm: float, falta: np.ndarray, sobra: np.ndarray,

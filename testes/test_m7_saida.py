@@ -86,8 +86,8 @@ def test_depuracao_pasta_do_saco(resultado, tmp_path):
     pasta = Depuracao(CFG, tmp_path, "nok").processar(resultado, 12)
     ficheiros = sorted(f.name for f in pasta.iterdir())
     assert ficheiros == ["00_original.png", "01_anotada.jpg", "02_localizacao_diferenca.png",
-                         "03_localizacao_segmentacao.png", "04_localizacao_recorte.png", "05_dimensoes_forma.png",
-                         "painel.jpg", "resultado.json"]
+                         "03_localizacao_segmentacao.png", "04_localizacao_recorte.png", "05_dimensoes_nominal.png",
+                         "06_dimensoes_forma.png", "painel.jpg", "resultado.json"]
     assert pasta.name.startswith("saco_0012_")
     assert np.array_equal(ler_imagem(pasta / "00_original.png"), resultado.imagem), "original sem perdas"
     painel = ler_imagem(pasta / "painel.jpg")

@@ -250,6 +250,18 @@ def test_definicoes_e_camara_mostram_a_mesma_configuracao(app, janela):
 
 # --- Editor de parâmetros ------------------------------------------------------------------
 
+def test_editor_mostra_so_o_essencial_com_nomes_claros(app):
+    editor = EditorParametros(SECOES_CAMARA)
+    exposicao, lente = _campo(editor, "aquisicao", "exposicao_us"), _campo(editor, "lente", "focal_mm")
+    assert not exposicao.isHidden() and lente.isHidden(), "a lente é avançada"
+    rotulo = next(c.rotulo for c in editor._campos if c.nome == "exposicao_us")
+    assert rotulo.text() == "Exposição (µs)" and "AQUISICAO_EXPOSICAO_US" in rotulo.toolTip()
+    lista = editor.secao.view()
+    assert lista.isRowHidden(editor.secao.findData("lente")), "uma secção sem nada essencial fica de fora"
+    editor.todos.setChecked(True)
+    assert not lente.isHidden() and not lista.isRowHidden(editor.secao.findData("lente"))
+
+
 def test_editor_so_emite_configuracoes_validas(app):
     editor = EditorParametros()
     cfg = config_teste()
@@ -356,11 +368,11 @@ def test_afinar_segue_o_modo_sem_inspecionar_e_passa_a_inspecao(app, janela, tmp
     assert janela.btn_roi.isEnabled()
     janela.btn_roi.setChecked(True)
     assert janela.imagem_eng.desenhar_roi
-    assert janela.btn_roi_imagem.isChecked(), "os dois botões Definir ROI andam juntos"
+    assert not janela.barra_afinacao.isHidden() and janela.lbl_passo.text().startswith("Arraste")
     janela.imagem_eng.roi_desenhada.emit(2, 3, 20, 10)  # como se a tivesse arrastado na imagem (30 × 20 px)
     assert janela._cfg_edicao.aquisicao.roi() == (2, 3, 20, 10)
     assert [nome for _, _, nome in janela.imagem_eng.auxilios] == ["ROI", "barreira"]
-    assert not janela.btn_roi.isChecked() and not janela.btn_roi_imagem.isChecked()
+    assert not janela.btn_roi.isChecked() and janela.lbl_passo.text().startswith("2 · ")  # agora o fundo vazio
     assert _campo(janela.editor_camara, "aquisicao", "roi_largura_px").value() == 20
     app.processEvents()
     assert len(abertas) == 1, "a afinar vê-se a imagem inteira: a ROI não reabre a câmara"
@@ -372,14 +384,14 @@ def test_afinar_segue_o_modo_sem_inspecionar_e_passa_a_inspecao(app, janela, tmp
     assert janela.afinacao.modo == "trigger" and abertas[-1].modo == "trigger" and abertas[-2].fechada
     assert janela.editor_camara.secao.currentData() == "disparo"
     assert [nome for _, _, nome in janela.imagem_eng.auxilios] == ["ROI"], "em Trigger não há barreira"
-    assert janela.btn_roi_imagem.isEnabled(), "a ROI também se define a afinar em Trigger"
+    assert not janela.barra_afinacao.isHidden(), "a ROI também se define a afinar em Trigger"
     _campo(janela.editor_camara, "aquisicao", "exposicao_us").setValue(2000.0)  # sai da espera do sinal
     esperar(app, lambda: abertas[-1].exposicoes[-1] == 2000.0)
     assert not (tmp_path / "res").exists(), "a afinar não se regista nada"
 
     _producao_ate_ao_fim(app, janela)  # Iniciar: a afinação para e a inspeção abre a câmara
     assert all(c.fechada for c in abertas) and janela.afinacao is None and not janela.btn_afinar.isChecked()
-    assert janela.imagem_eng.auxilios == [] and not janela.btn_roi_imagem.isEnabled()
+    assert janela.imagem_eng.auxilios == [] and janela.barra_afinacao.isHidden()
     assert janela.historico.rowCount() == 3
 
 

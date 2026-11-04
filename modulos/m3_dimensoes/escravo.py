@@ -28,7 +28,8 @@ class Dimensoes(Escravo):
                 a silhueta (mascara) no recorte normalizado.
             captura: não usada (o M3 só precisa da silhueta).
             cfg: usa dimensoes e geral.px_por_mm.
-            guardar_intermedios: se True, devolve a imagem "forma": o recorte
+            guardar_intermedios: se True, devolve a imagem "nominal" (o medido, verde, face ao
+                nominal do produto, azul, e à banda da tolerância) e a imagem "forma": o recorte
                 com o retângulo ideal (amarelo), a falta (vermelho), a sobra
                 de material (magenta) e as retas dos lados com os ângulos (ciano).
 
@@ -122,6 +123,9 @@ class Dimensoes(Escravo):
             )
         intermedios = {}
         if guardar_intermedios:
+            intermedios["nominal"] = forma.desenhar_nominal(
+                saco, ppm, (p.comprimento_nominal_mm, p.largura_nominal_mm),
+                (p.tolerancia_comprimento_mm, p.tolerancia_largura_mm), raios)
             intermedios["forma"] = forma.desenhar_forma(saco, ppm, falta, sobra, raios)
             if geo is not None:
                 geometria.desenhar(intermedios["forma"], geo, saco, ppm)

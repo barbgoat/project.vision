@@ -1,14 +1,14 @@
 {
   "geral": {
-    "px_por_mm": 6.8
+    "px_por_mm": 7.1136
   },
   "aquisicao": {
     "exposicao_us": 10000.0,
-    "ganho_raw": 300,
-    "roi_x_px": 194,
-    "roi_y_px": 12,
-    "roi_largura_px": 788,
-    "roi_altura_px": 660
+    "ganho_raw": 0,
+    "roi_x_px": 213,
+    "roi_y_px": 25,
+    "roi_largura_px": 882,
+    "roi_altura_px": 785
   },
   "localizacao": {
     "resolucao_px_por_mm": 20.0,

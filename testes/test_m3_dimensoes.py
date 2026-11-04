@@ -74,6 +74,11 @@ def test_medidas_e_imagem_intermedia(resultados):
     for medida in ("comprimento_mm", "largura_mm", "retangularidade", "falta_mm2", "sobra_mm2"):
         assert medida in relatorio.medidas
     assert "forma" in relatorio.intermedios
+    nominal = relatorio.intermedios["nominal"]  # o medido (verde) face ao nominal (azul) e à tolerância
+    b, g, r = (nominal[..., i].astype(int) for i in range(3))
+    medido = (g > 150) & (b < 90) & (r < 90)  # verde
+    tolerancia = (b > 200) & (g > 160) & (r > 100) & (r < 190)  # azul claro (aqui o nominal fica por baixo do verde)
+    assert medido.any() and tolerancia.any()
 
 
 

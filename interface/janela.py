@@ -124,6 +124,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         centro.setObjectName("fundo")
         layout = QVBoxLayout(centro)
         layout.addWidget(self._criar_barra())
+        layout.addWidget(self._criar_barra_afinacao())
         layout.addWidget(self.vistas, 1)
         self.setCentralWidget(centro)
         self.lbl_resumo = QLabel()  # perfil e modo em uso, sempre à vista
@@ -240,6 +241,68 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         barra.addLayout(direita, 1)
         return moldura
 
+    def _criar_barra_afinacao(self) -> QFrame:
+        """A barra Afinar (só enquanto se afina): o próximo passo e as medidas à esquerda, os botões
+        pela ordem em que se usam à direita."""
+        self.lbl_passo = QLabel()
+        self.lbl_passo.setStyleSheet(f"color: {CORES_INDICADOR['afinar']}; font-weight: bold; font-size: 11pt;")
+        self.lbl_resumo_afinacao = QLabel()  # as medidas da imagem ou do contorno, numa linha
+        self.lbl_resumo_afinacao.setStyleSheet("color: #546e7a;")
+        self.btn_roi = self._botao("Definir ROI", True, dica="Arrastar na imagem o retângulo onde o saco vai "
+                                                              "ficar, com fundo à volta: só isso segue para a "
+                                                              "inspeção.")
+        self.btn_roi.toggled.connect(self._desenhar_roi)
+        self.btn_fundo = self._botao("Fundo vazio", dica="SEM saco à vista: guarda esta imagem como o fundo de "
+                                                         "referência. O M2 compara cada imagem com ela (repetir "
+                                                         "se a luz, o papel ou a câmara mudarem).")
+        self.btn_fundo.clicked.connect(self._guardar_fundo)
+        self.btn_contorno = self._botao("Contorno", True, dica="Medir o saco na ROI só com o M2 e desenhar o "
+                                                               "contorno. Ao vivo, saco parado: o ruído; em "
+                                                               "Trigger, reposicionando: a repetibilidade.")
+        self.btn_contorno.toggled.connect(self._ligar_contorno)
+        self.btn_recomecar = self._botao("Recomeçar", dica="Recomeçar a contagem das medições do contorno.")
+        self.btn_recomecar.clicked.connect(self._recomecar_contagem)
+        self.btn_escala = self._botao("Calibrar escala", dica="Com um saco de medidas conhecidas (as nominais) e "
+                                                              "o Contorno ligado: acerta os píxeis por mm.")
+        self.btn_escala.clicked.connect(self._calibrar_escala)
+        camara = self._botao("Câmara…", icone_botao=icone("camara"), dica="Exposição, ganho e trigger.")
+        camara.clicked.connect(self.janela_camara.abrir)
+        guardar = self._botao("Guardar no perfil", dica="Guardar a ROI, o fundo, a escala e a câmara no perfil.")
+        guardar.clicked.connect(self._guardar)
+        textos = QVBoxLayout()
+        textos.setSpacing(0)
+        textos.addWidget(self.lbl_passo)
+        textos.addWidget(self.lbl_resumo_afinacao)
+        self.barra_afinacao = QFrame()
+        self.barra_afinacao.setObjectName("barra")  # cartão branco (ESTILO)
+        linha = QHBoxLayout(self.barra_afinacao)
+        linha.setContentsMargins(12, 4, 8, 4)
+        linha.addLayout(textos, 1)
+        for botao in (self.btn_roi, self.btn_fundo, self.btn_contorno, self.btn_recomecar, self.btn_escala,
+                      camara, guardar):
+            linha.addWidget(botao)
+        self.barra_afinacao.hide()
+        return self.barra_afinacao
+
+    def _atualizar_passo(self) -> None:
+        """O próximo passo da afinação, pela ordem: ROI, fundo vazio, contorno, conferir e guardar."""
+        if not hasattr(self, "lbl_passo"):  # ainda a construir a janela
+            return
+        cfg = self._cfg_edicao
+        if self.btn_roi.isChecked():
+            passo = "Arraste na imagem o retângulo onde o saco vai ficar (com fundo à volta)"
+        elif cfg.aquisicao.roi() is None:
+            passo = "1 · Definir ROI: o retângulo onde o saco vai ficar"
+        elif not cfg.localizacao.fundo_referencia:
+            passo = "2 · Tire o saco da frente da câmara e carregue em Fundo vazio"
+        elif not self.btn_contorno.isChecked():
+            passo = "3 · Ponha o saco dentro da ROI e ligue o Contorno"
+        elif not self._medicoes:
+            passo = "3 · À espera de medir: o saco tem de estar inteiro dentro da ROI"
+        else:
+            passo = "4 · Confira as medidas e Guarde no perfil; depois ▶ Iniciar"
+        self.lbl_passo.setText(passo)
+
     def _grupo(self, *botoes: QPushButton) -> QButtonGroup:
         grupo = QButtonGroup(self)
         for i, botao in enumerate(botoes):
@@ -267,32 +330,8 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         self.btn_congelar = self._botao("Congelar", True, self._icone_qt("SP_MediaPause"),
                                         "O ecrã fica neste saco, para afinar nele (a linha continua e é registada).")
         self.btn_congelar.toggled.connect(self._congelar)
-        # A afinar (Ao vivo ou Trigger): desenhar a ROI aqui, por cima da imagem inteira.
-        self.btn_roi_imagem = self._botao("Definir ROI", True, dica=self.btn_roi.toolTip())
-        self.btn_roi_imagem.toggled.connect(self._desenhar_roi)
-        # A afinar: o M2 (só ele) mede o saco na ROI e desenha o contorno, com a qualidade e as estatísticas.
-        self.btn_contorno = self._botao("Contorno", True, dica="A afinar: medir o saco na ROI só com o M2 e "
-                                                               "desenhar o contorno. Ao vivo: saco parado, dá o "
-                                                               "ruído; Trigger: reposicionar a cada sinal, dá a "
-                                                               "repetibilidade.")
-        self.btn_contorno.toggled.connect(self._ligar_contorno)
-        self.btn_recomecar = self._botao("Recomeçar", dica="Recomeçar a contagem das medições do contorno.")
-        self.btn_recomecar.clicked.connect(self._recomecar_contagem)
-        self.btn_escala = self._botao("Calibrar escala", dica="Com um saco de medidas conhecidas (as nominais do "
-                                                              "produto ou do perfil) e o Contorno ligado: acerta o "
-                                                              "px_por_mm pela média das medições.")
-        self.btn_escala.clicked.connect(self._calibrar_escala)
-        self.btn_fundo = self._botao("Fundo vazio", dica="A afinar, SEM saco à vista: guarda esta imagem como o "
-                                                         "fundo de referência do perfil. O M2 compara cada imagem "
-                                                         "com ela (repetir se a luz, o papel ou a câmara mudarem).")
-        self.btn_fundo.clicked.connect(self._guardar_fundo)
         cabeca = QHBoxLayout()
         cabeca.addWidget(self.titulo_imagem, 1)
-        cabeca.addWidget(self.btn_fundo)
-        cabeca.addWidget(self.btn_contorno)
-        cabeca.addWidget(self.btn_recomecar)
-        cabeca.addWidget(self.btn_escala)
-        cabeca.addWidget(self.btn_roi_imagem)
         cabeca.addWidget(self.btn_congelar)
         imagem = QWidget()
         coluna = QVBoxLayout(imagem)
@@ -371,14 +410,6 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
             self.afinar()
         self._atualizar_botoes()
 
-    def _ver_camara(self, modo: str) -> None:
-        """Da janela da câmara: passa a esse modo e mostra a câmara (parado, afina-se; a correr, a inspeção muda)."""
-        (self.btn_trigger if modo == "trigger" else self.btn_ao_vivo).setChecked(True)
-        self._mudar_modo()
-        if self.ciclo is None and self.afinacao is None:
-            self.btn_afinar.setChecked(True)
-            self.afinar()
-
     def _engenharia(self) -> bool:
         return self.acao_engenharia.isChecked()
 
@@ -392,9 +423,11 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         a_afinar = self.afinacao is not None
         self.cb_perfil.setEnabled(not a_correr and not a_afinar)
         self.btn_afinar.setEnabled(not a_correr)
-        for botao in (self.btn_roi, self.btn_roi_imagem, self.btn_contorno, self.btn_recomecar, self.btn_escala,
-                      self.btn_fundo):
-            botao.setEnabled(a_afinar)  # a ROI e o contorno desenham-se sobre a imagem inteira: só a afinar
+        # A barra Afinar só aparece a afinar (a ROI e o contorno desenham-se sobre a imagem inteira);
+        # o Congelar só a inspecionar.
+        self.barra_afinacao.setVisible(a_afinar)
+        self.btn_congelar.setVisible(not a_afinar)
+        self._atualizar_passo()
         self.btn_iniciar.setEnabled(not a_correr)
         self.btn_parar.setEnabled(a_correr)
         for editor in (self.editor, self.editor_camara):
@@ -485,7 +518,6 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         self._texto_imagem = "À espera do sinal do botão ou do sensor…" if trigger else ""
         self._recomecar_contagem()
         self.editor_camara.mostrar_secao("disparo" if trigger else "aquisicao")
-        self.janela_camara.abrir()
         self._forma_afinacao = None
         self._mostrar_auxilios()
         self._atualizar_botoes()
@@ -592,6 +624,14 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         self._mostrar_textos_afinacao()
 
     def _mostrar_textos_afinacao(self) -> None:
+        if self._medicoes:
+            c, lg = np.array(self._medicoes).T
+            resumo = f"C {c[-1]:.2f} · L {lg[-1]:.2f} mm   (n {len(c)}"
+            resumo += f", σ {c.std(ddof=1):.3f} / {lg.std(ddof=1):.3f} mm)" if len(c) >= 2 else ")"
+        else:
+            resumo = self._texto_imagem
+        self.lbl_resumo_afinacao.setText(resumo)
+        self._atualizar_passo()
         self.lbl_medidas.setText("<br>".join(t for t in (self._texto_imagem, self._texto_contorno) if t))
         self.info.setText("<br>".join(t for t in (self._texto_imagem.replace("   ·   ", "<br>"),
                                                   self._texto_contorno) if t))

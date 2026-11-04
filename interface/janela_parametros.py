@@ -52,25 +52,14 @@ class Parametros:
         return JanelaAuxiliar(self, "Definições", icone("definicoes"), separadores, (1050, 620))
 
     def _criar_camara(self) -> JanelaAuxiliar:
-        """📷 Câmara: exposição, ganho, trigger (disparo) e lente."""
-        ver = self._botao("Ver ao vivo", icone_botao=icone("camara"),
-                          dica="Passa a Ao vivo e mostra a câmara em contínuo (parado: afina, sem inspeção).")
-        ver.clicked.connect(lambda: self._ver_camara("ao_vivo"))
-        ver_trigger = self._botao("Ver com trigger", icone_botao=icone("camara"),
-                                  dica="Passa a Trigger e mostra uma imagem por sinal do botão ou do sensor "
-                                       "(parado: afina, sem inspeção).")
-        ver_trigger.clicked.connect(lambda: self._ver_camara("trigger"))
-        self.btn_roi = self._botao("Definir ROI", True, dica="A afinar (Ao vivo ou Trigger): arrastar na imagem o "
-                                                              "retângulo que segue para a inspeção (com fundo à "
-                                                              "volta do saco).")
-        self.btn_roi.toggled.connect(self._desenhar_roi)
-        sem_roi = self._botao("Imagem inteira", dica="Sem ROI: a imagem toda da câmara segue para a inspeção.")
+        """📷 Câmara: a exposição, o ganho e o trigger (o resto com "Mostrar todos os parâmetros")."""
+        sem_roi = self._botao("Tirar a ROI", dica="Sem ROI: a imagem toda da câmara segue para a inspeção.")
         sem_roi.clicked.connect(lambda: self._definir_roi(0, 0, 0, 0))
         self.lbl_medidas = QLabel()  # ao afinar: brilho, saturados, nitidez (Afinacao.medidas)
+        self.lbl_medidas.setWordWrap(True)
         topo = QHBoxLayout()
         topo.addWidget(self.lbl_medidas, 1)
-        for botao in (ver, ver_trigger, self.btn_roi, sem_roi):
-            topo.addWidget(botao)
+        topo.addWidget(sem_roi)
         self.editor_camara = EditorParametros(SECOES_CAMARA)
         # A afinar, a exposição e o ganho mudam logo; a inspeção só os usa no próximo Iniciar.
         self.editor_camara.btn_aplicar.hide()
@@ -80,19 +69,18 @@ class Parametros:
         coluna.setContentsMargins(0, 0, 0, 0)
         coluna.addLayout(topo)
         coluna.addWidget(self.editor_camara, 1)
-        return JanelaAuxiliar(self, "Câmara", icone("camara"), conteudo, (1000, 620))
+        return JanelaAuxiliar(self, "Câmara", icone("camara"), conteudo, (760, 420))
 
     def _desenhar_roi(self, ligado: bool) -> None:
-        """Arrastar na imagem desenha a ROI (só a afinar: é a imagem inteira da câmara). Os dois
-        botões Definir ROI (na janela da câmara e por cima da imagem) andam juntos."""
-        for botao in (self.btn_roi, getattr(self, "btn_roi_imagem", None)):
-            if botao is not None and botao.isChecked() != ligado:
-                botao.blockSignals(True)
-                botao.setChecked(ligado)
-                botao.blockSignals(False)
+        """Arrastar na imagem desenha a ROI (só a afinar: é a imagem inteira da câmara)."""
+        if self.btn_roi.isChecked() != ligado:
+            self.btn_roi.blockSignals(True)
+            self.btn_roi.setChecked(ligado)
+            self.btn_roi.blockSignals(False)
         for vista in (self.imagem_op, self.imagem_eng):
             vista.desenhar_roi = ligado
             vista.setCursor(Qt.CursorShape.CrossCursor if ligado else Qt.CursorShape.ArrowCursor)
+        self._atualizar_passo()
 
     def _definir_roi(self, x: int, y: int, largura: int, altura: int) -> None:
         a = self._cfg_edicao.aquisicao
@@ -107,6 +95,7 @@ class Parametros:
         (no meio da ROI, como na inspeção). Parado ou a inspecionar, nada."""
         if not hasattr(self, "imagem_eng"):  # ainda a construir a janela
             return
+        self._atualizar_passo()
         auxilios = []
         if self.afinacao is not None:
             cfg = self._cfg_edicao

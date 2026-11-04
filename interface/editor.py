@@ -1,6 +1,7 @@
 """Interface, editor: os parâmetros de umas secções da configuração, um campo por parâmetro.
 
-Usado nas janelas ⚙ Definições e 📷 Câmara. Cada campo tem como dica o define e o
+Usado nas janelas ⚙ Definições e 📷 Câmara. Mostra só o essencial (ESSENCIAIS, com nomes
+claros); "Mostrar todos os parâmetros" mostra o resto. Cada campo tem como dica o define e o
 comentário de nucleo/defines.py.
 """
 
@@ -29,7 +30,30 @@ SECOES_CAMARA = ("aquisicao", "disparo", "lente")
 NOMES_SECOES = {
     "geral": "Geral (px/mm, orçamento)", "localizacao": "M2 Localização", "dimensoes": "M3 Dimensões",
     "cor": "M4 Cor", "relevo": "M5 Relevo", "manchas": "M6 Manchas", "saida": "M7 Saída (imagens, registos)",
-    "aquisicao": "Exposição, ganho e ROI", "disparo": "Trigger (disparo)", "lente": "Lente",
+    "aquisicao": "Exposição e ganho", "disparo": "Trigger e barreira", "lente": "Lente",
+}
+# O que se muda no dia a dia, com o nome que aparece; o resto só com "Mostrar todos os parâmetros".
+ESSENCIAIS: dict[tuple[str, str], str] = {
+    ("aquisicao", "exposicao_us"): "Exposição (µs)",
+    ("aquisicao", "ganho_raw"): "Ganho (300 = mínimo)",
+    ("disparo", "trigger_ativacao"): "Trigger: dispara na (RisingEdge = ao carregar)",
+    ("disparo", "anti_ressalto_ms"): "Trigger: ignorar sinais repetidos (ms)",
+    ("disparo", "virtual_direcao"): "Ao vivo: sentido do tapete na imagem",
+    ("geral", "px_por_mm"): "Escala (píxeis por mm)",
+    ("dimensoes", "ativo"): "Medir as dimensões",
+    ("dimensoes", "comprimento_nominal_mm"): "Comprimento nominal (mm)",
+    ("dimensoes", "largura_nominal_mm"): "Largura nominal (mm)",
+    ("dimensoes", "tolerancia_comprimento_mm"): "Tolerância do comprimento (± mm)",
+    ("dimensoes", "tolerancia_largura_mm"): "Tolerância da largura (± mm)",
+    ("dimensoes", "forma_raio_canto_mm"): "Raio dos cantos (mm)",
+    ("dimensoes", "esquadria_max_graus"): "Pontas: desvio máximo do esquadro (°)",
+    ("dimensoes", "paralelismo_max_graus"): "Lados: desvio máximo do paralelo (°)",
+    ("cor", "ativo"): "Verificar a cor",
+    ("relevo", "ativo"): "Verificar o relevo",
+    ("manchas", "ativo"): "Verificar manchas",
+    ("saida", "guardar_imagens"): "Guardar as imagens anotadas",
+    ("saida", "guardar_originais"): "Guardar os originais da câmara",
+    ("saida", "depurar"): "Guardar as etapas (depuração)",
 }
 
 
@@ -89,7 +113,8 @@ class _Campo:
 
     def __init__(self, secao: str, nome: str, tipo: Any, valor: Any) -> None:
         self.secao, self.nome = secao, nome
-        self.rotulo = QLabel(nome)
+        self.essencial = (secao, nome) in ESSENCIAIS
+        self.rotulo = QLabel(ESSENCIAIS.get((secao, nome), nome))
         define = nome_define(secao, nome)
         dica = f"<b>{define}</b><br>{html.escape(ajudas().get(define, ''))}"
         self.rotulo.setToolTip(dica)
@@ -200,6 +225,9 @@ class EditorParametros(QWidget):
         self.btn_aplicar.clicked.connect(self.aplicar)
         self.btn_repor.clicked.connect(self.repor)
         self.btn_guardar.clicked.connect(self.guardar)
+        self.todos = QCheckBox("Mostrar todos os parâmetros")
+        self.todos.setToolTip("Os parâmetros avançados (lente, tempos, limiares internos…), além do essencial.")
+        self.todos.toggled.connect(self._mostrar)
 
         paginas = QStackedWidget()
         cfg = Config()
@@ -209,14 +237,14 @@ class EditorParametros(QWidget):
             grelha = QGridLayout()
             campos = [_Campo(secao, f.name, tipos[f.name], getattr(getattr(cfg, secao), f.name))
                       for f in dataclasses.fields(classe)]
-            metade = (len(campos) + 1) // 2  # duas colunas de (nome, valor)
-            for i, campo in enumerate(campos):
-                grelha.addWidget(campo.rotulo, i % metade, 2 * (i // metade))
-                grelha.addWidget(campo.widget, i % metade, 2 * (i // metade) + 1)
+            campos.sort(key=lambda c: not c.essencial)  # o essencial primeiro, no topo da página
+            for i, campo in enumerate(campos):  # duas colunas de (nome, valor), linha a linha
+                grelha.addWidget(campo.rotulo, i // 2, 2 * (i % 2))
+                grelha.addWidget(campo.widget, i // 2, 2 * (i % 2) + 1)
                 campo.ao_mudar(self._alterado)
             grelha.setColumnMinimumWidth(2, 24)  # espaço entre as duas colunas
             grelha.setColumnStretch(4, 1)  # o que sobra fica à direita e em baixo
-            grelha.setRowStretch(metade, 1)
+            grelha.setRowStretch((len(campos) + 1) // 2, 1)
             pagina = QWidget()
             pagina.setLayout(grelha)
             rolar = QScrollArea()
@@ -237,6 +265,21 @@ class EditorParametros(QWidget):
         layout.addLayout(topo)
         layout.addWidget(self.erro)
         layout.addWidget(paginas, 1)
+        layout.addWidget(self.todos)
+        self._mostrar()
+
+    def _mostrar(self) -> None:
+        """Só o essencial (as secções sem nada essencial ficam de fora), ou tudo com "Mostrar todos"."""
+        todos = self.todos.isChecked()
+        for campo in self._campos:
+            campo.rotulo.setVisible(todos or campo.essencial)
+            campo.widget.setVisible(todos or campo.essencial)
+        lista = self.secao.view()
+        for i in range(self.secao.count()):
+            secao = self.secao.itemData(i)
+            lista.setRowHidden(i, not (todos or any(s == secao for s, _ in ESSENCIAIS)))
+        if lista.isRowHidden(self.secao.currentIndex()):
+            self.secao.setCurrentIndex(next(i for i in range(self.secao.count()) if not lista.isRowHidden(i)))
 
     def definir(self, cfg: Config, perfil: Config | None = None, nome_perfil: str = "") -> None:
         """Mostra os valores de `cfg`; `perfil` é a referência para marcar o que mudou."""
@@ -257,7 +300,7 @@ class EditorParametros(QWidget):
     def mostrar_secao(self, secao: str) -> None:
         """Passa para a página dessa secção (p.ex. "disparo"), se o editor a tiver."""
         indice = self.secao.findData(secao)
-        if indice >= 0:
+        if indice >= 0 and not self.secao.view().isRowHidden(indice):
             self.secao.setCurrentIndex(indice)
 
     def _alterado(self) -> None:
