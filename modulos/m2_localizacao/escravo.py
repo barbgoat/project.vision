@@ -92,7 +92,7 @@ class Localizador:
         # 2. Contorno na resolução original
         # e cada ponto na aresta verdadeira (subpíxel), seja qual for o limiar
         arestas, normais, validos, encontrada = segmentacao.afinar_contorno(
-            segmentacao.contorno_original(regiao, img.shape[:2]), seg.mapa_aresta, img.shape[:2])
+            segmentacao.contorno_original(regiao, img.shape[:2]), seg.mapa_aresta, img.shape[:2], seg.amostrar)
         # Centros dos píxeis de borda (meio píxel por dentro da aresta): o que o fillPoly e o desenho esperam
         borda = (arestas - 0.5 * normais).reshape(-1, 1, 2).astype(np.float32)
         contorno = np.round(borda).astype(np.int32)

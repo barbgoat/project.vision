@@ -50,6 +50,26 @@ def desvio_mediano(d: np.ndarray, indices: np.ndarray) -> np.ndarray:
     return np.median(canais, axis=1).astype(d.dtype)
 
 
+def lab_nos_pontos(img: np.ndarray, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+    """CIELAB float32 (forma de xs × 3) da imagem BGR uint8 (ou cinzenta) em pontos subpíxel, por
+    interpolação bilinear (cv2.remap; fora da imagem, a borda). Só passa a float o retângulo que
+    contém os pontos: serve para ler a imagem à resolução total ao longo das normais do contorno sem
+    a converter toda."""
+    altura, largura = img.shape[:2]
+    xs, ys = np.asarray(xs), np.asarray(ys)
+    x0, y0 = max(int(np.floor(xs.min())) - 2, 0), max(int(np.floor(ys.min())) - 2, 0)
+    x1, y1 = min(int(np.ceil(xs.max())) + 3, largura), min(int(np.ceil(ys.max())) + 3, altura)
+    if x1 <= x0 or y1 <= y0:  # todos fora da imagem: a borda mais próxima
+        x0, y0 = min(x0, largura - 1), min(y0, altura - 1)
+        x1, y1 = x0 + 1, y0 + 1
+    recorte = cv2.multiply(img[y0:y1, x0:x1], 1 / 255, dtype=cv2.CV_32F)
+    bgr = cv2.remap(recorte, (xs - x0).astype(np.float32), (ys - y0).astype(np.float32), cv2.INTER_LINEAR,
+                    borderMode=cv2.BORDER_REPLICATE)
+    if bgr.ndim == xs.ndim:  # cinzenta (câmara mono sem conversão para BGR): os três canais iguais
+        bgr = cv2.merge([bgr, bgr, bgr])
+    return cv2.cvtColor(bgr, cv2.COLOR_BGR2Lab)
+
+
 def distancia(d: np.ndarray, peso_luminosidade: float) -> np.ndarray:
     """ΔE a partir da diferença d = lab − fundo, com a luminosidade pesada. Altera d (é temporária)."""
     if peso_luminosidade != 1:

@@ -13,6 +13,7 @@ Trabalha numa versão reduzida (localizacao.resolucao_px_por_mm). O mapa de dife
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from time import perf_counter
 
@@ -39,6 +40,7 @@ class SegmentadorDeltaE(Segmentador):
         self._referencia: np.ndarray | None = None
         self._referencia_lab: dict[tuple[int, int], np.ndarray] = {}  # por tamanho da imagem reduzida
         self._referencia_luz: dict[tuple[int, int], float] = {}  # cinzento mediano da faixa da borda, idem
+        self._referencia_lab_total: np.ndarray | None = None  # a foto do fundo em CIELAB sem reduzir (uma vez)
         self._sigma_px = 1.0
         caminho = cfg.localizacao.fundo_referencia
         if caminho:
@@ -65,6 +67,7 @@ class SegmentadorDeltaE(Segmentador):
         faixa = fundo.faixa_da_borda(lab.shape[:2], largura_faixa)  # feitas uma vez por tamanho (cache)
         indices = fundo.indices_da_faixa(lab.shape[:2], largura_faixa)
         modelo = self._fundo(lab, faixa, img.shape[:2])
+        desvio = np.zeros(3, np.float32)
         if self._referencia is None:
             diferenca = fundo.diferenca(lab, modelo, p.peso_luminosidade)
             limiar = p.limiar_delta_e or max(segmentacao.otsu(diferenca), p.delta_e_min)
@@ -75,7 +78,8 @@ class SegmentadorDeltaE(Segmentador):
             # mediano da faixa da borda, onde só há fundo. Depois, o limiar sai do ruído do fundo.
             # (lab − modelo − desvio, numa só imagem temporária: o mesmo que somar o desvio ao modelo)
             d = lab - modelo
-            d -= fundo.desvio_mediano(d, indices)
+            desvio = fundo.desvio_mediano(d, indices)
+            d -= desvio
             diferenca = fundo.distancia(d, p.peso_luminosidade)
             suave = cv2.GaussianBlur(diferenca, (0, 0), D.M2_REFERENCIA_SUAVIZACAO_PX)
             na_faixa = suave.reshape(-1)[indices]
@@ -120,8 +124,49 @@ class SegmentadorDeltaE(Segmentador):
         score = float(np.clip(1 - limiar_ruido / max(mediana, 1e-6), 0, 1))
         if not usou_arestas and not self._so_pelo_contorno(diferenca, saco, limiar_ruido, mediana, px_mm):
             medidas["contraste"] = score
+        # Com o mapa reduzido, o contorno subpíxel lê o mesmo ΔE na imagem à resolução total.
+        amostrar = self._amostrador(img, modelo, desvio, px_por_mm) if escala < 1.0 else None
         return ResultadoSegmentacao(saco, score, self.nome, (perf_counter() - inicio) * 1000, diferenca,
-                                    medidas, intermedios)
+                                    medidas, intermedios, amostrar)
+
+    def _amostrador(self, img: np.ndarray, modelo: np.ndarray, desvio: np.ndarray,
+                    px_por_mm: float) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
+        """O ΔE ao fundo em pontos (xs, ys) da imagem original, sem a reduzir: a cor dos pontos (bilinear,
+        CIELAB) menos o fundo nesses pontos e o mesmo desvio de luz do mapa. O fundo é a foto do fundo
+        vazio em CIELAB à resolução total (feita uma vez) ou, sem ela, o modelo suave da borda
+        (interpolado do mapa reduzido: varia devagar). Serve câmaras a cores e mono (a* = b* = 0)."""
+        p = self.cfg.localizacao
+        if self._referencia is not None:
+            if self._referencia_lab_total is None:
+                sigma = max(p.suavizacao_mm * px_por_mm, D.M2_SUAVIZACAO_MIN_PX)
+                self._referencia_lab_total = fundo.lab(self._referencia, sigma)
+            fundo_total = self._referencia_lab_total
+
+            def fundo_em(xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+                return cv2.remap(fundo_total, xs.astype(np.float32), ys.astype(np.float32), cv2.INTER_LINEAR,
+                                 borderMode=cv2.BORDER_REPLICATE)
+        else:
+            fy, fx = img.shape[0] / modelo.shape[0], img.shape[1] / modelo.shape[1]
+            reduzido = modelo.astype(np.float32, copy=False)
+
+            def fundo_em(xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+                return cv2.remap(reduzido, ((xs + 0.5) / fx - 0.5).astype(np.float32),
+                                 ((ys + 0.5) / fy - 0.5).astype(np.float32), cv2.INTER_LINEAR,
+                                 borderMode=cv2.BORDER_REPLICATE)
+
+        # O mesmo desfoque que o mapa leva (fundo.lab), ao longo de cada perfil: sem ele, o ruído do sensor
+        # tira o máximo do gradiente do sítio nos sacos de pouco contraste.
+        sigma_px = max(p.suavizacao_mm * px_por_mm, D.M2_SUAVIZACAO_MIN_PX)
+
+        def amostrar(xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+            cor = fundo.lab_nos_pontos(img, xs, ys)
+            passo = float(np.hypot(xs[0, 1] - xs[0, 0], ys[0, 1] - ys[0, 0])) if xs.shape[1] > 1 else 1.0
+            cor = cv2.GaussianBlur(cor, (0, 0), sigmaX=sigma_px / max(passo, 1e-6), sigmaY=1e-3,
+                                   borderType=cv2.BORDER_REPLICATE)
+            d = cor - fundo_em(xs, ys)
+            d -= desvio
+            return fundo.distancia(d, p.peso_luminosidade)
+        return amostrar
 
     @staticmethod
     def _meia_altura(suave: np.ndarray, mascara: np.ndarray, px_mm: float) -> float:

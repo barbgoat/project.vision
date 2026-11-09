@@ -8,6 +8,7 @@ levado para a resolução original.
 from __future__ import annotations
 
 import functools
+from collections.abc import Callable
 
 import cv2
 import numpy as np
@@ -104,8 +105,9 @@ def toca_na_borda(regiao: np.ndarray) -> bool:
     return bool(regiao[0].any() or regiao[-1].any() or regiao[:, 0].any() or regiao[:, -1].any())
 
 
-def afinar_contorno(contorno: np.ndarray, mapa: np.ndarray,
-                    forma_original: tuple[int, int]) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def afinar_contorno(contorno: np.ndarray, mapa: np.ndarray, forma_original: tuple[int, int],
+                    amostrar: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None,
+                    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Cada ponto do contorno levado para a aresta verdadeira, com precisão subpíxel.
 
     Devolve (arestas, normais, validos, encontrada): N×2 float em px originais, a normal (para
@@ -136,17 +138,34 @@ def afinar_contorno(contorno: np.ndarray, mapa: np.ndarray,
     mapa: o mapa do segmentador (ResultadoSegmentacao.mapa_aresta). 2D: a diferença ao
     fundo (ΔE), que cai para fora do saco. H×W×3: a imagem em CIELAB; conta o módulo do
     gradiente da cor (o saco pode ser mais claro ou mais escuro do que o fundo).
+
+    amostrar: o mesmo sinal lido da imagem à resolução total (ResultadoSegmentacao.amostrar). Se o
+    mapa estiver reduzido (f px originais por px do mapa, f > 1), a aresta procura-se aí, em passos
+    de meio píxel da imagem, e não no mapa interpolado (que a desloca de ~0,1 mm a 4 px/mm). A
+    janela passa a ±máx(M2_AFINAR_PROCURA, M2_AFINAR_ERRO_MAPA_PX · f + M2_AFINAR_MARGEM_PX) px da
+    imagem: tem de chegar ao erro da máscara, que é em px do mapa. Sem redução é como sem amostrar.
     """
     altura, largura = forma_original
     fx, fy = largura / mapa.shape[1], altura / mapa.shape[0]
-    mapa = mapa.astype(np.float32)
+    f = max(fx, fy)
+    if amostrar is not None and f > 1 + 1e-6:
+        procura_px = max(D.M2_AFINAR_PROCURA, D.M2_AFINAR_ERRO_MAPA_PX * f + D.M2_AFINAR_MARGEM_PX)
+        perfil_de, passo, n, por_px = amostrar, 0.5, int(np.ceil(2 * procura_px)), 1.0  # ΔE por px da imagem
+    else:
+        mapa = mapa.astype(np.float32)
+
+        def perfil_de(xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+            return cv2.remap(mapa, ((xs + 0.5) / fx - 0.5).astype(np.float32), ((ys + 0.5) / fy - 0.5).astype(np.float32),
+                             cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+        perfil_de, passo, n, por_px = perfil_de, f / 2, D.M2_AFINAR_PROCURA * 2, f  # ΔE por px do mapa
     pontos = contorno.reshape(-1, 2).astype(np.float64)
     for passagem in range(D.M2_AFINAR_PASSAGENS):
-        pontos = _suavizar(pontos, D.M2_AFINAR_SUAVIZACAO * max(fx, fy))
+        pontos = _suavizar(pontos, D.M2_AFINAR_SUAVIZACAO * f)
         normal = _normais(pontos)
         # Sem aresta, o ponto fica na aresta da máscara: na 1.ª passagem, meio píxel para fora dos
         # píxeis de borda; nas seguintes, onde a anterior o deixou.
-        deslocamento, validos, forte = _procurar_aresta(pontos, normal, mapa, fx, fy, 0.5 if passagem == 0 else 0.0)
+        deslocamento, validos, forte = _procurar_aresta(pontos, normal, perfil_de, passo, n, por_px,
+                                                        0.5 if passagem == 0 else 0.0)
         pontos = pontos + deslocamento[:, None] * normal
     return pontos, normal, validos, validos & forte
 
@@ -161,17 +180,18 @@ def _normais(pontos: np.ndarray) -> np.ndarray:
     return -normal if area_com_sinal < 0 else normal
 
 
-def _procurar_aresta(pontos: np.ndarray, normal: np.ndarray, mapa: np.ndarray, fx: float, fy: float,
-                     sem_aresta: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _procurar_aresta(pontos: np.ndarray, normal: np.ndarray,
+                     perfil_de: Callable[[np.ndarray, np.ndarray], np.ndarray], passo: float, n: int,
+                     por_px: float, sem_aresta: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """(deslocamento, dentro, forte): quanto andar ao longo da normal (px originais) até ao máximo do
-    gradiente do mapa, se esse máximo ficou dentro da janela (não numa ponta) e se a transição aí é
-    forte (≥ M2_AFINAR_GRADIENTE_MIN). Fora dela ou com a transição fraca, o deslocamento é sem_aresta."""
-    passo = max(fx, fy) / 2  # meio píxel da imagem reduzida, em px originais
-    passos = np.arange(-D.M2_AFINAR_PROCURA * 2, D.M2_AFINAR_PROCURA * 2 + 1) * passo
-    xs = ((pontos[:, 0:1] + passos * normal[:, 0:1] + 0.5) / fx - 0.5).astype(np.float32)
-    ys = ((pontos[:, 1:2] + passos * normal[:, 1:2] + 0.5) / fy - 0.5).astype(np.float32)
-    perfil = cv2.remap(mapa, xs, ys, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-    derivada = np.gradient(perfil, axis=1) / passo * max(fx, fy)  # ΔE (ou L*a*b*) por px do mapa
+    gradiente do sinal, se esse máximo ficou dentro da janela (não numa ponta) e se a transição aí é
+    forte (≥ M2_AFINAR_GRADIENTE_MIN). Fora dela ou com a transição fraca, o deslocamento é sem_aresta.
+
+    perfil_de lê o sinal em (xs, ys) de px originais; a janela tem 2n + 1 amostras de passo px
+    originais; por_px dá a derivada por px do mapa (= f) ou da imagem (= 1)."""
+    passos = np.arange(-n, n + 1) * passo
+    perfil = perfil_de(pontos[:, 0:1] + passos * normal[:, 0:1], pontos[:, 1:2] + passos * normal[:, 1:2])
+    derivada = np.gradient(perfil, axis=1) / passo * por_px  # ΔE (ou L*a*b*) por px do mapa ou da imagem
     # ΔE: quanto a diferença cai para fora; cor: o módulo do gradiente nos 3 canais
     queda = -derivada if derivada.ndim == 2 else np.linalg.norm(derivada, axis=2)
     j = np.argmax(queda, axis=1)

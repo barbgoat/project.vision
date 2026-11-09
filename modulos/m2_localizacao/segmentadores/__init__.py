@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -54,6 +55,10 @@ class ResultadoSegmentacao:
     mapa_aresta: np.ndarray
     medidas: dict[str, float] = field(default_factory=dict)  # valores de diagnóstico (limiar usado...)
     intermedios: dict[str, np.ndarray] = field(default_factory=dict)  # imagens das etapas, se pedidas
+    # Opcional: o mesmo sinal do mapa_aresta, mas lido da imagem à resolução total. Recebe (xs, ys) em
+    # px originais (N×K) e devolve N×K. Com o mapa reduzido, o contorno subpíxel procura a aresta aqui
+    # (a precisão deixa de depender da redução); sem ele, ou sem redução, procura no mapa.
+    amostrar: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None
 
 
 class Segmentador(ABC):
@@ -129,7 +134,8 @@ class SegmentadorDuplo(Segmentador):
                    "iou_duplo": coincidencia, f"score_{a.backend}": a.score}
         return ResultadoSegmentacao(b.mascara, min(b.score, coincidencia), f"{b.backend}+{a.backend}",
                                     a.tempo_ms + b.tempo_ms, b.mapa_aresta, medidas,
-                                    {**a.intermedios, **{f"{k}_{b.backend}": v for k, v in b.intermedios.items()}})
+                                    {**a.intermedios, **{f"{k}_{b.backend}": v for k, v in b.intermedios.items()}},
+                                    b.amostrar)
 
     def _guardar_para_revisao(self, img: np.ndarray) -> Path:
         from nucleo.imagens import guardar_imagem

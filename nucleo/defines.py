@@ -171,7 +171,7 @@ LOCALIZACAO_SAM3_PROMPT: Final = "plastic bag"  # o que o SAM 3 procura (texto, 
 LOCALIZACAO_SAM3_SCORE_MIN: Final = 0.5  # confiança mínima (0–1); abaixo: ERRO "segmentação incerta"
 LOCALIZACAO_SAM3_FECHO_MM: Final = 0.0  # fecho morfológico com o SAM 3 (0 = nenhum: não tapa entalhes)
 LOCALIZACAO_DUPLO_IOU_MIN: Final = 0.95  # "duplo": coincidência mínima (IoU) das duas máscaras
-LOCALIZACAO_RESOLUCAO_PX_POR_MM: Final = 4.0  # resolução da segmentação (a imagem é reduzida para isto)
+LOCALIZACAO_RESOLUCAO_PX_POR_MM: Final = 4.0  # resolução da segmentação (a imagem é reduzida para isto; ≥ geral.px_por_mm = sem redução). O contorno subpíxel, a pose e o controlo da medição são sempre à resolução total
 # Desfoque antes de comparar com o fundo (tira o ruído do sensor). Bordas do saco finas e escuras ao lado
 # de soldaduras brilhantes perdem-se com ele: então baixá-lo (p.ex. 0,04) e segmentar sem reduzir.
 LOCALIZACAO_SUAVIZACAO_MM: Final = 0.25
@@ -237,6 +237,11 @@ M2_REVISAO: Final = "dataset/revisao"  # "duplo": onde ficam as fotos em que os 
 # chega lá pelas passagens.
 M2_AFINAR_PROCURA: Final = 3
 M2_AFINAR_PASSAGENS: Final = 2  # procurar, suavizar, normais de novo e procurar outra vez (cada uma ± PROCURA)
+# Com o mapa reduzido (localizacao.resolucao_px_por_mm < geral.px_por_mm, f px da imagem por px do mapa),
+# a aresta procura-se na imagem à resolução total (só o delta_e), numa janela de ± máx(PROCURA,
+# ERRO_MAPA_PX · f + MARGEM_PX) px da imagem: o erro da máscara é em px do mapa e cresce com f.
+M2_AFINAR_ERRO_MAPA_PX: Final = 1.5  # erro esperado da máscara, em px do mapa
+M2_AFINAR_MARGEM_PX: Final = 1.5  # margem, em px da imagem (com f = 1 a janela fica nos ±3 de hoje)
 # Antes das normais, as coordenadas do contorno são suavizadas ao longo dele com este σ (px do mapa):
 # tira os degraus dos píxeis do mapa, que fariam as normais apontar para os lados deles.
 M2_AFINAR_SUAVIZACAO: Final = 1.0

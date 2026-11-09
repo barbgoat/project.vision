@@ -13,6 +13,7 @@ import pytest
 
 import mestre as m
 from modulos.m2_localizacao import Diagnostico, Localizador, qualidade
+from modulos.m2_localizacao import fundo as modelo_fundo
 from modulos.m2_localizacao.qualidade import MedicaoNaoFiavel
 from nucleo.contrato import Estado, SemSaco
 from nucleo.imagens import guardar_imagem, recortar
@@ -505,6 +506,32 @@ def test_luz_face_a_foto_do_fundo_vazio(rng, tmp_path):
     assert diagnostico.medidas["luz_pct"] == pytest.approx(-20, abs=2)
     with pytest.raises(MedicaoNaoFiavel, match=r"luz 4\d % abaixo da da foto do fundo vazio"):
         localizador.localizar((img * 0.6).astype(np.uint8))
+
+
+def test_com_o_mapa_reduzido_a_aresta_le_se_na_imagem_total(rng, tmp_path):
+    """O mapa de segmentação reduzido (localizacao.resolucao_px_por_mm) não muda a medida: o contorno subpíxel
+    lê a aresta na imagem à resolução total, com a janela alargada ao erro da máscara em px do mapa."""
+    img, _ = cena_saco(rng, angulo=0.0)
+    guardar_imagem(tmp_path / "fundo.png", fundo(1000, 1250, rng).clip(0, 255).astype(np.uint8))
+    medidas = {}
+    for resolucao in (PPM, 2.5):  # sem redução e com o mapa a metade (f = 2)
+        cfg = _com_referencia(tmp_path / "fundo.png")
+        cfg = dataclasses.replace(cfg, localizacao=dataclasses.replace(cfg.localizacao, resolucao_px_por_mm=resolucao))
+        diagnostico = Diagnostico()
+        saco = Localizador(cfg).localizar(img, diagnostico=diagnostico)
+        medidas[resolucao] = (saco.comprimento_mm, saco.largura_mm)
+        assert diagnostico.medidas["aresta_min_pct"] > 95, (resolucao, diagnostico.medidas["aresta_min_pct"])
+    assert abs(medidas[2.5][0] - medidas[PPM][0]) < 0.03 and abs(medidas[2.5][1] - medidas[PPM][1]) < 0.03, medidas
+
+
+def test_amostras_da_imagem_iguais_em_mono_e_a_cores(rng):
+    """A leitura à resolução total serve câmaras mono (uma camada) e a cores (BGR): a mesma cena dá o mesmo."""
+    cinzenta = cena_saco(rng)[0][..., 1].copy()
+    xs = np.array([[-3.0, 0.4, 200.25, 640.7], [1249.9, 1300.0, 10.5, 333.3]])
+    ys = np.array([[2.5, 999.6, 480.75, 500.1], [-1.0, 50.0, 1005.0, 777.7]])
+    a_cores = modelo_fundo.lab_nos_pontos(cv2.merge([cinzenta] * 3), xs, ys)
+    assert a_cores.shape == (2, 4, 3)
+    assert np.array_equal(modelo_fundo.lab_nos_pontos(cinzenta, xs, ys), a_cores)
 
 
 @pytest.mark.parametrize("campo, valor", [("qualidade_aresta_min_pct", 101.0), ("qualidade_reflexos_max_pct", -1.0),
