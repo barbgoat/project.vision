@@ -7,6 +7,8 @@ levado para a resolução original.
 
 from __future__ import annotations
 
+import functools
+
 import cv2
 import numpy as np
 
@@ -58,17 +60,23 @@ def _involucro(mascara: np.ndarray) -> np.ndarray:
     involucro = np.zeros_like(mascara)
     if n < 2:
         return involucro
-    grandes = 1 + np.nonzero(areas >= D.M2_INVOLUCRO_FRACAO_MIN * areas.max())[0]
-    contornos, _ = cv2.findContours(np.isin(rotulos, grandes).astype(np.uint8), cv2.RETR_EXTERNAL,
-                                    cv2.CHAIN_APPROX_SIMPLE)
+    grandes = np.zeros(n, np.uint8)  # tabela rótulo → 1 se a região é grande (2× mais rápido que np.isin)
+    grandes[1:][areas >= D.M2_INVOLUCRO_FRACAO_MIN * areas.max()] = 1
+    contornos, _ = cv2.findContours(grandes[rotulos], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cv2.fillPoly(involucro, [cv2.convexHull(np.vstack(contornos))], 255)
     return involucro
 
 
 def _disco(diametro_px: float) -> np.ndarray:
-    """Elemento estruturante circular com o diâmetro dado (ímpar, no mínimo 3 px)."""
-    k = max(3, 2 * round(diametro_px / 2) + 1)
-    return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    """Elemento estruturante circular com o diâmetro dado (ímpar, no mínimo 3 px); feito uma vez por tamanho."""
+    return _disco_impar(max(3, 2 * round(diametro_px / 2) + 1))
+
+
+@functools.lru_cache(maxsize=16)
+def _disco_impar(k: int) -> np.ndarray:
+    disco = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    disco.flags.writeable = False
+    return disco
 
 
 def maior_regiao(mascara: np.ndarray) -> np.ndarray | None:

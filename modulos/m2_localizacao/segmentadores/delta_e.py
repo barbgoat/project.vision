@@ -61,7 +61,9 @@ class SegmentadorDeltaE(Segmentador):
         px_mm = px_por_mm * pequena.shape[1] / img.shape[1]  # px/mm na imagem reduzida
         self._sigma_px = p.suavizacao_mm * px_mm
         lab = fundo.lab(pequena, self._sigma_px)
-        faixa = fundo.faixa_da_borda(lab.shape[:2], max(2, round(p.faixa_fundo_mm * px_mm)))
+        largura_faixa = max(2, round(p.faixa_fundo_mm * px_mm))
+        faixa = fundo.faixa_da_borda(lab.shape[:2], largura_faixa)  # feitas uma vez por tamanho (cache)
+        indices = fundo.indices_da_faixa(lab.shape[:2], largura_faixa)
         modelo = self._fundo(lab, faixa, img.shape[:2])
         if self._referencia is None:
             diferenca = fundo.diferenca(lab, modelo, p.peso_luminosidade)
@@ -71,11 +73,14 @@ class SegmentadorDeltaE(Segmentador):
         else:
             # A luz muda um pouco entre a foto do fundo e esta (exposição, luz do dia): tira-se o desvio
             # mediano da faixa da borda, onde só há fundo. Depois, o limiar sai do ruído do fundo.
-            modelo = modelo + np.median((lab - modelo)[faixa], axis=0)
-            diferenca = fundo.diferenca(lab, modelo, p.peso_luminosidade)
+            # (lab − modelo − desvio, numa só imagem temporária: o mesmo que somar o desvio ao modelo)
+            d = lab - modelo
+            d -= fundo.desvio_mediano(d, indices)
+            diferenca = fundo.distancia(d, p.peso_luminosidade)
             suave = cv2.GaussianBlur(diferenca, (0, 0), D.M2_REFERENCIA_SUAVIZACAO_PX)
-            mediana = float(np.median(suave[faixa]))
-            ruido = 1.4826 * float(np.median(np.abs(suave[faixa] - mediana)))
+            na_faixa = suave.reshape(-1)[indices]
+            mediana = float(np.median(na_faixa))
+            ruido = 1.4826 * float(np.median(np.abs(na_faixa - mediana)))
             limiar = p.limiar_delta_e or max(mediana + D.M2_REFERENCIA_DESVIOS * ruido, D.M2_REFERENCIA_LIMIAR_MIN)
             mascara = (suave > limiar).astype(np.uint8) * 255
             limiar_ruido = limiar
@@ -99,7 +104,7 @@ class SegmentadorDeltaE(Segmentador):
             # O desvio tirado acima chega para mudanças pequenas; uma grande é a luz ou a exposição que mudaram.
             cinzento = cv2.cvtColor(pequena, cv2.COLOR_BGR2GRAY)
             luz_foto = self._referencia_luz[lab.shape[:2]]
-            medidas["luz_pct"] = 100 * (float(np.median(cinzento[faixa])) / max(luz_foto, 1.0) - 1)
+            medidas["luz_pct"] = 100 * (float(np.median(cinzento.reshape(-1)[indices])) / max(luz_foto, 1.0) - 1)
         intermedios = {"diferenca": diferenca, "segmentacao": regiao if regiao is not None else mascara} \
             if guardar_intermedios else {}
         if regiao is None:
