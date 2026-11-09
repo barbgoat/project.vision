@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import sqlite3
 from contextlib import closing
@@ -16,7 +17,7 @@ from modulos.m7_saida import Saida
 from nucleo import dashboard
 from nucleo.contrato import Captura, Defeito, Estado, Relatorio, Resultado, TipoDefeito
 from nucleo.especificacoes import (
-    ErroRepositorio, Especificacao, Inspecao, OrdemFabrico, Repositorio, ajustes_entre, compor, efetiva,
+    MEDIDAS, ErroRepositorio, Especificacao, Inspecao, OrdemFabrico, Repositorio, ajustes_entre, compor, efetiva,
     repor_medidas, resolver, resumir,
 )
 import main as programa
@@ -70,6 +71,25 @@ def test_a_composicao_e_validada_pela_config():
         compor(CFG, _produto(), OrdemFabrico("7", "PreVital", {"largura_nominal_mm": "cinquenta"}))
 
 
+def test_resolucao_da_localizacao_por_produto():
+    """O produto pode ter a sua resolução da localização; sem ela fica a do perfil, e só ela muda."""
+    sem, com = _produto(), _produto(resolucao_localizacao_px_por_mm=5.0)
+    assert compor(CFG, sem).localizacao == CFG.localizacao, "sem o campo: a do perfil, como hoje"
+    assert compor(CFG, com).localizacao.resolucao_px_por_mm == 5.0
+    assert compor(CFG, com).dimensoes == compor(CFG, sem).dimensoes, "não mexe nas medidas"
+    of = OrdemFabrico("OF1", "PreVital", {"tolerancia_comprimento_mm": 4.0})
+    assert compor(CFG, com, of).localizacao.resolucao_px_por_mm == 5.0, "a OF não a muda"
+    with pytest.raises(ValueError, match="A OF 7 só pode mudar .*não: resolucao_localizacao_px_por_mm"):
+        compor(CFG, sem, OrdemFabrico("7", "PreVital", {"resolucao_localizacao_px_por_mm": 5.0}))
+    for valor in (0.0, -2.0):
+        with pytest.raises(ValueError, match="'PreVital'.*resolucao_localizacao_px_por_mm tem de ser > 0"):
+            compor(CFG, _produto(resolucao_localizacao_px_por_mm=valor))
+    # Ao sair do produto, a resolução volta à do perfil só se era a dele; a mudada no editor fica.
+    editada = dataclasses.replace(CFG, localizacao=dataclasses.replace(CFG.localizacao, resolucao_px_por_mm=7.0))
+    assert repor_medidas(compor(editada, com), CFG, com).localizacao == CFG.localizacao
+    assert repor_medidas(compor(editada, sem), CFG, sem).localizacao.resolucao_px_por_mm == 7.0
+
+
 # --- Base de dados ---------------------------------------------------------------------
 
 def test_guardar_e_procurar_sem_distinguir_maiusculas(repo):
@@ -116,6 +136,25 @@ def test_cada_gravacao_e_uma_versao_nova(repo):
     assert [p.produto for p in repo.produtos()] == ["PreVital"]
     with closing(sqlite3.connect(repo.caminho)) as bd:
         assert bd.execute("SELECT COUNT(*) FROM produtos").fetchone()[0] == 2, "a versão antiga fica"
+
+
+def test_mudar_so_a_resolucao_nao_mexe_nas_medidas_nem_nas_ofs(repo):
+    """Uma versão nova do produto só com a resolução: as medidas, as versões anteriores e as OFs ficam."""
+    v1 = repo.guardar(_produto())
+    of = repo.guardar(OrdemFabrico("OF1", "PreVital", {"tolerancia_comprimento_mm": 4.0}, "admin"))
+    repo.guardar(dataclasses.replace(v1, resolucao_localizacao_px_por_mm=5.0))
+    atual = repo.procurar_produto("prevital")
+    assert atual.resolucao_localizacao_px_por_mm == 5.0
+    assert {c: getattr(atual, c) for c in MEDIDAS} == {c: getattr(v1, c) for c in MEDIDAS}
+    assert repo.procurar_of("OF1") == of, "a OF não ganha versão nova nem ajustes"
+    assert compor(CFG, atual, of).dimensoes == compor(CFG, v1, of).dimensoes
+    with closing(sqlite3.connect(repo.caminho)) as bd:
+        versoes = [json.loads(d) for (d,) in bd.execute("SELECT dados FROM produtos ORDER BY id")]
+        bd.execute("INSERT INTO produtos (produto, dados) VALUES ('Antigo', ?)",  # gravado antes do campo existir
+                   (json.dumps({"produto": "Antigo", "comprimento_nominal_mm": 150.0}),))
+        bd.commit()
+    assert [v.get("resolucao_localizacao_px_por_mm") for v in versoes] == [None, 5.0], "a versão anterior fica"
+    assert repo.procurar_produto("Antigo").resolucao_localizacao_px_por_mm is None
 
 
 def test_listas_e_procura(repo):

@@ -102,7 +102,8 @@ class SegmentadorDeltaE(Segmentador):
             if com_arestas is not None:
                 regiao, usou_arestas = com_arestas, True
         medidas = {"limiar_delta_e": limiar, "diferenca_max": float(diferenca.max()),
-                   "usou_arestas": float(usou_arestas), "escala": escala}
+                   "usou_arestas": float(usou_arestas), "escala": escala,
+                   "resolucao_px_por_mm": px_mm}  # a efetiva do mapa (sem redução: a da câmara)
         if self._referencia is not None:
             # Luz do fundo face à da foto do fundo vazio (cinzento mediano da faixa da borda, só fundo), em %.
             # O desvio tirado acima chega para mudanças pequenas; uma grande é a luz ou a exposição que mudaram.

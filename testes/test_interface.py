@@ -563,6 +563,39 @@ def test_permissoes_das_ofs(app, janela, monkeypatch):
     assert pedidos == [1, 1] and janela.ciclo is None, "o admin sem OF também é perguntado"
 
 
+def test_resolucao_da_localizacao_no_produto_e_ao_trocar_de_of(app, janela):
+    """O produto pode ter a sua resolução da localização (0 = a do perfil): entra com a OF desse produto e sai
+    com ela; a janela da OF não a mostra (é do produto)."""
+    repo = janela._repositorio()
+    medidas = {c: getattr(janela._cfg_perfil.dimensoes, c) for c in MEDIDAS}
+    do_perfil = janela._cfg_perfil.localizacao.resolucao_px_por_mm
+    for produto, of in (("Mate", "OF-M"), ("Brilho", "OF-B")):
+        repo.guardar(Especificacao(produto, **medidas, autor="admin"))
+        repo.guardar(OrdemFabrico(of, produto, autor="admin"))
+    form = DialogoEspecificacao(janela, janela, "produto", "admin", produto=repo.procurar_produto("Mate"))
+    assert form.isAncestorOf(form.resolucao) and form.resolucao.value() == 0
+    assert form.resolucao.specialValueText() == f"do perfil ({do_perfil:g})"
+    assert "20 = sem redução (brilhantes); 5 = mais rápido (mate)" in form.resolucao.toolTip()
+    assert "equivalem a sem redução" in form.resolucao.toolTip()
+    form.resolucao.setValue(5.0)
+    form._guardar()
+    assert form.result() == QDialog.DialogCode.Accepted, form.erro.text()
+    mate = repo.procurar_produto("Mate")
+    assert mate.resolucao_localizacao_px_por_mm == 5.0 and {c: getattr(mate, c) for c in MEDIDAS} == medidas
+
+    assert janela._usar_ordem(resolver(repo, "OF-M", ""))
+    assert janela._cfg_edicao.localizacao.resolucao_px_por_mm == 5.0, "a do produto da OF"
+    assert janela._usar_ordem(resolver(repo, "OF-B", ""))
+    assert janela._cfg_edicao.localizacao.resolucao_px_por_mm == do_perfil, "outro produto, sem o campo: a do perfil"
+    assert janela._usar_ordem(resolver(repo, "OF-M", "")) and janela._usar_ordem(None)
+    assert janela._cfg_edicao.localizacao.resolucao_px_por_mm == do_perfil, "sem OF: a do perfil"
+
+    form = DialogoEspecificacao(janela, janela, "of", "admin", produto=mate, of=repo.procurar_of("OF-M"))
+    assert not form.isAncestorOf(form.resolucao), "a OF não muda a resolução"
+    form._guardar()
+    assert repo.procurar_of("OF-M").ajustes == {}
+
+
 def test_criar_produto_e_of_no_formulario_e_no_dialogo(app, janela):
     repo = janela._repositorio()
     form = DialogoEspecificacao(janela, janela, "novo", "admin", of=OrdemFabrico("OF9", "Novo"), nome="Novo")

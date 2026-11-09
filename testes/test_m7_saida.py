@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import time
 
@@ -11,6 +12,7 @@ import pytest
 import mestre as m
 from modulos.m7_saida import Depuracao, Saida, desenhar, nome_curto
 from modulos.m7_saida import depuracao as modulo_depuracao
+from modulos.m7_saida.desenho import resolucao_localizacao
 from nucleo import defines as D
 from nucleo.contrato import Captura, Defeito, Escravo, Estado, Relatorio, TipoDefeito
 from nucleo.imagens import ler_imagem
@@ -80,6 +82,16 @@ def test_desenhar_devolve_uma_copia_anotada(resultado):
     anotada = desenhar(resultado, PPM)
     assert anotada.shape == antes.shape and not np.array_equal(anotada, antes)
     assert np.array_equal(resultado.imagem, antes), "a imagem original fica intacta"
+
+
+def test_faixa_diz_a_resolucao_da_localizacao(resultado, tmp_path):
+    """Junto aos ms: a resolução do mapa em que o M2 segmentou (a efetiva; sem redução é a da câmara)."""
+    assert resolucao_localizacao(resultado) == "loc. 4 px/mm", "o mapa a 4 px/mm (a imagem tem 5)"
+    for valor, texto in ((5.0, "loc. 5 px/mm"), (7.081, "loc. 7.1 px/mm"), (20.0, "loc. 20 px/mm")):
+        loc = Relatorio("localizacao", Estado.OK, medidas={"resolucao_px_por_mm": valor})
+        assert resolucao_localizacao(dataclasses.replace(resultado, relatorios=[loc])) == texto
+    assert resolucao_localizacao(dataclasses.replace(resultado, relatorios=[])) == ""
+    assert "| loc. 4 px/mm |" in Depuracao(CFG, tmp_path, "todas").linhas_resumo(resultado, 1)[0]
 
 
 def test_depuracao_pasta_do_saco(resultado, tmp_path):

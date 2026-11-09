@@ -163,7 +163,8 @@ class DialogoOrdem(QDialog):
 # --- O formulário do produto (ou da OF) ----------------------------------------------------
 
 class DialogoEspecificacao(QDialog):
-    """O formulário de um produto, ou de uma OF: comprimento e largura com as tolerâncias, cor e verniz.
+    """O formulário de um produto, ou de uma OF: comprimento e largura com as tolerâncias, cor e verniz
+    e, só no produto, a resolução da localização (0 = a do perfil; a OF não a muda).
 
     modo:
         "novo"     um produto novo (e a OF, se tiver número); para duplicar, parte de `produto`
@@ -202,13 +203,29 @@ class DialogoEspecificacao(QDialog):
         self.verniz.setChecked(inicial.verniz)
         for w in (self.ed_cor, self.verniz):
             w.setToolTip("Fica guardado, mas por agora não é verificado.")
+        self._inicial = inicial
+        perfil = janela._cfg_perfil
+        self.resolucao = QDoubleSpinBox()
+        self.resolucao.setRange(0, 100)
+        self.resolucao.setDecimals(1)
+        self.resolucao.setSingleStep(0.5)
+        self.resolucao.setSpecialValueText(f"do perfil ({perfil.localizacao.resolucao_px_por_mm:g})")
+        self.resolucao.setValue(inicial.resolucao_localizacao_px_por_mm or 0.0)
+        self.resolucao.setToolTip(
+            "20 = sem redução (brilhantes); 5 = mais rápido (mate). Valores ≥ resolução da câmara "
+            f"({perfil.geral.px_por_mm:.1f} px/mm) equivalem a sem redução. 0 = a do perfil da montagem.")
 
         grelha = QGridLayout()
         linhas = [("Produto", self.ed_produto)] + ([("Ordem de fabrico", self.ed_of)] if modo != "produto" else [])
         linhas += [("Comprimento (mm)", "comprimento"), ("Largura (mm)", "largura"),
                    ("Cor predominante", self.ed_cor), ("Verniz", self.verniz)]
+        if modo != "of":  # é do produto: a OF não a muda
+            linhas.append(("Resolução da localização (px/mm)", self.resolucao))
         for linha, (texto, campo) in enumerate(linhas):
-            grelha.addWidget(QLabel(texto), linha, 0)
+            rotulo = QLabel(texto)
+            if campo is self.resolucao:
+                rotulo.setToolTip(self.resolucao.toolTip())
+            grelha.addWidget(rotulo, linha, 0)
             if isinstance(campo, str):  # nominal ± tolerância
                 grelha.addWidget(self.medidas[f"{campo}_nominal_mm"], linha, 1)
                 grelha.addWidget(QLabel("±"), linha, 2)
@@ -236,8 +253,10 @@ class DialogoEspecificacao(QDialog):
 
     def _lido(self) -> Especificacao:
         """O que está escrito no formulário."""
+        resolucao = (self.resolucao.value() or None) if self.modo != "of" else self._inicial.resolucao_localizacao_px_por_mm
         return Especificacao(self.ed_produto.text(), **{c: campo.value() for c, campo in self.medidas.items()},
-                             cor=self.ed_cor.text(), verniz=self.verniz.isChecked(), autor=self.autor)
+                             cor=self.ed_cor.text(), verniz=self.verniz.isChecked(),
+                             resolucao_localizacao_px_por_mm=resolucao, autor=self.autor)
 
     def _guardar(self) -> None:
         montagem, lido = self.janela._cfg_edicao, self._lido()
@@ -407,10 +426,12 @@ class Ordens:
 
     def _usar_ordem(self, escolha: Escolha | None) -> bool:
         """Passa a usar esta OF/produto: montagem → produto → OF. A correr, entra no próximo saco."""
-        montagem = self._cfg_edicao
+        # A montagem sem o produto que estava em uso (medidas e, se a tinha, a resolução da localização)
+        anterior = self._ordem.produto if self._ordem is not None else None
+        montagem = repor_medidas(self._cfg_edicao, self._cfg_perfil, anterior)
         try:
             if escolha is None or escolha.produto is None:  # sem OF: o produto volta a ser o do perfil
-                cfg = repor_medidas(montagem, self._cfg_perfil)
+                cfg = montagem
             else:
                 cfg = compor(montagem, escolha.produto, escolha.of)
         except ValueError as erro:

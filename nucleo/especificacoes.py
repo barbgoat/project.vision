@@ -1,15 +1,18 @@
 """Especificações: o que cada produto tem de ser, as ordens de fabrico (OF) e as inspeções de cada uma.
 
     Produto (Especificacao)  comprimento e largura nominais e as tolerâncias, a cor
-                             predominante (escrita) e se tem verniz
+                             predominante (escrita), se tem verniz e, opcional, a
+                             resolução da localização (px/mm do mapa do M2)
     Ordem de fabrico (OF)    um número, o produto e o que esta OF muda nele
 
 A configuração de cada saco faz-se por camadas e é sempre validada pela Config:
 
     nucleo/defines.py → perfil da montagem → produto → ajustes da OF
 
-O produto só mexe nas medidas e tolerâncias do M3 (MEDIDAS); o resto (cantos,
-esquadria, câmara, px/mm...) é do perfil da montagem. A cor e o verniz ficam
+O produto só mexe nas medidas e tolerâncias do M3 (MEDIDAS) e, se a tiver, na resolução
+da localização (localizacao.resolucao_px_por_mm: 20 = sem redução, para os brilhantes; 5 =
+mais rápido, para os mate); o resto (cantos, esquadria, câmara, px/mm...) é do perfil da
+montagem. A OF não muda a resolução: é do produto. A cor e o verniz ficam
 guardados, mas por agora nenhum módulo os verifica.
 
 Correspondência BD ↔ OpenCV (CORRESPONDENCIA): o comprimento e a largura que o M2
@@ -68,6 +71,9 @@ class Especificacao:
     tolerancia_largura_mm: float = 0.0
     cor: str = ""  # cor predominante, escrita (p.ex. "branco"); guardada, ainda não verificada
     verniz: bool = False  # guardado; ainda não há módulo que o verifique
+    # px/mm do mapa de segmentação do M2 para este produto (localizacao.resolucao_px_por_mm); None = a do
+    # perfil da montagem. Valores ≥ px/mm da câmara (geral.px_por_mm) equivalem a sem redução.
+    resolucao_localizacao_px_por_mm: float | None = None
     autor: str = ""  # quem gravou esta versão
     data_hora: str = ""  # quando, pelo relógio do PC (preenchido ao guardar)
 
@@ -191,14 +197,26 @@ def compor(montagem: Config, produto: Especificacao | None = None, of: OrdemFabr
     p = efetiva(produto, of)
     try:
         medidas = {c: float(getattr(p, c)) for c in MEDIDAS}
-        return replace(montagem, dimensoes=replace(montagem.dimensoes, **medidas))
+        cfg = replace(montagem, dimensoes=replace(montagem.dimensoes, **medidas))
+        resolucao = p.resolucao_localizacao_px_por_mm
+        if resolucao is not None:
+            if not float(resolucao) > 0:
+                raise ValueError(f"resolucao_localizacao_px_por_mm tem de ser > 0 (está {resolucao})")
+            cfg = replace(cfg, localizacao=replace(cfg.localizacao, resolucao_px_por_mm=float(resolucao)))
+        return cfg
     except (ValueError, TypeError) as erro:
         raise ValueError(f"O produto '{p.produto}'{f' (OF {of.numero})' if of else ''}: {erro}") from None
 
 
-def repor_medidas(cfg: Config, perfil: Config) -> Config:
-    """`cfg` com as medidas do produto como estão no perfil da montagem (sem produto nem OF)."""
-    return replace(cfg, dimensoes=replace(cfg.dimensoes, **{c: getattr(perfil.dimensoes, c) for c in MEDIDAS}))
+def repor_medidas(cfg: Config, perfil: Config, produto: Especificacao | None = None) -> Config:
+    """`cfg` sem o que vinha do produto: as medidas como estão no perfil da montagem e, se `produto`
+    (o que estava em uso) tinha a sua resolução da localização, também a do perfil. Sem ela, a
+    resolução de `cfg` fica (pode ter sido mudada no editor de parâmetros)."""
+    cfg = replace(cfg, dimensoes=replace(cfg.dimensoes, **{c: getattr(perfil.dimensoes, c) for c in MEDIDAS}))
+    if produto is not None and produto.resolucao_localizacao_px_por_mm is not None:
+        cfg = replace(cfg, localizacao=replace(cfg.localizacao,
+                                               resolucao_px_por_mm=perfil.localizacao.resolucao_px_por_mm))
+    return cfg
 
 
 def resolver(repo: Repositorio, numero: str, produto: str) -> Escolha:

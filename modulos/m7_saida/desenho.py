@@ -1,7 +1,7 @@
 """M7 Saída, desenho: a imagem anotada de um saco (ecrã, imagens guardadas, painel de depuração).
 
     ┌──────────────────────────────────────────────────────────┐
-    │ NOK 74 ms | localizacao OK | dimensoes NOK(2) | relevo ...│  ← faixa: estado de cada módulo
+    │ NOK 74 ms | loc. 5 px/mm | localizacao OK | dimensoes ...│  ← faixa: estado, resolução do M2, módulos
     │                                                          │
     │        ┌────────────────────────────◣ 1                  │  ← contorno do saco (cor do estado)
     │        │            saco             │                   │     e de cada defeito, numerado
@@ -41,6 +41,14 @@ CORES_TIPO = {
     TipoDefeito.MANCHA: (0, 255, 255),  # amarelo
 }
 _PRETO = (0, 0, 0)
+
+
+def resolucao_localizacao(resultado: Resultado) -> str:
+    """"loc. 5 px/mm": a resolução do mapa em que o M2 segmentou este saco (a efetiva: sem redução é a
+    da câmara); "" se o segmentador não a diz (p.ex. SAM 3) ou o M2 não chegou a correr."""
+    localizacao = resultado.relatorio("localizacao")
+    valor = localizacao.medidas.get("resolucao_px_por_mm") if localizacao is not None else None
+    return f"loc. {f'{valor:.1f}'.rstrip('0').rstrip('.')} px/mm" if valor else ""
 
 
 def desenhar(resultado: Resultado, px_por_mm: float) -> np.ndarray:
@@ -87,7 +95,9 @@ def desenhar(resultado: Resultado, px_por_mm: float) -> np.ndarray:
         _texto(imagem, aviso, (largura // 3, altura // 2), escala * 2, CORES_ESTADO.get(resultado.estado, (255, 255, 255)))
 
     # Faixa no topo: estado final e de cada módulo
-    partes = [f"{resultado.estado} {resultado.tempo_ms:.0f} ms"] + [f"{r.modulo} {r.resumo}" for r in resultado.relatorios]
+    resolucao = resolucao_localizacao(resultado)
+    partes = ([f"{resultado.estado} {resultado.tempo_ms:.0f} ms"] + ([resolucao] if resolucao else [])
+              + [f"{r.modulo} {r.resumo}" for r in resultado.relatorios])
     _faixa(imagem, [" | ".join(partes)], topo=True, escala=escala)
 
     # Legenda: um defeito por linha; e as mensagens dos módulos com problemas

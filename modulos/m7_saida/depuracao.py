@@ -31,7 +31,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from modulos.m7_saida.desenho import desenhar
+from modulos.m7_saida.desenho import desenhar, resolucao_localizacao
 from nucleo.config import Config, GuardarImagens
 from nucleo.contrato import Estado, Passagem, Resultado
 from nucleo.imagens import guardar_imagem, para_ver, texto_ascii
@@ -161,7 +161,9 @@ class Depuracao:
     def linhas_resumo(self, resultado: Resultado, numero: int) -> list[str]:
         """O resumo do saco em texto: estado, passagem, cada módulo, cada defeito."""
         origem = resultado.captura.origem if resultado.captura else ""
-        linhas = [f"saco {numero} | {resultado.estado} | {resultado.tempo_ms:.0f} ms | {Path(origem).name}"]
+        resolucao = resolucao_localizacao(resultado)
+        linhas = [f"saco {numero} | {resultado.estado} | {resultado.tempo_ms:.0f} ms"
+                  f"{f' | {resolucao}' if resolucao else ''} | {Path(origem).name}"]
         if resultado.mensagem:
             linhas.append(f"   {resultado.mensagem}")
         if resultado.aviso:

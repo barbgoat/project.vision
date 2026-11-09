@@ -188,8 +188,8 @@ class Parametros:
 
     def _guardar(self) -> None:
         cfg = self._cfg_edicao
-        if self._ordem is not None:  # as medidas são do produto: no perfil da montagem só entra a montagem
-            cfg = repor_medidas(cfg, self._cfg_perfil)
+        if self._ordem is not None:  # as medidas (e a resolução, se a tiver) são do produto: não vão para o perfil
+            cfg = repor_medidas(cfg, self._cfg_perfil, self._ordem.produto)
         mudancas = diferencas(self._cfg_perfil, cfg)
         if not mudancas:
             self._mensagem("Nada a guardar: os valores são os do perfil.")
