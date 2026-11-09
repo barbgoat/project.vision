@@ -8,7 +8,11 @@ Para cada saco (uma passagem do M1, com as suas melhores imagens):
        (M3 Dimensões, M4 Cor, M5 Relevo, M6 Manchas);
     3. protege cada chamada: um escravo que rebente fica com ERRO no seu
        relatório (com o ficheiro e a linha onde falhou) e os outros continuam;
-    4. junta os relatórios e decide o estado do saco.
+       um que não pode decidir com confiança (SemConfianca: segmentação incerta,
+       medição não fiável) também fica com ERRO, só com o motivo;
+    4. junta os relatórios e decide o estado do saco;
+    5. com uma referência dos sacos OK do produto (nucleo/referencia.py), compara as
+       medidas do saco com as dos bons: as atípicas ficam no Resultado (aviso).
 
 Tempo real: cada relatório traz o tempo do módulo (e o registo.csv também). Um escravo
 com <secção>.timeout_ms > 0 que demore mais fica com ERRO (a sua thread, daemon e só deste
@@ -22,9 +26,12 @@ Regra da decisão:
       "rejeitar")                              → ERRO (o saco é rejeitado)
     - nenhum escravo de inspeção concluiu      → ERRO (não se aprova um saco
       (todos desligados ou por implementar)       que ninguém inspecionou)
+    - geral.exigir_todos e algum módulo ativo  → ERRO (em produção, um OK é
+      por implementar ou com ERRO ignorado        verificado por todos)
     - caso contrário                           → OK
 Um módulo POR_IMPLEMENTAR não conta para a decisão: permite desenvolver o
-sistema um módulo de cada vez.
+sistema um módulo de cada vez. Mas o Resultado diz sempre o que ficou por ver
+(Resultado.nao_verificado e .aviso): um OK só das dimensões não passa por um OK completo.
 """
 
 from __future__ import annotations
@@ -50,7 +57,9 @@ from modulos.m4_cor import Cor
 from modulos.m5_relevo import Relevo
 from modulos.m6_manchas import Manchas
 from nucleo.config import RAIZ, Config
-from nucleo.contrato import Captura, Escravo, Estado, Passagem, Relatorio, Resultado, Saco, SemSaco
+from nucleo.contrato import (Captura, Escravo, Estado, Passagem, Relatorio, Resultado, Saco, SemConfianca,
+                             SemSaco)
+from nucleo.referencia import Referencia, medidas_do_saco
 
 log = logging.getLogger("mestre")
 
@@ -82,7 +91,9 @@ class Mestre:
                 um módulo sozinho. Por omissão corre os que têm "ativo": true.
             of, produto: a ordem de fabrico e o produto, que ficam em cada
                 Resultado. Mudar de OF é criar outro Mestre: um saco que já está
-                a ser analisado acaba sempre com a OF com que começou.
+                a ser analisado acaba sempre com a OF com que começou. O produto
+                escolhe também a referência dos sacos OK (Referencia.para).
+        ValueError se a referência do produto existir mas estiver estragada.
         """
         self.cfg = cfg
         self.of, self.produto = of, produto
@@ -96,12 +107,19 @@ class Mestre:
                 raise ValueError(f"Módulos desconhecidos: {sorted(desconhecidos)}; existem: {self.disponiveis()}")
             classes = [e for e in ESCRAVOS if e.nome in pedidos]
         self.escravos: list[Escravo] = [classe() for classe in classes]
+        self.referencia = Referencia.para(cfg, produto)
         self._avisados: set[str] = set()
 
     @staticmethod
     def disponiveis() -> list[str]:
         """Nomes de todos os escravos de inspeção que existem."""
         return [e.nome for e in ESCRAVOS]
+
+    @property
+    def desligados(self) -> tuple[str, ...]:
+        """Os escravos de inspeção que este Mestre não executa (desligados, ou fora de `apenas`)."""
+        executados = {e.nome for e in self.escravos}
+        return tuple(e.nome for e in ESCRAVOS if e.nome not in executados)
 
     @property
     def nomes(self) -> list[str]:
@@ -129,7 +147,7 @@ class Mestre:
             captura = Captura(img, "imagem", time.time(), px_por_mm=px_por_mm)
         resultado = self._inspecionar(no_espaco_metrico(img, px_por_mm, self.cfg.geral.px_por_mm), captura,
                                       guardar_intermedios)
-        resultado.of, resultado.produto = self.of, self.produto
+        resultado.of, resultado.produto, resultado.desligados = self.of, self.produto, self.desligados
         return resultado
 
     def _inspecionar(self, img: np.ndarray, captura: Captura, guardar_intermedios: bool) -> Resultado:
@@ -165,7 +183,13 @@ class Mestre:
 
         # 3. Decisão
         estado, mensagem = self._decidir(relatorios[1:])
-        return Resultado(img, estado, saco, relatorios, _ms_desde(inicio), mensagem)
+
+        # 4. Comparação com os sacos OK do produto (aviso; não muda o estado)
+        atipicas = ()
+        if self.referencia is not None:
+            r = self.cfg.referencia
+            atipicas = self.referencia.comparar(medidas_do_saco(relatorios), r.sigmas, r.sacos_min)
+        return Resultado(img, estado, saco, relatorios, _ms_desde(inicio), mensagem, atipicas=atipicas)
 
     # --- Passagem de um saco (várias imagens) ---------------------------------------------
     def inspecionar_passagem(self, passagem: Passagem, guardar_intermedios: bool = False) -> Resultado:
@@ -282,6 +306,9 @@ class Mestre:
             devolvido = chamada()
         except SemSaco as motivo:
             return None, Relatorio(nome, Estado.SEM_SACO, tempo_ms=_ms_desde(inicio), mensagem=str(motivo))
+        except SemConfianca as motivo:  # correu bem, mas não pode decidir: ERRO com o motivo, sem traceback
+            log.warning("Módulo %s: %s", nome, motivo)
+            return None, Relatorio(nome, Estado.ERRO, tempo_ms=_ms_desde(inicio), mensagem=str(motivo))
         except NotImplementedError as erro:  # um esqueleto que ainda não devolve por_implementar
             onde = _onde(erro)
             self._avisar_por_implementar(nome, onde)
@@ -319,6 +346,10 @@ class Mestre:
             return Estado.ERRO, mensagem
         if not any(r.estado in (Estado.OK, Estado.NOK) for r in relatorios):
             return Estado.ERRO, mensagem or "nenhum escravo de inspeção concluiu a análise"
+        por_verificar = [r.modulo for r in relatorios if r.estado in (Estado.POR_IMPLEMENTAR, Estado.ERRO)]
+        if self.cfg.geral.exigir_todos and por_verificar:
+            falta = f"não verificado por {', '.join(por_verificar)} (geral.exigir_todos)"
+            return Estado.ERRO, " | ".join(filter(None, [mensagem, falta]))
         return Estado.OK, mensagem
 
 

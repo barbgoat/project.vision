@@ -164,6 +164,8 @@ class Depuracao:
         linhas = [f"saco {numero} | {resultado.estado} | {resultado.tempo_ms:.0f} ms | {Path(origem).name}"]
         if resultado.mensagem:
             linhas.append(f"   {resultado.mensagem}")
+        if resultado.aviso:
+            linhas.append(f"   {resultado.aviso}")
         p = resultado.passagem
         if p is not None:
             linhas.append(f"disparo ({p.modo}): passagem {p.numero}, {p.num_imagens} imagens em {p.duracao_ms:.0f} ms; "
@@ -187,6 +189,11 @@ class Depuracao:
             "saco": numero,
             "estado": str(resultado.estado),
             "mensagem": resultado.mensagem,
+            "verificado_por": resultado.verificado_por,
+            "nao_verificado": resultado.nao_verificado,
+            "atipicas": [{"medida": a.medida, "valor": round(a.valor, 4), "media_ok": round(a.media, 4),
+                          "desvio_padrao_ok": round(a.desvio_padrao, 4), "limite": round(a.limite, 4)}
+                         for a in resultado.atipicas],
             "tempo_ms": round(resultado.tempo_ms, 2),
             "origem": captura.origem if captura else None,
             "data_hora": datetime.fromtimestamp(captura.instante).isoformat(timespec="milliseconds") if captura else None,

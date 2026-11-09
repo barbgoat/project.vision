@@ -190,7 +190,7 @@ def test_parametros_do_afinar_estao_na_grelha():
             assert abs((v - minimo) / passo - round((v - minimo) / passo)) < 1e-9, f"{secao}.{nome}"
 
 
-@pytest.mark.parametrize("ferramenta, argumentos", [(afinar, ["relevo", "x.png"]), (avaliar, [])])
+@pytest.mark.parametrize("ferramenta, argumentos", [(afinar, ["relevo", "x.png"])])
 def test_ferramentas_por_fazer(ferramenta, argumentos):
     with pytest.raises(NotImplementedError):
         ferramenta.main(argumentos)

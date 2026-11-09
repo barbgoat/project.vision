@@ -1,19 +1,21 @@
 {
   "geral": {
-    "px_por_mm": 7.123
+    "px_por_mm": 7.081
   },
   "aquisicao": {
     "exposicao_us": 10000.0,
     "ganho_raw": 0,
-    "roi_x_px": 267,
-    "roi_y_px": 80,
-    "roi_largura_px": 894,
-    "roi_altura_px": 766
+    "roi_x_px": 3,
+    "roi_y_px": 5,
+    "roi_largura_px": 1277,
+    "roi_altura_px": 955
   },
   "localizacao": {
     "resolucao_px_por_mm": 20.0,
     "suavizacao_mm": 0.04,
-    "fundo_referencia": "dataset/bancada_botao/fundo.png"
+    "fundo_referencia": "dataset/bancada_botao/fundo.png",
+    "faixa_fundo_mm": 3.0,
+    "largura_max_mm": 130.0
   },
   "dimensoes": {
     "comprimento_nominal_mm": 140.0,

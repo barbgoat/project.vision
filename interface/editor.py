@@ -25,11 +25,12 @@ from nucleo.config import AFINACAO, RAIZ, Config, nome_define
 
 
 # O que se muda em cada janela: definições (roda dentada) e câmara.
-SECOES_DEFINICOES = ("geral", "localizacao", "dimensoes", "cor", "relevo", "manchas", "saida")
+SECOES_DEFINICOES = ("geral", "localizacao", "dimensoes", "cor", "relevo", "manchas", "referencia", "saida")
 SECOES_CAMARA = ("aquisicao", "disparo", "lente")
 NOMES_SECOES = {
     "geral": "Geral (px/mm, orçamento)", "localizacao": "M2 Localização", "dimensoes": "M3 Dimensões",
-    "cor": "M4 Cor", "relevo": "M5 Relevo", "manchas": "M6 Manchas", "saida": "M7 Saída (imagens, registos)",
+    "cor": "M4 Cor", "relevo": "M5 Relevo", "manchas": "M6 Manchas",
+    "referencia": "Comparação com os sacos OK", "saida": "M7 Saída (imagens, registos)",
     "aquisicao": "Exposição e ganho", "disparo": "Trigger e barreira", "lente": "Lente",
 }
 # O que se muda no dia a dia, com o nome que aparece; o resto só com "Mostrar todos os parâmetros".
@@ -40,6 +41,8 @@ ESSENCIAIS: dict[tuple[str, str], str] = {
     ("disparo", "anti_ressalto_ms"): "Trigger: ignorar sinais repetidos (ms)",
     ("disparo", "virtual_direcao"): "Ao vivo: sentido do tapete na imagem",
     ("geral", "px_por_mm"): "Escala (píxeis por mm)",
+    ("geral", "exigir_todos"): "Só aprovar se todos os módulos ativos verificaram",
+    ("referencia", "ativo"): "Comparar com os sacos OK do produto",
     ("dimensoes", "ativo"): "Medir as dimensões",
     ("dimensoes", "comprimento_nominal_mm"): "Comprimento nominal (mm)",
     ("dimensoes", "largura_nominal_mm"): "Largura nominal (mm)",

@@ -75,6 +75,7 @@ class ConfigGeral:
     px_por_mm: float = D.GERAL_PX_POR_MM
     velocidade_mm_s: float = D.GERAL_VELOCIDADE_MM_S
     em_caso_de_erro: PoliticaErro = D.GERAL_EM_CASO_DE_ERRO
+    exigir_todos: bool = D.GERAL_EXIGIR_TODOS
     orcamento_ms: float = D.GERAL_ORCAMENTO_MS
     paralelo: bool = D.GERAL_PARALELO
 
@@ -249,9 +250,20 @@ class ConfigLocalizacao:
     folga_mm: float = D.LOCALIZACAO_FOLGA_MM
     margem_borda_mm: float = D.LOCALIZACAO_MARGEM_BORDA_MM
     margem_extremidades_mm: float = D.LOCALIZACAO_MARGEM_EXTREMIDADES_MM
+    qualidade_aresta_min_pct: float = D.LOCALIZACAO_QUALIDADE_ARESTA_MIN_PCT
+    qualidade_rejeitados_max_pct: float = D.LOCALIZACAO_QUALIDADE_REJEITADOS_MAX_PCT
+    qualidade_reflexos_max_pct: float = D.LOCALIZACAO_QUALIDADE_REFLEXOS_MAX_PCT
+    qualidade_residuo_max_mm: float = D.LOCALIZACAO_QUALIDADE_RESIDUO_MAX_MM
+    qualidade_contraste_min: float = D.LOCALIZACAO_QUALIDADE_CONTRASTE_MIN
+    qualidade_luz_max_pct: float = D.LOCALIZACAO_QUALIDADE_LUZ_MAX_PCT
 
     def erros(self) -> list[str]:
         return _verificar([
+            *((0 <= getattr(self, nome) <= 100, f"{nome} tem de estar entre 0 e 100 (0 = não verificar)")
+              for nome in ("qualidade_aresta_min_pct", "qualidade_rejeitados_max_pct", "qualidade_reflexos_max_pct")),
+            (self.qualidade_residuo_max_mm >= 0, "qualidade_residuo_max_mm tem de ser ≥ 0 (0 = não verificar)"),
+            (0 <= self.qualidade_contraste_min < 1, "qualidade_contraste_min tem de estar entre 0 e 1 (0 = não verificar)"),
+            (self.qualidade_luz_max_pct >= 0, "qualidade_luz_max_pct tem de ser ≥ 0 (0 = não verificar)"),
             (self.resolucao_px_por_mm > 0, "resolucao_px_por_mm tem de ser > 0"),
             (self.suavizacao_mm >= 0, "suavizacao_mm tem de ser ≥ 0"),
             (self.faixa_fundo_mm > 0, "faixa_fundo_mm tem de ser > 0"),
@@ -404,6 +416,23 @@ class ConfigManchas:
 
 
 @dataclass(frozen=True)
+class ConfigReferencia:
+    """Referência dos sacos OK: cada saco medido face à distribuição dos bons do seu produto."""
+
+    ativo: bool = D.REFERENCIA_ATIVO
+    pasta: str = D.REFERENCIA_PASTA
+    sigmas: float = D.REFERENCIA_SIGMAS
+    sacos_min: int = D.REFERENCIA_SACOS_MIN
+
+    def erros(self) -> list[str]:
+        return _verificar([
+            (bool(self.pasta.strip()), "pasta não pode estar vazia"),
+            (self.sigmas > 0, "sigmas tem de ser > 0"),
+            (self.sacos_min >= 2, "sacos_min tem de ser ≥ 2 (é preciso um desvio-padrão)"),
+        ])
+
+
+@dataclass(frozen=True)
 class ConfigSaida:
     """M7 Saída: imagens anotadas e registos CSV."""
 
@@ -507,6 +536,7 @@ class Config:
     cor: ConfigCor = field(default_factory=ConfigCor)
     relevo: ConfigRelevo = field(default_factory=ConfigRelevo)
     manchas: ConfigManchas = field(default_factory=ConfigManchas)
+    referencia: ConfigReferencia = field(default_factory=ConfigReferencia)
     saida: ConfigSaida = field(default_factory=ConfigSaida)
 
     def __post_init__(self) -> None:

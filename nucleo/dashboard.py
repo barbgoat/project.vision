@@ -75,11 +75,23 @@ def _ordem(linha: LinhaOF) -> dict:
     of, r = linha.of, linha.resumo
     return {
         "numero": of.numero, "produto": of.produto, "colunas": linha.colunas(),
-        "resumo": f"{r.total} sacos: OK {r.ok}, NOK {r.nok}, descartados {r.descartados}",
+        "resumo": f"{r.total} sacos: OK {r.ok}, NOK {r.nok}, descartados {r.descartados}" + observacoes_ok(r),
         "taxa_nok": r.taxa_nok, "ajustes": descrever_ajustes(of),
         "medidas": linhas_medidas(r), "tipos": [[tipo, n] for tipo, n in r.tipos.most_common()],
         "evolucao": [list(periodo) for periodo in r.evolucao],
     }
+
+
+def observacoes_ok(r: Resumo) -> str:
+    """O que os OK da OF não garantem, para juntar ao resumo, p.ex.
+    "; OK sem verificar: cor 40, relevo 40; OK atípicos: 3 (largura_mm 2, falta_mm2 1)"."""
+    texto = ""
+    if r.ok_incompletos:
+        texto += "; OK sem verificar: " + ", ".join(f"{m} {n}" for m, n in r.nao_verificado.most_common())
+    if r.ok_atipicos:
+        texto += (f"; OK atípicos face aos sacos OK: {r.ok_atipicos} ("
+                  + ", ".join(f"{m} {n}" for m, n in r.atipicas.most_common()) + ")")
+    return texto
 
 
 def linhas_dias(repo: Repositorio) -> list[dict]:

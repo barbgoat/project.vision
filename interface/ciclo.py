@@ -38,6 +38,7 @@ from modulos.m1_aquisicao.fontes import FonteImagem
 from modulos.m7_saida import Depuracao, Saida
 from modulos.m2_localizacao import Diagnostico, Localizador
 from modulos.m2_localizacao.medicao import retangulo_arredondado
+from modulos.m2_localizacao.qualidade import MedicaoNaoFiavel
 from nucleo.config import RAIZ, Config, ConfigAquisicao, ModoDisparo
 from nucleo.contrato import Captura, Estado, Resultado
 from nucleo.imagens import limites_roi, recortar
@@ -263,9 +264,10 @@ class MedicaoContorno:
     contorno: np.ndarray | None  # N×2, centros dos píxeis da borda do saco (o contorno real)
     comprimento_mm: float
     largura_mm: float
-    medidas: dict[str, float]  # as do M2: contorno_rms_px, rejeitados_<lado>_pct, solidez...
+    medidas: dict[str, float]  # as do M2: contorno_rms_px, rejeitados_<lado>_pct, aresta_<lado>_pct, solidez...
     erro: str = ""  # porque não mediu (sem saco, contorno incompleto...)
     ideal: np.ndarray | None = None  # N×2: o retângulo com estas medidas e o raio dos cantos do produto
+    nao_fiavel: str = ""  # mediu, mas na inspeção seria ERRO (o controlo da medição do M2): porquê
 
 
 class Afinacao(QThread):
@@ -366,17 +368,21 @@ class Afinacao(QThread):
         roi = cfg.aquisicao.roi()
         x0, y0, _, _ = limites_roi(imagem.shape, roi)
         diagnostico = Diagnostico()
+        nao_fiavel = ""
         try:
             if self._localizador is None:
                 self._localizador = Localizador(cfg)
             saco = self._localizador.localizar(recortar(imagem, roi), diagnostico=diagnostico)
+        except MedicaoNaoFiavel as erro:  # mediu: mostra o contorno, e porque é que a inspeção não confiaria nele
+            saco, nao_fiavel = erro.saco, str(erro)
         except Exception as erro:  # sem saco, contorno incompleto, fundo_referencia de outro tamanho...
             return MedicaoContorno(None, 0.0, 0.0, diagnostico.medidas, str(erro))
         contorno = saco.contorno.reshape(-1, 2).astype(np.float64) + (x0 + 0.5, y0 + 0.5)
         ppm = cfg.geral.px_por_mm
         ideal = retangulo_arredondado(saco.centro_px, saco.angulo_graus, saco.comprimento_mm * ppm,
                                       saco.largura_mm * ppm, cfg.dimensoes.forma_raio_canto_mm * ppm) + (x0, y0)
-        return MedicaoContorno(contorno, saco.comprimento_mm, saco.largura_mm, diagnostico.medidas, ideal=ideal)
+        return MedicaoContorno(contorno, saco.comprimento_mm, saco.largura_mm, diagnostico.medidas, ideal=ideal,
+                               nao_fiavel=nao_fiavel)
 
     def _trocar(self) -> None:
         """Os valores pedidos com aplicar(), se os houver."""

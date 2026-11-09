@@ -54,6 +54,10 @@ class TipoDefeito(StrEnum):
 CLASSES_DATASET = ("ok", *(tipo.value for tipo in TipoDefeito), "varios")
 
 
+# O nome do M2 (modulos/m2_localizacao): o primeiro relatório de cada Resultado; os outros são de inspeção.
+LOCALIZACAO = "localizacao"
+
+
 # Iluminações possíveis de uma Captura. Hoje só há "difusa"; um escravo que prefira
 # outra (p.ex. o M5 a "rasante") recebe a difusa enquanto a sua não existir.
 ILUMINACOES = ("difusa", "retro", "rasante")
@@ -196,6 +200,15 @@ class SemSaco(Exception):
     """
 
 
+class SemConfianca(Exception):
+    """Levantada por um módulo que correu bem mas não pode decidir com confiança: a segmentação é
+    incerta, ou a imagem não deixou medir (aresta escondida por um reflexo, luz que mudou...).
+
+    O Mestre dá ERRO com esta mensagem, sem o traceback (não é uma falha do código): o saco vai à
+    revisão em vez de levar um OK ou NOK sem fundamento.
+    """
+
+
 @dataclass(frozen=True, eq=False)
 class Defeito:
     """Um defeito encontrado num saco (imutável). Medidas em mm, no referencial do saco:
@@ -277,6 +290,23 @@ class Relatorio:
         return f"NOK({len(self.defeitos)})" if self.estado is Estado.NOK else str(self.estado)
 
 
+@dataclass(frozen=True)
+class Atipica:
+    """Uma medida do saco longe das dos sacos OK do produto (nucleo/referencia.py). É um aviso:
+    o saco pode estar dentro da tolerância, mas a produção está a desviar-se."""
+
+    medida: str  # p.ex. "largura_mm"
+    valor: float  # o deste saco
+    media: float  # a dos sacos OK
+    desvio_padrao: float  # o dos sacos OK
+    limite: float  # o afastamento aceite: referencia.sigmas × desvio-padrão + a resolução da medida
+
+    @property
+    def texto(self) -> str:
+        """P.ex. "largura_mm 55.90 (sacos OK: 55.20 ± 0.45)"."""
+        return f"{self.medida} {self.valor:.2f} (sacos OK: {self.media:.2f} ± {self.limite:.2f})"
+
+
 @dataclass
 class Resultado:
     """A decisão do Mestre sobre um saco, com os relatórios de todos os módulos."""
@@ -292,11 +322,44 @@ class Resultado:
     imagens_analisadas: int = 1  # quantas candidatas o Mestre teve de experimentar
     of: str = ""  # a ordem de fabrico e o produto com que foi analisado ("" = sem OF)
     produto: str = ""
+    desligados: tuple[str, ...] = ()  # escravos de inspeção que não foram executados (ativo = False)
+    atipicas: tuple[Atipica, ...] = ()  # medidas longe das dos sacos OK do produto (só com referência)
 
     @property
     def ok(self) -> bool:
         """True só se o saco foi aprovado."""
         return self.estado is Estado.OK
+
+    @property
+    def _inspecao(self) -> list[Relatorio]:
+        """Os relatórios dos escravos de inspeção (sem o do M2)."""
+        return [r for r in self.relatorios if r.modulo != LOCALIZACAO]
+
+    @property
+    def verificado_por(self) -> list[str]:
+        """Os escravos de inspeção que concluíram (OK ou NOK): só estes contam para um OK."""
+        return [r.modulo for r in self._inspecao if r.estado in (Estado.OK, Estado.NOK)]
+
+    @property
+    def por_verificar(self) -> list[str]:
+        """Os escravos de inspeção executados que não concluíram: por implementar, ou ERRO."""
+        return [r.modulo for r in self._inspecao if r.estado in (Estado.POR_IMPLEMENTAR, Estado.ERRO)]
+
+    @property
+    def nao_verificado(self) -> list[str]:
+        """Tudo o que ficou por ver neste saco: os por verificar e os desligados."""
+        return [*self.por_verificar, *self.desligados] if self.saco is not None else []
+
+    @property
+    def aviso(self) -> str:
+        """O que um OK não garante, numa linha (vazio se nada): os módulos que não verificaram o saco
+        e as medidas atípicas, p.ex. "não verificado: cor, relevo | atípico: largura_mm 55.90 (...)"."""
+        partes = []
+        if self.nao_verificado:
+            partes.append(f"não verificado: {', '.join(self.nao_verificado)}")
+        if self.atipicas:
+            partes.append(f"atípico: {'; '.join(a.texto for a in self.atipicas)}")
+        return " | ".join(partes)
 
     @property
     def defeitos(self) -> list[Defeito]:

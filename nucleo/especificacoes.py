@@ -105,6 +105,8 @@ class Inspecao:
     comprimento_mm: float | None  # o que o OpenCV mediu (None sem saco)
     largura_mm: float | None
     pedido: dict[str, float] = field(default_factory=dict)  # as MEDIDAS da BD quando o saco passou
+    nao_verificado: tuple[str, ...] = ()  # os módulos que não verificaram o saco (Resultado.nao_verificado)
+    atipicas: tuple[str, ...] = ()  # as medidas longe das dos sacos OK do produto (Resultado.atipicas)
 
     def fora(self, medida: str) -> bool | None:
         """Se a medida (de CORRESPONDENCIA) saiu de nominal ± tolerância; None sem medida ou sem pedido."""
@@ -146,6 +148,10 @@ class Resumo:
     tipos: Counter[str] = field(default_factory=Counter)  # defeitos por tipo (sem os descartados)
     evolucao: list[tuple[str, int, int]] = field(default_factory=list)  # (início do período, OK, NOK)
     medidas: dict[str, Estatistica] = field(default_factory=dict)  # por medida de CORRESPONDENCIA
+    ok_incompletos: int = 0  # OK com algum módulo que não o verificou
+    nao_verificado: Counter[str] = field(default_factory=Counter)  # nos OK: módulo → sacos que não verificou
+    ok_atipicos: int = 0  # OK com alguma medida longe das dos sacos OK (a produção a desviar-se?)
+    atipicas: Counter[str] = field(default_factory=Counter)  # nos OK: medida → sacos atípicos nela
 
     @property
     def total(self) -> int:
@@ -227,6 +233,10 @@ def resumir(inspecoes: list[Inspecao], periodo_min: int = 60) -> Resumo:
         final = i.final
         if final == "OK":
             resumo.ok += 1
+            resumo.ok_incompletos += bool(i.nao_verificado)
+            resumo.nao_verificado.update(i.nao_verificado)
+            resumo.ok_atipicos += bool(i.atipicas)
+            resumo.atipicas.update(i.atipicas)
         elif final == "NOK":
             resumo.nok += 1
             resumo.tipos.update(i.tipos)
@@ -270,7 +280,7 @@ CREATE TABLE IF NOT EXISTS ordens (
 CREATE TABLE IF NOT EXISTS inspecoes (
     id INTEGER PRIMARY KEY, data_hora TEXT, dia TEXT, sessao TEXT, saco INTEGER, of TEXT COLLATE NOCASE,
     produto TEXT COLLATE NOCASE, estado TEXT, decisao TEXT DEFAULT '', tipos TEXT,
-    comprimento_mm REAL, largura_mm REAL, pedido TEXT);
+    comprimento_mm REAL, largura_mm REAL, pedido TEXT, observacoes TEXT);
 CREATE INDEX IF NOT EXISTS inspecoes_of ON inspecoes (of);
 """
 
@@ -292,9 +302,9 @@ class Repositorio:
         self.caminho = Path(caminho)
         with self._ligar() as bd:
             bd.executescript(_TABELAS)
-            # Bases de dados de antes das colunas dia e pedido
+            # Bases de dados de antes das colunas dia, pedido e observacoes
             for tabela, coluna in (("produtos", "dia"), ("ordens", "dia"), ("inspecoes", "dia"),
-                                   ("inspecoes", "pedido")):
+                                   ("inspecoes", "pedido"), ("inspecoes", "observacoes")):
                 if coluna not in {c[1] for c in bd.execute(f"PRAGMA table_info({tabela})")}:
                     bd.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna} TEXT")
             bd.execute("PRAGMA journal_mode=WAL")  # escritas rápidas; a janela lê enquanto a inspeção escreve
@@ -392,13 +402,15 @@ class Repositorio:
         data_hora, dia = carimbo(captura.instante if captura else passagem.inicio if passagem else None)
         saco_m2 = resultado.saco if resultado.estado in (Estado.OK, Estado.NOK) else None  # só com mm
         pedido = {c: getattr(cfg.dimensoes, c) for c in MEDIDAS} if cfg else {}
+        observacoes = {"nao_verificado": resultado.nao_verificado,
+                       "atipicas": [a.medida for a in resultado.atipicas]}
         with self._ligar() as bd:
             bd.execute(
                 "INSERT INTO inspecoes (data_hora, dia, sessao, saco, of, produto, estado, tipos, comprimento_mm, "
-                "largura_mm, pedido) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "largura_mm, pedido, observacoes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (data_hora, dia, sessao, saco, resultado.of, resultado.produto, str(resultado.estado),
                  json.dumps(dict(resultado.contagem_tipos)), saco_m2.comprimento_mm if saco_m2 else None,
-                 saco_m2.largura_mm if saco_m2 else None, json.dumps(pedido)))
+                 saco_m2.largura_mm if saco_m2 else None, json.dumps(pedido), json.dumps(observacoes)))
 
     def marcar_decisao(self, sessao: str, saco: int, decisao: str) -> None:
         """A decisão da revisão de um saco não OK: "NOK" ou "descartado"."""
@@ -411,10 +423,15 @@ class Repositorio:
         onde = " AND ".join(f"{campo} = ?" for campo, _ in filtros) or "1"
         with self._ligar() as bd:
             linhas = bd.execute(
-                "SELECT data_hora, of, produto, estado, decisao, tipos, comprimento_mm, largura_mm, pedido "
-                f"FROM inspecoes WHERE {onde} ORDER BY id", [valor for _, valor in filtros]).fetchall()
-        return [Inspecao(d, o, p, e, dec or "", json.loads(t or "{}"), c, la, json.loads(pe or "{}"))
-                for d, o, p, e, dec, t, c, la, pe in linhas]
+                "SELECT data_hora, of, produto, estado, decisao, tipos, comprimento_mm, largura_mm, pedido, "
+                f"observacoes FROM inspecoes WHERE {onde} ORDER BY id", [valor for _, valor in filtros]).fetchall()
+        inspecoes = []
+        for d, o, p, e, dec, t, c, la, pe, obs in linhas:
+            observacoes = json.loads(obs or "{}")
+            inspecoes.append(Inspecao(d, o, p, e, dec or "", json.loads(t or "{}"), c, la, json.loads(pe or "{}"),
+                                      tuple(observacoes.get("nao_verificado", ())),
+                                      tuple(observacoes.get("atipicas", ()))))
+        return inspecoes
 
     def dias(self, limite: int) -> list[str]:
         """Os últimos `limite` dias com sacos inspecionados, o mais recente primeiro."""

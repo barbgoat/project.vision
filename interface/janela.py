@@ -731,7 +731,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
             self._segurar_ate = monotonic() + SEGURAR_SACO_S
         r = visto.resultado
         for faixa in (self.faixa_op, self.faixa_eng):
-            faixa.mostrar(r.estado, f"saco {visto.numero}")
+            faixa.mostrar(r.estado, f"saco {visto.numero}{_ressalva(r)}")
         self.imagem_op.mostrar(visto.anotada)
         self.imagem_eng.mostrar(visto.anotada)
         self.titulo_imagem.setText(
@@ -813,12 +813,20 @@ def _texto_contorno(medicao: MedicaoContorno, medicoes: list[tuple[float, float]
     cor = "#2e7d32" if rms < CONTORNO_RMS_MAX_PX and rejeitados < CONTORNO_REJEITADOS_MAX_PCT else "#c62828"
     c, lg = np.array(medicoes).T
     d = cfg.dimensoes
+    aresta = min(LADOS, key=lambda lado: q.get(f"aresta_{lado}_pct", 100.0))
+    controlo = (f"aresta {q.get('aresta_min_pct', float('nan')):.0f} % (pior: {aresta}) · "
+                f"reflexos {q.get('reflexos_max_pct', float('nan')):.0f} %")
+    if "luz_pct" in q:
+        controlo += f" · luz {q['luz_pct']:+.0f} % face ao fundo vazio"
     linhas = [f"<b>C {medicao.comprimento_mm:.2f} · L {medicao.largura_mm:.2f} mm</b>",
               f"<span style='color:{cor}'>RMS {rms:.2f} px · rejeitados {rejeitados:.0f} % (pior: {pior})</span>",
+              controlo,
               f"n {len(c)} · média C {c.mean():.2f} · L {lg.mean():.2f} mm · face ao nominal "
               f"C {c.mean() - d.comprimento_nominal_mm:+.2f} · L {lg.mean() - d.largura_nominal_mm:+.2f} mm"]
     if len(c) >= 2:
         linhas.append(f"σ C {c.std(ddof=1):.3f} · σ L {lg.std(ddof=1):.3f} mm")
+    if medicao.nao_fiavel:  # o controlo da medição do M2: na inspeção, este saco iria à revisão
+        linhas.append(f"<span style='color:#c62828'>Na inspeção: ERRO, {html.escape(medicao.nao_fiavel)}</span>")
     return "<br>".join(linhas)
 
 
@@ -837,4 +845,18 @@ def _info(visto: Visto) -> str:
     linhas.append(tempo)
     if r.mensagem:
         linhas.append(f"<span style='color:#ef6c00'>{html.escape(r.mensagem)}</span>")
+    if r.ok and r.nao_verificado:
+        linhas.append(f"<span style='color:#ef6c00'>OK só por {html.escape(', '.join(r.verificado_por))}; "
+                      f"não verificado: {html.escape(', '.join(r.nao_verificado))}</span>")
+    if r.atipicas:
+        linhas.append("<span style='color:#ef6c00'>Atípico face aos sacos OK: "
+                      + html.escape("; ".join(a.texto for a in r.atipicas)) + "</span>")
     return "<br>".join(linhas)
+
+
+def _ressalva(r) -> str:
+    """O que um OK não garante, curto, para a faixa: " · só dimensoes", " · atípico"."""
+    if not r.ok:
+        return ""
+    texto = f" · só {', '.join(r.verificado_por)}" if r.nao_verificado else ""
+    return texto + (" · atípico" if r.atipicas else "")

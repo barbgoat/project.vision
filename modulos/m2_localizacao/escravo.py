@@ -6,6 +6,7 @@ Liga as etapas pela ordem, um ficheiro cada:
     segmentacao.py    2. contorno subpíxel (e o limiar, arestas e limpeza do ΔE)
     medicao.py        3. ângulo, comprimento e largura
     normalizacao.py   4. rodar, recortar, zona útil
+    qualidade.py      5. a imagem deixou medir bem? (senão, ERRO "medição não fiável")
 """
 
 from __future__ import annotations
@@ -16,10 +17,10 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-from modulos.m2_localizacao import medicao, normalizacao, segmentacao, segmentadores
+from modulos.m2_localizacao import medicao, normalizacao, qualidade, segmentacao, segmentadores
 from nucleo import defines as D
 from nucleo.config import Config
-from nucleo.contrato import Saco, SemSaco
+from nucleo.contrato import LOCALIZACAO, Saco, SemSaco
 
 
 @dataclass
@@ -37,7 +38,7 @@ class Diagnostico:
 class Localizador:
     """O escravo M2. Usa a secção localizacao da configuração. Sem estado entre chamadas."""
 
-    nome = "localizacao"
+    nome = LOCALIZACAO
     pergunta = "Onde está o saco? Está completo?"
 
     def __init__(self, cfg: Config, segmentador: segmentadores.Segmentador | None = None) -> None:
@@ -61,7 +62,9 @@ class Localizador:
 
         Devolve:
             O Saco com o recorte normalizado. Se não houver um saco completo e
-            com dimensões plausíveis, levanta SemSaco com o motivo.
+            com dimensões plausíveis, levanta SemSaco com o motivo. Se o contorno
+            não fechou, levanta SegmentacaoIncerta; se a imagem não deixou medir
+            bem (qualidade.py), MedicaoNaoFiavel: as duas dão ERRO no Mestre.
         """
         p = self.cfg.localizacao
         diag = diagnostico if diagnostico is not None else Diagnostico()
@@ -88,7 +91,7 @@ class Localizador:
 
         # 2. Contorno na resolução original
         # e cada ponto na aresta verdadeira (subpíxel), seja qual for o limiar
-        arestas, normais, validos = segmentacao.afinar_contorno(
+        arestas, normais, validos, encontrada = segmentacao.afinar_contorno(
             segmentacao.contorno_original(regiao, img.shape[:2]), seg.mapa_aresta, img.shape[:2])
         # Centros dos píxeis de borda (meio píxel por dentro da aresta): o que o fillPoly e o desenho esperam
         borda = (arestas - 0.5 * normais).reshape(-1, 1, 2).astype(np.float32)
@@ -101,8 +104,10 @@ class Localizador:
         # 3. Orientação e medidas
         centro, angulo, comprimento_px, largura_px = medicao.pose(medir, self.cfg.geral.px_por_mm)
         ppm = self.cfg.geral.px_por_mm
-        # Qualidade do contorno (resíduo às retas dos lados, pontos rejeitados): só diagnóstico, por agora.
+        # Qualidade da medição (resíduo às retas dos lados, aresta encontrada e reflexos em cada lado):
+        # verifica-se no fim (5.), com o saco já recortado para a depuração e a afinação o mostrarem.
         diag.medidas.update(medicao.qualidade(medir, centro, angulo, D.M2_ANGULO_DESVIO_MM * ppm))
+        diag.medidas.update(qualidade.sinais(img, arestas, normais, encontrada, centro, angulo, ppm))
         comprimento_mm, largura_mm = comprimento_px / ppm, largura_px / ppm
         if not (p.comprimento_min_mm <= comprimento_mm <= p.comprimento_max_mm
                 and p.largura_min_mm <= largura_mm <= p.largura_max_mm):
@@ -128,7 +133,7 @@ class Localizador:
             cv2.drawContours(vista, zona, -1, (0, 255, 255), max(1, round(ppm / 4)))
             diag.intermedios["recorte"] = vista
 
-        return Saco(
+        saco = Saco(
             contorno=contorno,
             centro_px=(float(centro[0]), float(centro[1])),
             angulo_graus=math.degrees(angulo),
@@ -139,3 +144,9 @@ class Localizador:
             mascara=mascara_recorte,
             mascara_util=mascara_util,
         )
+
+        # 5. A imagem deixou medir bem? Senão é ERRO (revisão): não é o saco que está mal, é a medida
+        # que não é de confiança (os limites são localizacao.qualidade_*, não tolerâncias do saco).
+        if problemas := qualidade.problemas(diag.medidas, p, ppm):
+            raise qualidade.MedicaoNaoFiavel(problemas, saco)
+        return saco

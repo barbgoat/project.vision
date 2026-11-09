@@ -25,8 +25,8 @@ gui.py, interface/   interface gráfica: ver, corrigir vereditos e afinar (PySid
 biapp_dashboard.py   o dashboard numa janela própria, em tempo real (SSE)
 nucleo/              contrato entre módulos e defines.py (TODOS os valores ajustáveis)
 modulos/             um escravo por pasta: m1_aquisicao/ … m7_saida/
-ferramentas/         testar um módulo, o disparo ou a câmara; montagem; afinar; avaliar; anotar; validar
-configuracoes/       perfis por montagem: bancada_botao, bancada_virtual, linha
+ferramentas/         testar um módulo, o disparo ou a câmara; montagem; afinar; avaliar; referencia; anotar; validar
+configuracoes/       perfis por montagem: bancada_botao, bancada_virtual, linha; referencias/ dos sacos OK
 dataset/             imagens da câmara por montagem e por classe (criadas pela BIapp); fora do git
 testes/              testes automáticos (python -m pytest)
 docs/                documentação
@@ -122,6 +122,31 @@ python -m ferramentas.validar --config configuracoes\linha.json --backends delta
 opcional, `mascaras/`) e dá o erro em mm, o IoU, a taxa de ERRO e o tempo de cada segmentador,
 por tipo de saco e por fundo, e a repetibilidade do mesmo saco ([docs/dataset.md](docs/dataset.md)).
 
+## O que um OK garante
+
+- **Módulos que verificaram**: um saco OK diz sempre o que ficou por ver (módulos por implementar,
+  com ERRO ignorado ou desligados): na faixa ("OK saco 12 · só dimensoes"), no painel, na imagem
+  anotada, no `registo.csv` (`nao_verificado`), na base de dados e no dashboard ("OK sem verificar").
+  Em produção, `geral.exigir_todos = true`: um módulo ativo que não concluiu dá ERRO, em vez de OK.
+- **Referência dos sacos OK** (`nucleo/referencia.py`): a média e o desvio-padrão de cada medida
+  nos sacos bons de um produto. Cada saco é comparado com eles; longe dos bons
+  (`referencia.sigmas`) fica **atípico**. É um aviso, o estado não muda, e mostra uma produção a
+  desviar-se antes dos NOK. Refazer quando a montagem, a luz, a escala ou o nominal mudarem: uma
+  referência que não bate certo deixa de ser usada (com um aviso no log).
+- **Rejeições falsas e defeitos escapados**: o `avaliar` passa o dataset da montagem pelo sistema e
+  dá a taxa de cada um com o intervalo de confiança (0 em 30 sacos OK ainda quer dizer "até ~11 %";
+  para "abaixo de 1 %" são precisos 380 sacos OK sem nenhuma), e o módulo responsável.
+
+```powershell
+python -m ferramentas.referencia --config configuracoes\bancada_botao.json --produto Garnier dataset\bancada_botao\ok
+python -m ferramentas.referencia --config configuracoes\bancada_botao.json --produto Garnier --ver
+python -m ferramentas.avaliar --dataset dataset\bancada_botao --config configuracoes\bancada_botao.json --produto Garnier --guardar-erros
+```
+
+As imagens: "Guardar no dataset" na BIapp (vista Engenharia), com a montagem e a luz da produção;
+muitos sacos OK (≥ `referencia.sacos_min`, melhor 30 a 50 para a referência e centenas para o
+`avaliar`), de vários sacos físicos, em posições e rotações diferentes.
+
 ## Interface gráfica
 
 - Abre com **login** (contas em `interface/login.py`): `admin`/`admin` faz tudo; `op`/`op`
@@ -151,11 +176,11 @@ por tipo de saco e por fundo, e a repetibilidade do mesmo saco ([docs/dataset.md
 
 | | |
 |---|---|
-| **Funcional** | Mestre, M1 (câmara Basler, Ao vivo e Trigger), M2, M3, M7, interface gráfica, produtos e OFs, testes |
-| **Por fazer** | ensaios com a Basler real, Blackfly (`FonteSpinnaker`, comentada), M4, M5, M6, `afinar`, `avaliar`, servidor partilhado, assistente do nominal |
+| **Funcional** | Mestre, M1 (câmara Basler, Ao vivo e Trigger), M2, M3, M7, interface gráfica, produtos e OFs, referência dos sacos OK, `avaliar` (por saco, módulo e classe), testes |
+| **Por fazer** | ensaios com a Basler real, Blackfly (`FonteSpinnaker`, comentada), M4, M5, M6, `afinar`, `avaliar` por defeito (anotações), servidor partilhado, assistente do nominal |
 
-Próximos passos: dataset e `px_por_mm` medido → validar M2/M3 com fotos reais →
-M5 Relevo → M6 → `avaliar` → câmara e M4 → PLC.
+Próximos passos: dataset e `px_por_mm` medido → validar M2/M3 com fotos reais → referência dos
+sacos OK e `avaliar` → M5 Relevo → M6 → câmara e M4 → PLC.
 
 ## Documentação
 

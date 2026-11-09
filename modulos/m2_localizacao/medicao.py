@@ -94,10 +94,26 @@ def qualidade(arestas: np.ndarray, centro: np.ndarray, angulo: float, desvio_px:
     return medidas
 
 
+def por_lado(pontos: np.ndarray, centro: np.ndarray, angulo: float) -> dict[str, np.ndarray]:
+    """Que pontos do contorno (N×2, px) estão na parte central de cada lado (LADOS), a que é medida:
+    uma máscara booleana (N) por lado. Os cantos não entram, como nas medidas (_lados)."""
+    return _partes_centrais(*_projetar(pontos.reshape(-1, 2).astype(np.float64) - centro, angulo))
+
+
 def _projetar(pontos: np.ndarray, angulo: float) -> tuple[np.ndarray, np.ndarray]:
     """Coordenadas dos pontos ao longo do eixo maior (u) e do eixo menor (v)."""
     cos, sen = math.cos(angulo), math.sin(angulo)
     return pontos[:, 0] * cos + pontos[:, 1] * sen, -pontos[:, 0] * sen + pontos[:, 1] * cos
+
+
+def _partes_centrais(u: np.ndarray, v: np.ndarray) -> dict[str, np.ndarray]:
+    """Os pontos da parte central (M2_PARTE_CENTRAL_LADOS, sem os cantos) de cada lado: uma máscara por lado."""
+    meio_u, meio_v = (u.max() + u.min()) / 2, (v.max() + v.min()) / 2
+    metade = D.M2_PARTE_CENTRAL_LADOS / 2
+    central_u = np.abs(u - meio_u) < metade * np.ptp(u)  # parte central dos lados compridos
+    central_v = np.abs(v - meio_v) < metade * np.ptp(v)  # parte central dos lados curtos
+    return {"esquerda": central_v & (u < meio_u), "direita": central_v & (u > meio_u),
+            "cima": central_u & (v < meio_v), "baixo": central_u & (v > meio_v)}
 
 
 def _inclinacao_lados(u: np.ndarray, v: np.ndarray, desvio_px: float) -> float | None:
@@ -137,15 +153,9 @@ def _retas(u: np.ndarray, v: np.ndarray, desvio_px: float) -> dict[str, Reta | N
     desvio_px dela: uma aba, um vinco ou uma sombra colados ao lado não a puxam.
     None num lado com menos de 10 pontos.
     """
-    meio_u, meio_v = (u.max() + u.min()) / 2, (v.max() + v.min()) / 2
-    metade = D.M2_PARTE_CENTRAL_LADOS / 2
-    central_u = np.abs(u - meio_u) < metade * np.ptp(u)  # parte central dos lados compridos
-    central_v = np.abs(v - meio_v) < metade * np.ptp(v)  # parte central dos lados curtos
     lados = {  # (posição ao longo do lado, distância ao eixo)
-        "esquerda": (v[central_v & (u < meio_u)], u[central_v & (u < meio_u)]),
-        "direita": (v[central_v & (u > meio_u)], u[central_v & (u > meio_u)]),
-        "cima": (u[central_u & (v < meio_v)], v[central_u & (v < meio_v)]),
-        "baixo": (u[central_u & (v > meio_v)], v[central_u & (v > meio_v)]),
+        nome: (v[parte], u[parte]) if nome in ("esquerda", "direita") else (u[parte], v[parte])
+        for nome, parte in _partes_centrais(u, v).items()
     }
     retas: dict[str, Reta | None] = {}
     for nome, (ao_longo, distancia) in lados.items():
@@ -165,19 +175,16 @@ def _retas(u: np.ndarray, v: np.ndarray, desvio_px: float) -> dict[str, Reta | N
 
 def _lados(u: np.ndarray, v: np.ndarray) -> tuple[float, float, float, float]:
     """Posição (mediana) dos lados esquerdo, direito, de cima e de baixo, longe dos cantos."""
-    meio_u, meio_v = (u.max() + u.min()) / 2, (v.max() + v.min()) / 2
-    metade = D.M2_PARTE_CENTRAL_LADOS / 2
-    central_u = np.abs(u - meio_u) < metade * np.ptp(u)  # parte central dos lados compridos
-    central_v = np.abs(v - meio_v) < metade * np.ptp(v)  # parte central dos lados curtos
+    partes = _partes_centrais(u, v)
 
     def mediana(valores: np.ndarray, extremo: float) -> float:
         return float(np.median(valores)) if len(valores) >= 3 else extremo
 
     return (
-        mediana(u[central_v & (u < meio_u)], u.min()),
-        mediana(u[central_v & (u > meio_u)], u.max()),
-        mediana(v[central_u & (v < meio_v)], v.min()),
-        mediana(v[central_u & (v > meio_v)], v.max()),
+        mediana(u[partes["esquerda"]], u.min()),
+        mediana(u[partes["direita"]], u.max()),
+        mediana(v[partes["cima"]], v.min()),
+        mediana(v[partes["baixo"]], v.max()),
     )
 
 

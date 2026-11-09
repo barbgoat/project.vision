@@ -38,6 +38,7 @@ class SegmentadorDeltaE(Segmentador):
         self.cfg = cfg
         self._referencia: np.ndarray | None = None
         self._referencia_lab: dict[tuple[int, int], np.ndarray] = {}  # por tamanho da imagem reduzida
+        self._referencia_luz: dict[tuple[int, int], float] = {}  # cinzento mediano da faixa da borda, idem
         self._sigma_px = 1.0
         caminho = cfg.localizacao.fundo_referencia
         if caminho:
@@ -88,6 +89,12 @@ class SegmentadorDeltaE(Segmentador):
                 regiao, usou_arestas = com_arestas, True
         medidas = {"limiar_delta_e": limiar, "diferenca_max": float(diferenca.max()),
                    "usou_arestas": float(usou_arestas), "escala": escala}
+        if self._referencia is not None:
+            # Luz do fundo face à da foto do fundo vazio (cinzento mediano da faixa da borda, só fundo), em %.
+            # O desvio tirado acima chega para mudanças pequenas; uma grande é a luz ou a exposição que mudaram.
+            cinzento = cv2.cvtColor(pequena, cv2.COLOR_BGR2GRAY)
+            luz_foto = self._referencia_luz[lab.shape[:2]]
+            medidas["luz_pct"] = 100 * (float(np.median(cinzento[faixa])) / max(luz_foto, 1.0) - 1)
         intermedios = {"diferenca": diferenca, "segmentacao": regiao if regiao is not None else mascara} \
             if guardar_intermedios else {}
         if regiao is None:
@@ -95,9 +102,13 @@ class SegmentadorDeltaE(Segmentador):
             erro.medidas, erro.intermedios = medidas, intermedios  # para o diagnóstico (ver Localizador)
             raise erro
         saco = regiao > 0
-        # Confiança: quanto o saco se afasta do limiar (ΔE mediano dentro vs limiar), de 0 a 1
+        # Confiança: quanto o saco se afasta do limiar (ΔE mediano dentro vs limiar), de 0 a 1. É o
+        # contraste do saco ao fundo que o controlo da medição verifica (localizacao.qualidade_contraste_min),
+        # se o saco veio da cor: um transparente (pelas arestas) tem o interior igual ao fundo por natureza.
         mediana = float(np.median(diferenca[saco]))
         score = float(np.clip(1 - limiar / max(mediana, 1e-6), 0, 1))
+        if not usou_arestas:
+            medidas["contraste"] = score
         return ResultadoSegmentacao(saco, score, self.nome, (perf_counter() - inicio) * 1000, diferenca,
                                     medidas, intermedios)
 
@@ -127,4 +138,5 @@ class SegmentadorDeltaE(Segmentador):
         if (altura, largura) not in self._referencia_lab:
             ref = cv2.resize(self._referencia, (largura, altura), interpolation=cv2.INTER_AREA)
             self._referencia_lab[(altura, largura)] = fundo.lab(ref, self._sigma_px)
+            self._referencia_luz[(altura, largura)] = float(np.median(cv2.cvtColor(ref, cv2.COLOR_BGR2GRAY)[faixa]))
         return self._referencia_lab[(altura, largura)]

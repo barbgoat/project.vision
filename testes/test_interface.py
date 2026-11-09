@@ -422,6 +422,18 @@ def test_afinar_com_contorno_mede_o_saco_na_roi(app, janela, monkeypatch):
     assert janela.afinacao.medir_contorno is False
 
 
+def test_afinar_mostra_o_contorno_e_porque_a_inspecao_nao_confiaria_nele(app):
+    """Com o controlo da medição a falhar, a afinação mede na mesma (é aí que se acerta a luz) e diz porquê."""
+    from interface import janela as modulo_janela
+    cena, _ = cena_saco(np.random.default_rng(3), angulo=10.0)
+    cfg = config_teste(localizacao={"qualidade_contraste_min": 0.99})
+    medicao = ciclo.Afinacao(cfg)._medir(cena)
+    assert medicao.contorno is not None and not medicao.erro and abs(medicao.comprimento_mm - COMPRIMENTO) < 0.5
+    assert medicao.nao_fiavel.startswith("medição não fiável: o saco quase não difere do fundo")
+    texto = modulo_janela._texto_contorno(medicao, [(medicao.comprimento_mm, medicao.largura_mm)], cfg)
+    assert "Na inspeção: ERRO, medição não fiável" in texto and "aresta" in texto and "reflexos" in texto
+
+
 def test_fundo_vazio_e_calibrar_escala_a_afinar(app, janela, tmp_path, monkeypatch):
     com_camara(monkeypatch, ciclo, CamaraAfinar)
     janela._dataset = tmp_path / "dataset"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import math
 import time
 
@@ -431,6 +432,108 @@ def test_aprendido_incerto_da_erro_e_sem_modelo_diz_como_criar(rng, modelo_risca
     sem = config_teste(localizacao={"segmentador": "aprendido", "aprendido_modelo": str(tmp_path / "nao.npz")})
     with pytest.raises(FileNotFoundError, match="ferramentas.anotar"):
         m.Mestre(sem)
+
+
+# --- Controlo da medição (qualidade.py): a imagem deixou medir bem? --------------------------
+
+from modulos.m2_localizacao import qualidade  # noqa: E402
+from modulos.m2_localizacao.qualidade import MedicaoNaoFiavel  # noqa: E402
+
+
+def _ponta_direita_sem_aresta(rng):
+    """Um saco certo e uma máscara 4 mm para fora na ponta direita (como uma sombra colada, ou um fundo da cor
+    do saco): ali não há aresta perto da máscara e a medida fica onde a máscara a deixou (C ≈ 154 mm)."""
+    img, verdade = _verdade(rng, angulo=0.0)
+    ys, xs = np.nonzero(verdade)
+    larga = verdade.copy()
+    larga[ys.min(): ys.max() + 1, xs.max(): xs.max() + 4 * int(PPM)] = True
+    return img, larga
+
+
+def test_saco_limpo_passa_o_controlo_da_medicao(rng):
+    img, _ = _verdade(rng, angulo=0.0)
+    diagnostico = Diagnostico()
+    Localizador(CFG).localizar(img, diagnostico=diagnostico)
+    q = diagnostico.medidas
+    assert q["aresta_min_pct"] > 95 and q["reflexos_max_pct"] == 0 and q["contraste"] > 0.5, q
+    assert "luz_pct" not in q, "sem a foto do fundo vazio não há luz de referência"
+    assert not qualidade.problemas(q, CFG.localizacao, PPM)
+
+
+def test_ponta_sem_aresta_e_medicao_nao_fiavel_com_o_lado(rng):
+    """Longe da aresta, num fundo liso, o máximo do gradiente cai num sítio qualquer da janela: o ponto
+    parece "válido", mas a transição é fraca. Só conta como aresta encontrada a que é forte."""
+    img, larga = _ponta_direita_sem_aresta(rng)
+    diagnostico = Diagnostico()
+    with pytest.raises(MedicaoNaoFiavel, match="ponta direita: aresta encontrada em só") as erro:
+        Localizador(CFG, segmentador=_Fixo(larga)).localizar(img, diagnostico=diagnostico)
+    q = diagnostico.medidas
+    assert q["aresta_direita_pct"] < 20 and min(q[f"aresta_{lado}_pct"] for lado in ("esquerda", "cima", "baixo")) > 95
+    assert abs(erro.value.saco.comprimento_mm - 154) < 0.5, "leva o saco medido, com a medida errada que evitou"
+    assert len(erro.value.problemas) == 1
+
+
+def test_limite_zero_nao_verifica(rng):
+    img, larga = _ponta_direita_sem_aresta(rng)
+    sem = config_teste(geral={"px_por_mm": PPM}, localizacao={"qualidade_aresta_min_pct": 0.0})
+    saco = Localizador(sem, segmentador=_Fixo(larga)).localizar(img)
+    assert abs(saco.comprimento_mm - 154) < 0.5, "sem o controlo, a medida errada passava"
+
+
+def test_medicao_nao_fiavel_e_erro_no_mestre_so_com_o_motivo(rng):
+    img, larga = _ponta_direita_sem_aresta(rng)
+    mestre = m.Mestre(CFG, apenas=["dimensoes"])
+    mestre.localizador = Localizador(CFG, segmentador=_Fixo(larga))
+    r = mestre.inspecionar(img)
+    loc = r.relatorio("localizacao")
+    assert r.estado is Estado.ERRO and r.saco is None and loc.estado is Estado.ERRO
+    assert r.mensagem.startswith("localizacao: medição não fiável: ponta direita"), r.mensagem
+    assert not loc.detalhe and "escravo.py" not in r.mensagem, "não é uma falha do código: sem traceback"
+    assert loc.medidas["aresta_direita_pct"] < 20, "os valores ficam no relatório (resultado.json)"
+
+
+def test_luz_face_a_foto_do_fundo_vazio(rng, tmp_path):
+    """Com a foto do fundo vazio, a luz do fundo compara-se com a dela: 20 % abaixo passa, 40 % não."""
+    img, _ = cena_saco(rng, angulo=0.0)
+    guardar_imagem(tmp_path / "fundo.png", fundo(1000, 1250, rng).clip(0, 255).astype(np.uint8))
+    localizador = Localizador(_com_referencia(tmp_path / "fundo.png"))
+    diagnostico = Diagnostico()
+    localizador.localizar(img, diagnostico=diagnostico)
+    assert abs(diagnostico.medidas["luz_pct"]) < 2
+    diagnostico = Diagnostico()
+    localizador.localizar((img * 0.8).astype(np.uint8), diagnostico=diagnostico)
+    assert diagnostico.medidas["luz_pct"] == pytest.approx(-20, abs=2)
+    with pytest.raises(MedicaoNaoFiavel, match=r"luz 4\d % abaixo da da foto do fundo vazio"):
+        localizador.localizar((img * 0.6).astype(np.uint8))
+
+
+@pytest.mark.parametrize("campo, valor", [("qualidade_aresta_min_pct", 101.0), ("qualidade_reflexos_max_pct", -1.0),
+                                          ("qualidade_residuo_max_mm", -0.1), ("qualidade_contraste_min", 1.0),
+                                          ("qualidade_luz_max_pct", -5.0)])
+def test_limites_do_controlo_sao_validados(campo, valor):
+    with pytest.raises(ValueError, match=campo):
+        config_teste(localizacao={campo: valor})
+
+
+def test_ferramenta_propoe_limites_para_la_do_pior_saco_bom(rng, tmp_path, capsys):
+    from ferramentas import qualidade as ferramenta
+
+    sinal = {s.parametro: s for s in ferramenta.SINAIS}
+    valores = np.array([80.0, 82.0, 90.0, 60.0])  # mediana 81, pior 60
+    assert ferramenta.propor(valores, sinal["qualidade_aresta_min_pct"]) == 49.0, "60 − 0,5 × 21 = 49,5 → 49"
+    assert ferramenta.propor(np.array([0.10, 0.13, 0.15]), sinal["qualidade_residuo_max_mm"]) == 0.16
+
+    for i, angulo in enumerate((0.0, 10.0, -20.0)):
+        guardar_imagem(tmp_path / "ok" / f"saco_{i}.png", cena_saco(rng, angulo=angulo)[0])
+    perfil = tmp_path / "perfil.json"
+    perfil.write_text(json.dumps({"geral": {"px_por_mm": PPM}}), encoding="utf-8")
+    assert ferramenta.main([str(tmp_path / "ok"), "--config", str(perfil), "--saida", str(tmp_path / "q.csv")]) == 0
+    saida = capsys.readouterr().out
+    assert "Sacos bons medidos: 3" in saida and "pelo menos uns 50" in saida
+    bloco = json.loads(saida[saida.index("{"): saida.rindex("}") + 1])["localizacao"]
+    assert set(bloco) == {s.parametro for s in ferramenta.SINAIS} - {"qualidade_luz_max_pct"}, "sem foto do fundo, sem luz"
+    linhas = (tmp_path / "q.csv").read_text(encoding="utf-8").splitlines()
+    assert len(linhas) == 4 and "aresta_min_pct" in linhas[0]
 
 
 # --- Espaço métrico canónico ---------------------------------------------------------------

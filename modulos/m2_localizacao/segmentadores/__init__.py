@@ -27,11 +27,12 @@ import numpy as np
 
 from nucleo import defines as D
 from nucleo.config import RAIZ, Config
+from nucleo.contrato import SemConfianca
 
 log = logging.getLogger("m2.segmentadores")
 
 
-class SegmentacaoIncerta(Exception):
+class SegmentacaoIncerta(SemConfianca):
     """O segmentador não tem a certeza (confiança baixa, nenhuma máscara, segmentadores em
     desacordo). O Mestre transforma-a em ERRO: um saco assim nunca é aprovado."""
 

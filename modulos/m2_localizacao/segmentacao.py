@@ -97,11 +97,14 @@ def toca_na_borda(regiao: np.ndarray) -> bool:
 
 
 def afinar_contorno(contorno: np.ndarray, mapa: np.ndarray,
-                    forma_original: tuple[int, int]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                    forma_original: tuple[int, int]) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Cada ponto do contorno levado para a aresta verdadeira, com precisão subpíxel.
 
-    Devolve (arestas, normais, validos): N×2 float em px originais, a normal (para fora) em
-    cada ponto, e se a aresta desse ponto foi encontrada dentro da janela (bool, N).
+    Devolve (arestas, normais, validos, encontrada): N×2 float em px originais, a normal (para
+    fora) em cada ponto, se o máximo do gradiente desse ponto ficou dentro da janela (bool, N; os
+    outros não medem) e se aí havia mesmo uma aresta (bool, N: dentro da janela e com uma transição
+    de pelo menos M2_AFINAR_GRADIENTE_MIN). Num fundo liso, sem aresta nenhuma, o máximo cai num
+    sítio qualquer da janela: o ponto é "válido" mas não foi encontrada aresta (fica onde estava).
 
     O limiar diz que píxeis são saco, mas a aresta fica onde a diferença ao
     fundo passa ao seu limiar: um limiar baixo "engorda" o saco, um alto
@@ -135,9 +138,9 @@ def afinar_contorno(contorno: np.ndarray, mapa: np.ndarray,
         normal = _normais(pontos)
         # Sem aresta, o ponto fica na aresta da máscara: na 1.ª passagem, meio píxel para fora dos
         # píxeis de borda; nas seguintes, onde a anterior o deixou.
-        deslocamento, validos = _procurar_aresta(pontos, normal, mapa, fx, fy, 0.5 if passagem == 0 else 0.0)
+        deslocamento, validos, forte = _procurar_aresta(pontos, normal, mapa, fx, fy, 0.5 if passagem == 0 else 0.0)
         pontos = pontos + deslocamento[:, None] * normal
-    return pontos, normal, validos
+    return pontos, normal, validos, validos & forte
 
 
 def _normais(pontos: np.ndarray) -> np.ndarray:
@@ -151,10 +154,10 @@ def _normais(pontos: np.ndarray) -> np.ndarray:
 
 
 def _procurar_aresta(pontos: np.ndarray, normal: np.ndarray, mapa: np.ndarray, fx: float, fy: float,
-                     sem_aresta: float) -> tuple[np.ndarray, np.ndarray]:
-    """(deslocamento, dentro): quanto andar ao longo da normal (px originais) até ao máximo do
-    gradiente do mapa, e se esse máximo ficou dentro da janela (não numa ponta). Fora dela ou
-    com a transição fraca, o deslocamento é sem_aresta."""
+                     sem_aresta: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(deslocamento, dentro, forte): quanto andar ao longo da normal (px originais) até ao máximo do
+    gradiente do mapa, se esse máximo ficou dentro da janela (não numa ponta) e se a transição aí é
+    forte (≥ M2_AFINAR_GRADIENTE_MIN). Fora dela ou com a transição fraca, o deslocamento é sem_aresta."""
     passo = max(fx, fy) / 2  # meio píxel da imagem reduzida, em px originais
     passos = np.arange(-D.M2_AFINAR_PROCURA * 2, D.M2_AFINAR_PROCURA * 2 + 1) * passo
     xs = ((pontos[:, 0:1] + passos * normal[:, 0:1] + 0.5) / fx - 0.5).astype(np.float32)
@@ -170,8 +173,9 @@ def _procurar_aresta(pontos: np.ndarray, normal: np.ndarray, mapa: np.ndarray, f
     curvatura = y0 - 2 * y1 + y2
     desvio = np.where(curvatura < 0, 0.5 * (y0 - y2) / np.where(curvatura < 0, curvatura, -1), 0.0)
     dentro = (j > 0) & (j < len(passos) - 1)
-    deslocamento = np.where(dentro & (y1 >= D.M2_AFINAR_GRADIENTE_MIN), passos[jj] + desvio * passo, sem_aresta)
-    return deslocamento, dentro
+    forte = y1 >= D.M2_AFINAR_GRADIENTE_MIN
+    deslocamento = np.where(dentro & forte, passos[jj] + desvio * passo, sem_aresta)
+    return deslocamento, dentro, forte
 
 
 def _suavizar(pontos: np.ndarray, sigma: float) -> np.ndarray:

@@ -41,6 +41,11 @@ GERAL_PX_POR_MM: Final = 8.0  # [MEDIR]
 # parado não é usada. Ver as fases de ensaio em modulos/m1_aquisicao/__init__.py.
 GERAL_VELOCIDADE_MM_S: Final = 500.0  # [MEDIR] (só com o tapete a andar)
 GERAL_EM_CASO_DE_ERRO: Final = "rejeitar"  # se um módulo der ERRO: "rejeitar" o saco | "ignorar" o módulo
+# Um saco OK diz sempre o que ficou por verificar (módulos por implementar, com ERRO ignorado ou
+# desligados). False: aprova-o na mesma (para desenvolver um módulo de cada vez). True (produção):
+# um módulo ativo que não concluiu (por implementar, ou ERRO mesmo com "ignorar") dá ERRO ao saco.
+# Os módulos desligados (ativo = False) são uma escolha e não impedem o OK.
+GERAL_EXIGIR_TODOS: Final = False
 # Tempo entre sacos = 1000 / sacos por segundo da linha (2 sacos/s → 500 ms). A inspeção e
 # o registo de cada saco têm de caber aqui, em média; senão a fila do M1 enche e passam
 # sacos sem inspeção (ERRO). Para ter folga, apontar para ~70 % deste valor.
@@ -196,6 +201,21 @@ LOCALIZACAO_LARGURA_MAX_MM: Final = 100.0
 LOCALIZACAO_FOLGA_MM: Final = 3.0  # margem de fundo à volta do saco no recorte
 LOCALIZACAO_MARGEM_BORDA_MM: Final = 3.0  # faixa junto ao contorno do saco que não é inspecionada
 LOCALIZACAO_MARGEM_EXTREMIDADES_MM: Final = 5.0  # [MEDIR] faixa extra nas pontas do saco (selagens)
+# Controlo da medição: a imagem deixou medir bem? Um valor fora do limite dá ERRO "medição não fiável"
+# (o saco vai à revisão em vez de levar um OK ou NOK com uma medida errada). NÃO são tolerâncias do
+# saco (essas são do M3): nunca aprovam um saco. Tiram-se dos sacos bons da montagem
+# (python -m ferramentas.qualidade); a bancada de 6/11/2026 (188 sacos bons) deu os valores daqui.
+# Os de cada lado contam só a parte central do lado (a que é medida). 0 = não verificar.
+LOCALIZACAO_QUALIDADE_ARESTA_MIN_PCT: Final = 45.0  # [MEDIR] % mínima de pontos de cada lado com a aresta subpíxel encontrada (bons: pior 57)
+LOCALIZACAO_QUALIDADE_REJEITADOS_MAX_PCT: Final = 60.0  # [MEDIR] % máxima de pontos de um lado longe da reta do lado (bons: pior 48)
+# Reflexos: desligado (0). Com 40 % disparava em 63 dos 188 sacos bons (o brilho do plástico ao pé da
+# aresta é normal) e não apanha o reflexo que passa a aresta (aí a aresta parece boa). Quando um reflexo
+# esconde ou desvia mesmo a aresta, a aresta encontrada e os rejeitados já o apanham. O sinal continua
+# no diagnóstico (reflexos_<lado>_pct); voltar a ligar quando a luz controlar os reflexos.
+LOCALIZACAO_QUALIDADE_REFLEXOS_MAX_PCT: Final = 0.0  # [MEDIR] % máxima de pontos de um lado com píxeis saturados ao pé
+LOCALIZACAO_QUALIDADE_RESIDUO_MAX_MM: Final = 0.2  # [MEDIR] resíduo (RMS) máximo do contorno às retas dos lados
+LOCALIZACAO_QUALIDADE_CONTRASTE_MIN: Final = 0.4  # [MEDIR] só ΔE: 1 − limiar / ΔE mediano do saco, mínimo (bons: pior 0,70)
+LOCALIZACAO_QUALIDADE_LUZ_MAX_PCT: Final = 30.0  # [MEDIR] só ΔE com a foto do fundo vazio: luz do fundo face à da foto, ± % (bons: −18 a +3)
 
 # --- M2: afinação interna ----------------------------------------------------------
 M2_APRENDIDO_LADO_PX: Final = 800  # o modelo aprendido aprende e trabalha a esta resolução (lado maior)
@@ -231,6 +251,10 @@ M2_RETANGULARIDADE_SO_COR: Final = 0.8  # abaixo disto a região de cor é um pe
 M2_PARTE_CENTRAL_LADOS: Final = 0.7  # fração central de cada lado usada para o medir (sem os cantos)
 M2_ANGULO_ITERACOES: Final = 2  # voltas de afinação do ângulo pelos lados compridos
 M2_ANGULO_DESVIO_MM: Final = 0.4  # nessa afinação, pontos mais afastados da reta do que isto (abas) não contam
+# Controlo da medição, reflexos: um ponto do contorno tem um reflexo ao pé se houver um píxel saturado
+# (todos os canais ≥ NIVEL) a menos de DISTANCIA_MM dele, dentro ou fora do saco.
+M2_REFLEXO_NIVEL: Final = 254
+M2_REFLEXO_DISTANCIA_MM: Final = 0.45
 M2_FUNDO_PONTOS_MAX: Final = 5000  # pontos da faixa da borda usados no modelo do fundo
 M2_FUNDO_ITERACOES: Final = 3  # voltas do ajuste robusto do modelo do fundo
 M2_FUNDO_DESVIOS: Final = 3.0  # num ajuste, descarta pontos a mais de N desvios (sujidade, cantos de saco)
@@ -311,6 +335,18 @@ MANCHAS_POLARIDADE: Final = "ambas"  # "ambas" | "clara" | "escura"
 MANCHAS_CONTRASTE_MIN: Final = 0.15  # 0,15 = 15 % mais clara/escura do que a vizinhança
 MANCHAS_AREA_MIN_MM2: Final = 4.0
 MANCHAS_ALONGAMENTO_MAX: Final = 4.0  # acima disto é uma linha (assunto do M5), não uma mancha
+
+# =============================================================================
+# REFERÊNCIA DOS SACOS OK (nucleo/referencia.py)
+# =============================================================================
+# Como são os sacos bons de um produto, medidos por este sistema: média e desvio-padrão de
+# cada medida (python -m ferramentas.referencia). Cada saco medido é comparado com eles: um
+# saco dentro da tolerância mas longe dos bons fica "atípico" (aviso; o estado não muda),
+# o que mostra um desvio da produção antes de dar NOK.
+REFERENCIA_ATIVO: Final = True  # comparar, quando há referência para o produto
+REFERENCIA_PASTA: Final = "configuracoes/referencias"  # <pasta>/<produto>.json (relativa à raiz)
+REFERENCIA_SIGMAS: Final = 3.0  # atípico a mais de N desvios-padrão da média dos bons (3 ≈ 1 em 370)
+REFERENCIA_SACOS_MIN: Final = 20  # sacos OK precisos para fazer a referência (melhor 30 a 50)
 
 # =============================================================================
 # M7 SAÍDA

@@ -24,6 +24,10 @@ OK, NOK, ERRO ou SEM_SACO.
 - Um saco com ERRO é rejeitado (`GERAL_EM_CASO_DE_ERRO = "rejeitar"`).
 - O `Saco` e a configuração são só de leitura: um módulo não estraga o trabalho dos outros.
 - `POR_IMPLEMENTAR` não conta para a decisão, mas um saco que **nenhum** módulo inspecionou nunca é aprovado.
+- Um OK diz sempre o que ficou por ver (`Resultado.nao_verificado`: por implementar, ERRO ignorado,
+  desligados). Com `GERAL_EXIGIR_TODOS = True` (produção), um módulo ativo que não concluiu dá ERRO.
+- Depois da decisão, o Mestre compara as medidas do saco com a referência dos sacos OK do produto
+  (`nucleo/referencia.py`): as atípicas ficam em `Resultado.atipicas`, como aviso; o estado não muda.
 
 ## Regras
 

@@ -40,6 +40,20 @@ num fundo ou num saco nunca vistos; `--copiar` cria `rfdetr/` (COCO) e `yolo/` p
 saco físico) e, opcional, `mascaras/` (PNG com o mesmo nome) para o IoU. Várias imagens do mesmo
 saco dão a repetibilidade. `python -m ferramentas.validar --config <perfil> --backends delta_e sam3`.
 
+## Avaliar o sistema e a referência dos sacos OK
+
+- `python -m ferramentas.avaliar --dataset dataset\<perfil> --config configuracoes\<perfil>.json`
+  passa cada imagem das pastas das classes pelo sistema. Dá as falsas rejeições (OK dado como NOK, ERRO
+  ou SEM_SACO) e os defeitos escapados, com o intervalo de confiança de 95 %. Diz também o módulo
+  responsável por cada falsa rejeição e, por pasta de defeito, se o módulo responsável o apanhou.
+  `--guardar-erros` guarda a imagem anotada de cada erro.
+- `python -m ferramentas.referencia --config ... --produto <nome> dataset\<perfil>\ok` faz a
+  referência dos sacos OK do produto (`configuracoes/referencias/<produto>.json`). Só entram os
+  sacos que o sistema também dá como bons; os outros são listados (são falsas rejeições, ou não são
+  OK). No fim mostra os sacos do conjunto que ficam atípicos face aos outros: confirmar que são OK.
+- As imagens têm de ser da **montagem atual**: mesma ROI e escala, e o mesmo tamanho do fundo
+  vazio. Depois de mudar a ROI, a escala ou a luz, voltar a recolher.
+
 ## Como recolher as imagens
 
 - Câmara fixa, sempre à mesma distância e de frente para o tapete; `geral.px_por_mm` medido

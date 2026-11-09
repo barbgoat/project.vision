@@ -94,6 +94,8 @@ def desenhar(resultado: Resultado, px_por_mm: float) -> np.ndarray:
     linhas = [f"{n} {d.tipo}: {d.descricao}" for n, d in enumerate(resultado.defeitos, start=1)]
     linhas += [f"{r.modulo}: {r.mensagem}" for r in resultado.relatorios
                if r.estado in (Estado.ERRO, Estado.SEM_SACO) and r.mensagem]
+    if resultado.estado is Estado.OK and resultado.aviso:  # o que este OK não garante
+        linhas.append(resultado.aviso)
     if linhas:
         _faixa(imagem, linhas, topo=False, escala=escala)
     return imagem

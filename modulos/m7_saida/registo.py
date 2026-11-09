@@ -2,7 +2,8 @@
 
 Para cada execução do main.py cria uma pasta resultados/<AAAAMMDD_HHMMSS>/ com:
     registo.csv   uma linha por saco (passagem): OF e produto, estado final, imagens da passagem,
-                  estado + tempo de cada módulo, e a pasta de depuração (se houver)
+                  estado + tempo de cada módulo, o que ficou por verificar, as medidas atípicas
+                  face aos sacos OK, e a pasta de depuração (se houver)
     defeitos.csv  uma linha por defeito, com o mesmo número que aparece na imagem
     imagens/      imagens anotadas, …_anotada.jpg (conforme SAIDA_GUARDAR_IMAGENS)
     originais/    as imagens da câmara, …_original.png, com o mesmo nome base (SAIDA_GUARDAR_ORIGINAIS;
@@ -90,7 +91,7 @@ class Saida:
             "imagens_passagem", "imagens_analisadas", "duracao_passagem_ms",
             *self.modulos,
             *(f"t_{m}_ms" for m in self.modulos),
-            "mensagens", "imagem_anotada", "imagem_original", "depuracao",
+            "nao_verificado", "atipico", "mensagens", "imagem_anotada", "imagem_original", "depuracao",
         ]
 
     # --- Imagem anotada ------------------------------------------------------------
@@ -144,7 +145,7 @@ class Saida:
             self._numero(passagem.duracao_ms, 0) if passagem else "",
             *(relatorios[m].resumo if m in relatorios else "" for m in self.modulos),
             *(self._numero(relatorios[m].tempo_ms, 1) if m in relatorios else "" for m in self.modulos),
-            mensagens,
+            ",".join(resultado.nao_verificado), "; ".join(a.texto for a in resultado.atipicas), mensagens,
             caminho_imagem.relative_to(self.pasta) if caminho_imagem else "",
             (caminho_original.relative_to(self.pasta) if caminho_original.is_relative_to(self.pasta)
              else caminho_original) if caminho_original else "",
