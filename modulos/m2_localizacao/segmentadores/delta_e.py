@@ -67,6 +67,7 @@ class SegmentadorDeltaE(Segmentador):
             diferenca = fundo.diferenca(lab, modelo, p.peso_luminosidade)
             limiar = p.limiar_delta_e or max(segmentacao.otsu(diferenca), p.delta_e_min)
             mascara = (diferenca > limiar).astype(np.uint8) * 255
+            limiar_ruido = limiar
         else:
             # A luz muda um pouco entre a foto do fundo e esta (exposição, luz do dia): tira-se o desvio
             # mediano da faixa da borda, onde só há fundo. Depois, o limiar sai do ruído do fundo.
@@ -77,6 +78,10 @@ class SegmentadorDeltaE(Segmentador):
             ruido = 1.4826 * float(np.median(np.abs(suave[faixa] - mediana)))
             limiar = p.limiar_delta_e or max(mediana + D.M2_REFERENCIA_DESVIOS * ruido, D.M2_REFERENCIA_LIMIAR_MIN)
             mascara = (suave > limiar).astype(np.uint8) * 255
+            limiar_ruido = limiar
+            if not p.limiar_delta_e:
+                limiar = max(limiar, self._meia_altura(suave, mascara, px_mm))
+                mascara = (suave > limiar).astype(np.uint8) * 255
         fecho_px, abertura_px = p.fecho_mm * px_mm, p.abertura_mm * px_mm
         regiao = segmentacao.maior_regiao(segmentacao.limpar(mascara, fecho_px, abertura_px))
         # As arestas só entram se a cor não chegar (sacos transparentes): somá-las
@@ -102,15 +107,45 @@ class SegmentadorDeltaE(Segmentador):
             erro.medidas, erro.intermedios = medidas, intermedios  # para o diagnóstico (ver Localizador)
             raise erro
         saco = regiao > 0
-        # Confiança: quanto o saco se afasta do limiar (ΔE mediano dentro vs limiar), de 0 a 1. É o
+        # Confiança: quanto o saco se afasta do limiar do ruído (ΔE mediano dentro vs esse limiar; não o
+        # de meia altura, que é metade do saco por construção), de 0 a 1. É o
         # contraste do saco ao fundo que o controlo da medição verifica (localizacao.qualidade_contraste_min),
         # se o saco veio da cor: um transparente (pelas arestas) tem o interior igual ao fundo por natureza.
         mediana = float(np.median(diferenca[saco]))
-        score = float(np.clip(1 - limiar / max(mediana, 1e-6), 0, 1))
-        if not usou_arestas:
+        score = float(np.clip(1 - limiar_ruido / max(mediana, 1e-6), 0, 1))
+        if not usou_arestas and not self._so_pelo_contorno(diferenca, saco, limiar_ruido, mediana, px_mm):
             medidas["contraste"] = score
         return ResultadoSegmentacao(saco, score, self.nome, (perf_counter() - inicio) * 1000, diferenca,
                                     medidas, intermedios)
+
+    @staticmethod
+    def _meia_altura(suave: np.ndarray, mascara: np.ndarray, px_mm: float) -> float:
+        """Metade do ΔE do saco junto à aresta (faixa de M2_MEIA_ALTURA_FAIXA_MM a 2× isso para dentro).
+
+        Com a foto do fundo, o limiar sai do ruído e é baixo: num saco de muito contraste, a cauda do
+        desfoque passa-o já fora do saco e a máscara engorda (~1 mm por lado), longe de mais para o
+        contorno subpíxel a ir buscar. A aresta de um degrau desfocado está a meia altura dele; com
+        este limiar a máscara fica lá. Num saco de pouco contraste fica abaixo do limiar do ruído e não
+        muda nada. 0 se não houver faixa (máscara vazia ou fina de mais).
+        """
+        raio = max(1, round(D.M2_MEIA_ALTURA_FAIXA_MM * px_mm))
+        elemento = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * raio + 1, 2 * raio + 1))
+        dentro = cv2.erode(mascara, elemento)
+        faixa = (dentro > 0) & (cv2.erode(dentro, elemento) == 0)
+        return 0.5 * float(np.median(suave[faixa])) if faixa.any() else 0.0
+
+    @staticmethod
+    def _so_pelo_contorno(diferenca: np.ndarray, saco: np.ndarray, limiar: float, mediana: float,
+                          px_mm: float) -> bool:
+        """Um saco transparente visto pela cor: o interior não difere do fundo (mediana ≤ limiar), mas o
+        anel junto à aresta (M2_CONTORNO_ANEL_MM) difere. Aí o contraste do interior não diz nada (é 0
+        por natureza), como quando o saco vem das arestas; quem diz se a medida é boa é a aresta."""
+        if mediana > limiar:
+            return False
+        raio = max(1, round(D.M2_CONTORNO_ANEL_MM * px_mm))
+        mascara = saco.astype(np.uint8)
+        anel = saco & (cv2.erode(mascara, np.ones((2 * raio + 1, 2 * raio + 1), np.uint8)) == 0)
+        return bool(anel.any()) and float(np.median(diferenca[anel])) > limiar
 
     def _parece_saco(self, regiao: np.ndarray | None, px_mm: float) -> bool:
         """A região tem dimensões de saco e forma quase retangular (não é um pedaço de saco)?"""

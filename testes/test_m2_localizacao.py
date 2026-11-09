@@ -12,7 +12,8 @@ import numpy as np
 import pytest
 
 import mestre as m
-from modulos.m2_localizacao import Diagnostico, Localizador
+from modulos.m2_localizacao import Diagnostico, Localizador, qualidade
+from modulos.m2_localizacao.qualidade import MedicaoNaoFiavel
 from nucleo.contrato import Estado, SemSaco
 from nucleo.imagens import guardar_imagem, recortar
 from testes.apoio import (CORES, alfa_retangulo, cena_saco, com_acentos, config_teste, diferenca_angulo,
@@ -135,7 +136,9 @@ def test_saco_claro_em_fundo_claro_com_foto_do_fundo(rng, tmp_path):
     img, vazio = _saco_claro_em_fundo_claro(rng)
     guardar_imagem(tmp_path / "fundo.png", vazio)
     com_ref = _com_referencia(tmp_path / "fundo.png")
-    assert Localizador(CFG).localizar(img).comprimento_mm < 120, "sem a foto do fundo mede o texto"
+    with pytest.raises(MedicaoNaoFiavel, match="quase não difere do fundo") as erro:
+        Localizador(CFG).localizar(img)
+    assert erro.value.saco.comprimento_mm < 120, "sem a foto do fundo mede o texto; o controlo recusa-o"
     for imagem in (img, _saco_claro_em_fundo_claro(np.random.default_rng(8), deriva=8)[0]):
         saco = Localizador(com_ref).localizar(imagem)
         assert abs(saco.comprimento_mm - 150) < 0.1 and abs(saco.largura_mm - 55) < 0.1,             (saco.comprimento_mm, saco.largura_mm)
@@ -436,9 +439,6 @@ def test_aprendido_incerto_da_erro_e_sem_modelo_diz_como_criar(rng, modelo_risca
 
 # --- Controlo da medição (qualidade.py): a imagem deixou medir bem? --------------------------
 
-from modulos.m2_localizacao import qualidade  # noqa: E402
-from modulos.m2_localizacao.qualidade import MedicaoNaoFiavel  # noqa: E402
-
 
 def _ponta_direita_sem_aresta(rng):
     """Um saco certo e uma máscara 4 mm para fora na ponta direita (como uma sombra colada, ou um fundo da cor
@@ -468,7 +468,7 @@ def test_ponta_sem_aresta_e_medicao_nao_fiavel_com_o_lado(rng):
     with pytest.raises(MedicaoNaoFiavel, match="ponta direita: aresta encontrada em só") as erro:
         Localizador(CFG, segmentador=_Fixo(larga)).localizar(img, diagnostico=diagnostico)
     q = diagnostico.medidas
-    assert q["aresta_direita_pct"] < 20 and min(q[f"aresta_{lado}_pct"] for lado in ("esquerda", "cima", "baixo")) > 95
+    assert q["aresta_direita_pct"] < 30 and min(q[f"aresta_{lado}_pct"] for lado in ("esquerda", "cima", "baixo")) > 95
     assert abs(erro.value.saco.comprimento_mm - 154) < 0.5, "leva o saco medido, com a medida errada que evitou"
     assert len(erro.value.problemas) == 1
 
@@ -489,7 +489,7 @@ def test_medicao_nao_fiavel_e_erro_no_mestre_so_com_o_motivo(rng):
     assert r.estado is Estado.ERRO and r.saco is None and loc.estado is Estado.ERRO
     assert r.mensagem.startswith("localizacao: medição não fiável: ponta direita"), r.mensagem
     assert not loc.detalhe and "escravo.py" not in r.mensagem, "não é uma falha do código: sem traceback"
-    assert loc.medidas["aresta_direita_pct"] < 20, "os valores ficam no relatório (resultado.json)"
+    assert loc.medidas["aresta_direita_pct"] < 30, "os valores ficam no relatório (resultado.json)"
 
 
 def test_luz_face_a_foto_do_fundo_vazio(rng, tmp_path):

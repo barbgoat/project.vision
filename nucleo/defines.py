@@ -265,6 +265,8 @@ M2_FUNDO_TOLERANCIA_DELTA_E: Final = 1.0  # folga fixa nesse descarte (ΔE)
 M2_REFERENCIA_DESVIOS: Final = 6.0
 M2_REFERENCIA_LIMIAR_MIN: Final = 2.0  # ΔE
 M2_REFERENCIA_SUAVIZACAO_PX: Final = 1.5  # desfoque do mapa de diferenças só para o limiar (o ruído cai)
+M2_MEIA_ALTURA_FAIXA_MM: Final = 1.0  # o limiar nunca fica abaixo de meio ΔE do saco, medido de 1 a 2 mm para dentro da aresta
+M2_CONTORNO_ANEL_MM: Final = 0.4  # anel junto à aresta que mostra um saco transparente visto pelo contorno (sem contraste)
 
 # =============================================================================
 # M3 DIMENSÕES (o saco tem o tamanho e a forma certos?)
