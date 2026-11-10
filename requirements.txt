@@ -2,6 +2,7 @@ numpy==2.5.4
 opencv-python==5.0.0.93
 PySide6-Essentials==6.12.0  # interface gráfica (gui.py)
 pypylon==26.9  # câmara Basler
+pymodbus==3.16.2  # PLC (Modbus TCP)
 pytest==8.4.2  # testes
 ruff==0.17.3  # verificação do código: python -m ruff check .
 
