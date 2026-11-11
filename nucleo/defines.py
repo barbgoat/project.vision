@@ -271,6 +271,26 @@ M2_REFERENCIA_DESVIOS: Final = 6.0
 M2_REFERENCIA_LIMIAR_MIN: Final = 2.0  # ΔE
 M2_REFERENCIA_SUAVIZACAO_PX: Final = 1.5  # desfoque do mapa de diferenças só para o limiar (o ruído cai)
 M2_MEIA_ALTURA_FAIXA_MM: Final = 1.0  # o limiar nunca fica abaixo de meio ΔE do saco, medido de 1 a 2 mm para dentro da aresta
+# Abaixo da meia altura mas acima do ruído, continua a ser saco a zona mais clara do que o fundo com pelo
+# menos esta espessura (impressão escura em fundo escuro); mais fina é a cauda do desfoque da aresta.
+M2_ZONA_FRACA_MIN_MM: Final = 2.0
+# Baías da região (o que lhe falta para o invólucro convexo): impressão parecida com o fundo, que volta a
+# ser saco, ou material em falta, que fica. Decide o ΔE médio da baía (a mais de PAREDE_MM da parede do
+# saco) face ao do fundo logo fora do invólucro (FORA_MM): num rasgão vê-se o próprio fundo (≈ 0).
+M2_BAIA_AREA_MIN_MM2: Final = 2.0  # baías mais pequenas: o fecho e o M3 tratam-nas
+M2_BAIA_PAREDE_MM: Final = 0.7
+M2_BAIA_FORA_MM: Final = 2.0
+M2_BAIA_JANELA_MM: Final = 3.0  # a decisão é por zonas desta largura (um rasgão ao lado de impressão escura fica)
+M2_BAIA_SOBRA_MIN_MM: Final = 3.0  # numa baía com impressão, o que sobra mais estreito do que isto também é tapado (traços pretos do desenho)
+M2_BAIA_PIXEIS_MIN: Final = 30  # menos píxeis do que isto, dentro ou fora: a média não chega para decidir
+M2_BAIA_DELTA_E_MIN: Final = 2.0  # ΔE médio a mais do que o fundo para a baía ser impressão (bluey +3,5 a +5; rasgões −2 a +1)
+# Pedaços soltos do saco: zonas de muito contraste (acima da meia altura) separadas da região por impressão
+# igual ao fundo (papa: a tira clara da solda no canto, 4,4 mm além de um painel escuro). O saco é uma peça
+# só e convexo: o invólucro que o pedaço acrescenta é saco. Não entram os que tocam na borda da imagem.
+M2_PEDACO_AREA_MIN_MM2: Final = 2.0
+M2_PEDACO_DISTANCIA_MAX_MM: Final = 10.0  # mais longe do que isto é outra coisa (sujidade, outro objeto)
+M2_PEDACO_DENTRO_MIN: Final = 0.9  # fração do pedaço dentro do retângulo mínimo da região (sombras ao lado ficam fora)
+M2_PEDACO_RETANGULO_FOLGA_MM: Final = 0.5
 M2_CONTORNO_ANEL_MM: Final = 0.4  # anel junto à aresta que mostra um saco transparente visto pelo contorno (sem contraste)
 
 # =============================================================================

@@ -90,7 +90,10 @@ class SegmentadorDeltaE(Segmentador):
             limiar_ruido = limiar
             if not p.limiar_delta_e:
                 limiar = max(limiar, self._meia_altura(suave, mascara, px_mm))
-                mascara = (suave > limiar).astype(np.uint8) * 255
+                if limiar > limiar_ruido:
+                    acima_do_ruido = mascara
+                    mascara = (suave > limiar).astype(np.uint8) * 255
+                    mascara = cv2.bitwise_or(mascara, self._zonas_fracas(acima_do_ruido, mascara, d, px_mm))
         fecho_px, abertura_px = p.fecho_mm * px_mm, p.abertura_mm * px_mm
         regiao = segmentacao.maior_regiao(segmentacao.limpar(mascara, fecho_px, abertura_px))
         # As arestas só entram se a cor não chegar (sacos transparentes): somá-las
@@ -101,9 +104,18 @@ class SegmentadorDeltaE(Segmentador):
             com_arestas = segmentacao.maior_regiao(segmentacao.limpar(mascara | arestas, fecho_px, abertura_px))
             if com_arestas is not None:
                 regiao, usou_arestas = com_arestas, True
+        baias_tapadas = pedacos_juntos = 0
+        if regiao is not None and not usou_arestas:
+            # L* menos o do fundo (com a foto do fundo, já sem o desvio da luz)
+            luminosidade = cv2.extractChannel(d, 0) if self._referencia is not None \
+                else cv2.subtract(cv2.extractChannel(lab, 0), cv2.extractChannel(modelo, 0))
+            regiao, pedacos_juntos = self._juntar_pedacos_soltos(regiao, mascara, diferenca, limiar, luminosidade,
+                                                                 px_mm)
+            regiao, baias_tapadas = self._tapar_baias_de_impressao(regiao, diferenca, px_mm)
         medidas = {"limiar_delta_e": limiar, "diferenca_max": float(diferenca.max()),
                    "usou_arestas": float(usou_arestas), "escala": escala,
-                   "resolucao_px_por_mm": px_mm}  # a efetiva do mapa (sem redução: a da câmara)
+                   "resolucao_px_por_mm": px_mm,  # a efetiva do mapa (sem redução: a da câmara)
+                   "baias_tapadas": float(baias_tapadas), "pedacos_juntos": float(pedacos_juntos)}
         if self._referencia is not None:
             # Luz do fundo face à da foto do fundo vazio (cinzento mediano da faixa da borda, só fundo), em %.
             # O desvio tirado acima chega para mudanças pequenas; uma grande é a luz ou a exposição que mudaram.
@@ -184,6 +196,165 @@ class SegmentadorDeltaE(Segmentador):
         dentro = cv2.erode(mascara, elemento)
         faixa = (dentro > 0) & (cv2.erode(dentro, elemento) == 0)
         return 0.5 * float(np.median(suave[faixa])) if faixa.any() else 0.0
+
+    @staticmethod
+    def _zonas_fracas(acima_do_ruido: np.ndarray, mascara: np.ndarray, d: np.ndarray, px_mm: float) -> np.ndarray:
+        """As zonas do saco de pouco contraste que o limiar de meia altura deixou de fora (uint8, 0 ou 255).
+
+        A meia altura é metade do contraste mediano do saco. Num saco com impressão clara e escura
+        num fundo escuro, as zonas escuras da impressão ficam abaixo dela: saem da máscara e, onde
+        chegam à aresta, o contorno entra pelo saco dentro. Voltam a entrar as zonas acima do ruído
+        (acima_do_ruido menos mascara) que sejam:
+            grossas (≥ M2_ZONA_FRACA_MIN_MM): a cauda do desfoque de uma aresta forte, que a meia
+                altura existe para cortar, é uma orla fina;
+            mais claras do que o fundo (d = lab − fundo, L* > 0): uma sombra só escurece, por isso
+                continua de fora, tenha a largura que tiver.
+        """
+        zonas = cv2.subtract(acima_do_ruido, mascara)
+        raio = max(1, round(D.M2_ZONA_FRACA_MIN_MM * px_mm / 2))
+        elemento = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * raio + 1, 2 * raio + 1))
+        grossas = np.zeros_like(mascara)
+        # Só o retângulo onde há zonas grossas (o caso comum é não haver nenhuma: só a orla fina)
+        x, y, largura, altura = cv2.boundingRect(cv2.erode(zonas, elemento))
+        if largura:
+            aqui = np.s_[max(y - raio, 0):y + altura + raio, max(x - raio, 0):x + largura + raio]
+            mais_clara = cv2.compare(cv2.extractChannel(d[aqui], 0), 0, cv2.CMP_GT)
+            grossas[aqui] = cv2.morphologyEx(zonas[aqui] & mais_clara, cv2.MORPH_OPEN, elemento,
+                                             borderType=cv2.BORDER_CONSTANT, borderValue=0)
+        return grossas
+
+    @staticmethod
+    def _juntar_pedacos_soltos(regiao: np.ndarray, mascara: np.ndarray, diferenca: np.ndarray, limiar: float,
+                               luminosidade: np.ndarray, px_mm: float) -> tuple[np.ndarray, int]:
+        """A região com os pedaços soltos do saco juntos, e quantos foram (uint8 0/255, int).
+
+        Uma zona da impressão igual ao fundo pode separar da região um pedaço do saco de muito contraste
+        (papa no fundo preto: um painel escuro no canto, cinzento igual ao do pano, e para lá dele a tira
+        clara da solda). Na baía entre os dois o ΔE é o do fundo, por isso _tapar_baias_de_impressao não
+        a tapa, e o canto todo ficava de fora (M3: "falta material num canto", 137 mm²). Mas o saco é uma
+        peça só e convexo: um pedaço dele além da baía prova que a baía também é saco. Entram os pedaços
+        da máscara fora da região que:
+            têm pelo menos M2_PEDACO_AREA_MIN_MM2 e ficam a menos de M2_PEDACO_DISTANCIA_MAX_MM dela;
+            têm muito contraste: o ΔE mediano no limiar (a meia altura do saco) ou acima (papa: 67 com
+                limiar 20). As zonas fracas que _zonas_fracas trouxe (o pano, ΔE ~10) não provam nada;
+            não tocam na borda da imagem (o fundo ou outro objeto cortados pelo campo);
+            ficam dentro do retângulo mínimo da região (M2_PEDACO_DENTRO_MIN deles, com
+                M2_PEDACO_RETANGULO_FOLGA_MM): só completam um canto ou uma aresta, nunca aumentam as
+                medidas (as sombras e os restos do fundo ao longo de um lado ficam fora dele);
+            são mais claros do que o fundo (luminosidade = L* − fundo, média > 0): uma sombra só escurece.
+        O que o invólucro cresce com eles passa a ser saco, e com isso o que fica fechado entre eles e a
+        região; as outras baías seguem para _tapar_baias_de_impressao.
+        Limite: um rasgão num canto com um pedaço claro e solto (sujidade, um bocado de plástico) dentro do
+        retângulo do saco fica tapado.
+        """
+        altura, largura = regiao.shape
+        n, rotulos, estatisticas, _ = cv2.connectedComponentsWithStats(cv2.subtract(mascara, regiao), connectivity=8)
+        if n < 2:
+            return regiao, 0
+        contornos, _ = cv2.findContours(regiao, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        maior = max(contornos, key=cv2.contourArea)
+        retangulo = np.zeros_like(regiao)
+        cv2.fillPoly(retangulo, [np.round(cv2.boxPoints(cv2.minAreaRect(maior))).astype(np.int32)], 255)
+        folga = max(1, round(D.M2_PEDACO_RETANGULO_FOLGA_MM * px_mm))
+        retangulo = cv2.dilate(retangulo, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * folga + 1,) * 2))
+        distancia = cv2.distanceTransform(cv2.bitwise_not(regiao), cv2.DIST_L2, 5)
+        pedacos = np.zeros_like(regiao)
+        juntos = 0
+        for i in range(1, n):
+            x, y, w, h, area = (int(v) for v in estatisticas[i])
+            if area < D.M2_PEDACO_AREA_MIN_MM2 * px_mm ** 2 or x == 0 or y == 0 or x + w == largura \
+                    or y + h == altura:
+                continue
+            aqui = np.s_[y:y + h, x:x + w]
+            este = rotulos[aqui] == i
+            if (distancia[aqui][este].min() > D.M2_PEDACO_DISTANCIA_MAX_MM * px_mm
+                    or np.count_nonzero(retangulo[aqui][este]) < D.M2_PEDACO_DENTRO_MIN * area
+                    or float(np.median(diferenca[aqui][este])) < limiar
+                    or float(np.mean(luminosidade[aqui][este])) <= 0):
+                continue
+            pedacos[aqui][este] = 255
+            juntos += 1
+        if not juntos:
+            return regiao, 0
+        dos_pedacos, _ = cv2.findContours(pedacos, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        antes, depois = np.zeros_like(regiao), np.zeros_like(regiao)
+        cv2.fillPoly(antes, [cv2.convexHull(maior)], 255)
+        cv2.fillPoly(depois, [cv2.convexHull(np.vstack([maior, *dos_pedacos]))], 255)
+        # O que o invólucro cresceu, mais 1 px para dentro (a aresta antiga do invólucro, que o liga à região)
+        cresceu = cv2.dilate(cv2.subtract(depois, antes), np.ones((3, 3), np.uint8)) & depois
+        juntada = segmentacao.maior_regiao(regiao | pedacos | cresceu)
+        return (regiao, 0) if juntada is None else (juntada, juntos)
+
+    @staticmethod
+    def _tapar_baias_de_impressao(regiao: np.ndarray, diferenca: np.ndarray, px_mm: float) -> tuple[np.ndarray, int]:
+        """A região com as baías de impressão tapadas, e quantas foram (uint8 0/255, int).
+
+        Um saco é convexo: o que falta à região para o seu invólucro convexo (uma "baía" na aresta) é
+        material em falta (rasgão, corte, canto dobrado) ou uma zona da impressão tão parecida com o fundo
+        que, píxel a píxel, não passou o limiar (impressão escura num fundo escuro, câmara mono). Os dois
+        distinguem-se pela média: num rasgão, o que se vê na baía é o próprio fundo, com o mesmo ΔE que o
+        fundo logo fora do invólucro; na impressão, o ΔE médio de centenas de píxeis fica claramente acima
+        (bluey no fundo preto: +3,5 a +5; rasgões simulados com a foto do fundo: −2 a +1).
+
+        Conta-se só a baía a mais de M2_BAIA_PAREDE_MM da parede do saco (o desfoque da aresta, e a sombra
+        de um rasgão, ficam de fora), em médias locais (janelas de M2_BAIA_JANELA_MM), contra a faixa de
+        M2_BAIA_FORA_MM fora do invólucro junto a ela. As zonas com o ΔE médio pelo menos
+        M2_BAIA_DELTA_E_MIN acima passam a ser saco; o resto da baía fica, e o M3 avalia-o como sempre.
+        Numa baía com impressão, o que sobra mais estreito do que M2_BAIA_SOBRA_MIN_MM (traços pretos do
+        desenho, iguais ao fundo) vai com ela. Bluey (77 fotos) e Garnier (39): todos OK. Em 288 rasgões
+        simulados em fotos reais do bluey (o fundo vazio colado no saco), só um (5 × 4 mm, encostado à
+        impressão escura) ficou tapado em mais de metade; mediana 0 %.
+        Limite: uma sombra ou sujidade dentro de um rasgão também sobe o ΔE.
+        """
+        contornos, _ = cv2.findContours(regiao, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        involucro = np.zeros_like(regiao)
+        cv2.fillPoly(involucro, [cv2.convexHull(max(contornos, key=cv2.contourArea))], 255)
+        baias = cv2.subtract(involucro, regiao)
+        n, rotulos, estatisticas, _ = cv2.connectedComponentsWithStats(baias, connectivity=8)
+        grandes = [i for i in range(1, n) if estatisticas[i, cv2.CC_STAT_AREA] >= D.M2_BAIA_AREA_MIN_MM2 * px_mm ** 2]
+        if not grandes:
+            return regiao, 0
+        parede = D.M2_BAIA_PAREDE_MM * px_mm
+        raio_fora = max(1, round(D.M2_BAIA_FORA_MM * px_mm))
+        elemento = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * raio_fora + 1, 2 * raio_fora + 1))
+        altura, largura = regiao.shape
+        tapada, tapadas = regiao.copy(), 0
+        for i in grandes:
+            x, y, w, h = (int(estatisticas[i, k]) for k in (cv2.CC_STAT_LEFT, cv2.CC_STAT_TOP, cv2.CC_STAT_WIDTH,
+                                                           cv2.CC_STAT_HEIGHT))
+            aqui = np.s_[max(y - raio_fora, 0):min(y + h + raio_fora, altura),
+                         max(x - raio_fora, 0):min(x + w + raio_fora, largura)]
+            baia = (rotulos[aqui] == i).astype(np.uint8)
+            longe_do_saco = cv2.distanceTransform(cv2.bitwise_not(regiao[aqui]), cv2.DIST_L2, 5) > parede
+            dentro = (baia > 0) & longe_do_saco
+            fora = (cv2.dilate(baia, elemento) > 0) & (involucro[aqui] == 0)
+            if np.count_nonzero(dentro) < D.M2_BAIA_PIXEIS_MIN or np.count_nonzero(fora) < D.M2_BAIA_PIXEIS_MIN:
+                continue
+            # A média local (janela de M2_BAIA_JANELA_MM) e não a da baía toda: um rasgão encostado a uma
+            # zona de impressão escura junta-se-lhe numa só baía, e a média dela taparia o rasgão também.
+            peso = dentro.astype(np.float32)
+            janela = (max(3, round(D.M2_BAIA_JANELA_MM * px_mm)),) * 2
+            soma = cv2.boxFilter(diferenca[aqui] * peso, -1, janela, normalize=False, borderType=cv2.BORDER_CONSTANT)
+            contagem = cv2.boxFilter(peso, -1, janela, normalize=False, borderType=cv2.BORDER_CONSTANT)
+            media_local = soma / np.maximum(contagem, 1)
+            fundo_fora = float(np.mean(diferenca[aqui][fora]))
+            impressao = (dentro & (contagem >= 0.25 * janela[0] * janela[1])
+                         & (media_local - fundo_fora >= D.M2_BAIA_DELTA_E_MIN)).astype(np.uint8)
+            if not impressao.any():
+                continue
+            # A faixa junto à parede (que não se mediu) vai com a zona de impressão ao lado dela
+            raio = max(1, int(np.ceil(parede)) + 1)
+            impressao = cv2.dilate(impressao, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * raio + 1,) * 2)) & baia
+            # O que sobra da baía e é estreito (um traço preto do desenho, já sem interior para a média) vai
+            # com a impressão; só uma sobra larga (M2_BAIA_SOBRA_MIN_MM) pode ser material em falta.
+            sobra = cv2.subtract(baia, impressao)
+            k = max(3, 2 * round(D.M2_BAIA_SOBRA_MIN_MM * px_mm / 2) + 1)
+            larga = cv2.morphologyEx(sobra, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)),
+                                     borderType=cv2.BORDER_CONSTANT, borderValue=0)
+            impressao = cv2.subtract(baia, larga)
+            tapada[aqui][impressao > 0] = 255
+            tapadas += 1
+        return tapada, tapadas
 
     @staticmethod
     def _so_pelo_contorno(diferenca: np.ndarray, saco: np.ndarray, limiar: float, mediana: float,

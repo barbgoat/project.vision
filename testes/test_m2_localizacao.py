@@ -150,6 +150,152 @@ def test_saco_claro_em_fundo_claro_com_foto_do_fundo(rng, tmp_path):
     assert abs(saco.comprimento_mm - 150) < 0.1 and abs(saco.largura_mm - 55) < 0.1
 
 
+def _saco_de_dois_contrastes(rng, fundo_cinzento: int, corpo: int, zona: int | None = None, sombra: float = 0.0):
+    """Um saco de 150 × 55 mm (corpo de cinzento "corpo") num fundo liso, com a foto do fundo vazio.
+
+    zona: uma faixa de impressão com esse cinzento, de 110 × 15 mm, encostada a um dos lados compridos.
+    sombra: quanto escurece o fundo (0–1) numa faixa de 4 mm encostada à ponta direita.
+    Devolve (imagem, foto do fundo vazio).
+    """
+    altura, largura, (cx, cy), angulo = 1000, 1250, (645, 485), 23
+    cos, sen = math.cos(math.radians(angulo)), math.sin(math.radians(angulo))
+    liso = fundo(altura, largura, rng, base=(fundo_cinzento,) * 3, gradiente=10, ruido=0)
+    a = alfa_retangulo(altura, largura, cx, cy, 150 * PPM, 55 * PPM, angulo)[..., None]
+    cor = np.full_like(liso, corpo)
+    if zona is not None:  # 20 mm de altura, 5 deles para fora do saco (que a corta pela aresta)
+        z = alfa_retangulo(altura, largura, cx + 22.5 * PPM * sen, cy - 22.5 * PPM * cos, 110 * PPM, 20 * PPM, angulo)
+        cor = cor * (1 - z[..., None]) + zona * z[..., None]
+    cena = liso.copy()
+    if sombra:
+        s = alfa_retangulo(altura, largura, cx + 77 * PPM * cos, cy + 77 * PPM * sen, 4 * PPM, 55 * PPM, angulo)
+        cena *= 1 - sombra * s[..., None]
+    img = cena * (1 - a) + cor * a
+    return (np.clip(img + rng.normal(0, 2, img.shape), 0, 255).astype(np.uint8),
+            np.clip(liso + rng.normal(0, 2, liso.shape), 0, 255).astype(np.uint8))
+
+
+def test_impressao_escura_em_fundo_escuro_continua_a_ser_saco(rng, tmp_path):
+    """Corpo claro e uma faixa de impressão escura, pouco mais clara do que o fundo preto, ao longo de um
+    lado: a faixa fica abaixo da meia altura do saco, mas é grossa e mais clara do que o fundo, logo é saco
+    (sem isso o contorno entrava 15 mm pelo saco dentro: ERRO "contorno incompleto", solidez 0,80)."""
+    img, vazio = _saco_de_dois_contrastes(rng, fundo_cinzento=35, corpo=140, zona=48)
+    guardar_imagem(tmp_path / "fundo.png", vazio)
+    saco = Localizador(_com_referencia(tmp_path / "fundo.png")).localizar(img)
+    assert abs(saco.comprimento_mm - 150) < 0.2 and abs(saco.largura_mm - 55) < 0.2, \
+        (saco.comprimento_mm, saco.largura_mm)
+
+
+def test_sombra_larga_e_fraca_fica_fora_do_saco(rng, tmp_path):
+    """Uma sombra de 4 mm na ponta também é grossa e fica entre o ruído e a meia altura, mas escurece o
+    fundo: não entra na máscara, e o comprimento não cresce."""
+    img, vazio = _saco_de_dois_contrastes(rng, fundo_cinzento=125, corpo=200, sombra=0.12)
+    guardar_imagem(tmp_path / "fundo.png", vazio)
+    saco = Localizador(_com_referencia(tmp_path / "fundo.png")).localizar(img)
+    assert abs(saco.comprimento_mm - 150) < 0.2 and abs(saco.largura_mm - 55) < 0.2, \
+        (saco.comprimento_mm, saco.largura_mm)
+
+
+def _saco_com_impressao_quase_igual_ao_fundo(rng, rasgao_no_meio: bool = False):
+    """Como o bluey no fundo preto, com a câmara mono: um saco claro (150 × 55 mm) com três blocos de
+    impressão escura (8 × 14 mm, cortados pela aresta de cima) só 9 níveis mais claros do que o fundo, e
+    ruído forte: píxel a píxel ficam abaixo do limiar, em média não. rasgao_no_meio: o bloco do meio é
+    material em falta (vê-se o fundo). Devolve (imagem, foto do fundo vazio, área do rasgão em mm²)."""
+    altura, largura, (cx, cy), angulo, ruido = 1000, 1250, (645, 485), 23, 9
+    cos, sen = math.cos(math.radians(angulo)), math.sin(math.radians(angulo))
+    liso = fundo(altura, largura, rng, base=(35, 35, 35), gradiente=10, ruido=0)
+    a = alfa_retangulo(altura, largura, cx, cy, 150 * PPM, 55 * PPM, angulo)
+    cor = np.full_like(liso, 150.0)
+    for u in (-40, 0, 40):
+        v = -22.5  # o centro do bloco: 4,5 mm dele ficam fora do saco
+        z = alfa_retangulo(altura, largura, cx + u * PPM * cos - v * PPM * sen, cy + u * PPM * sen + v * PPM * cos,
+                           8 * PPM, 14 * PPM, angulo)
+        if rasgao_no_meio and u == 0:
+            a = a * (1 - z)
+        else:
+            cor = cor * (1 - z[..., None]) + 44.0 * z[..., None]
+    img = liso * (1 - a[..., None]) + cor * a[..., None]
+    return (np.clip(img + rng.normal(0, ruido, img.shape), 0, 255).astype(np.uint8),
+            np.clip(liso + rng.normal(0, ruido, liso.shape), 0, 255).astype(np.uint8), 8 * 9.5)
+
+
+def test_impressao_quase_igual_ao_fundo_na_aresta_e_saco(rng, tmp_path):
+    """Os blocos escuros fazem baías na máscara (sem a correção: ERRO, lado de cima 98 % longe da reta);
+    o ΔE médio de cada baía fica acima do do fundo logo fora, por isso são tapadas e o saco fica inteiro."""
+    img, vazio, _ = _saco_com_impressao_quase_igual_ao_fundo(rng)
+    guardar_imagem(tmp_path / "fundo.png", vazio)
+    diagnostico = Diagnostico()
+    saco = Localizador(_com_referencia(tmp_path / "fundo.png")).localizar(img, diagnostico=diagnostico)
+    assert diagnostico.medidas["baias_tapadas"] >= 1
+    assert abs(saco.comprimento_mm - 150) < 0.2 and abs(saco.largura_mm - 55) < 0.2, \
+        (saco.comprimento_mm, saco.largura_mm)
+    assert abs(np.count_nonzero(saco.mascara) / PPM**2 - 150 * 55) < 40, "a silhueta inteira, sem entalhes"
+
+
+def test_material_em_falta_ao_lado_da_impressao_escura_nao_e_tapado(rng, tmp_path):
+    """No mesmo saco, um bloco é material em falta: na baía vê-se o próprio fundo (ΔE médio igual ao de
+    fora), por isso fica na silhueta para o M3, enquanto os blocos de impressão são tapados."""
+    img, vazio, area_rasgao = _saco_com_impressao_quase_igual_ao_fundo(rng, rasgao_no_meio=True)
+    guardar_imagem(tmp_path / "fundo.png", vazio)
+    saco = Localizador(_com_referencia(tmp_path / "fundo.png")).localizar(img)
+    assert abs(saco.comprimento_mm - 150) < 0.2 and abs(saco.largura_mm - 55) < 0.2
+    falta = 150 * 55 - np.count_nonzero(saco.mascara) / PPM**2
+    assert falta > 0.7 * area_rasgao, f"o rasgão ({area_rasgao:.0f} mm²) foi tapado: faltam só {falta:.0f} mm²"
+
+
+def _saco_com_canto_igual_ao_fundo(rng, tira: bool = True, objeto_ao_lado: bool = False):
+    """Como a papa no fundo preto: um saco claro (150 × 55 mm) com um painel no canto (20 × 15 mm) do
+    mesmo cinzento do fundo, invisível, e (tira) a tira clara da solda ao longo da aresta de cima, além
+    do painel e solta do resto do saco. objeto_ao_lado: um objeto claro de 4 × 4 mm a 4 mm do lado de
+    baixo, fora do saco. Devolve (imagem, foto do fundo vazio)."""
+    altura, largura, (cx, cy), angulo = 1000, 1250, (645, 485), 23
+    cos, sen = math.cos(math.radians(angulo)), math.sin(math.radians(angulo))
+
+    def bloco(u, v, comprimento, largura_mm):
+        return alfa_retangulo(altura, largura, cx + u * PPM * cos - v * PPM * sen, cy + u * PPM * sen + v * PPM * cos,
+                              comprimento * PPM, largura_mm * PPM, angulo)[..., None]
+    liso = fundo(altura, largura, rng, base=(35, 35, 35), gradiente=10, ruido=0)
+    cor = np.full_like(liso, 150.0)
+    painel = bloco(-65, -20, 20, 15)
+    cor = cor * (1 - painel) + liso * painel
+    if tira:
+        t = bloco(-66, -26.25, 12, 2.5)
+        cor = cor * (1 - t) + 220.0 * t
+    a = bloco(0, 0, 150, 55)
+    img = liso * (1 - a) + cor * a
+    if objeto_ao_lado:
+        o = bloco(0, 27.5 + 4 + 2, 4, 4)
+        img = img * (1 - o) + 220.0 * o
+    return (np.clip(img + rng.normal(0, 2, img.shape), 0, 255).astype(np.uint8),
+            np.clip(liso + rng.normal(0, 2, liso.shape), 0, 255).astype(np.uint8))
+
+
+def test_pedaco_solto_do_saco_completa_o_canto(rng, tmp_path):
+    """O painel do canto é igual ao fundo, por isso a baía dele não tem ΔE para ser tapada, mas a tira
+    clara para lá dele é do saco (que é uma peça só e convexo): o canto entra (sem isto faltavam ~270 mm²
+    e o M3 dava "falta material num canto")."""
+    img, vazio = _saco_com_canto_igual_ao_fundo(rng)
+    guardar_imagem(tmp_path / "fundo.png", vazio)
+    diagnostico = Diagnostico()
+    saco = Localizador(_com_referencia(tmp_path / "fundo.png")).localizar(img, diagnostico=diagnostico)
+    assert diagnostico.medidas["pedacos_juntos"] >= 1
+    assert abs(saco.comprimento_mm - 150) < 0.2 and abs(saco.largura_mm - 55) < 0.2
+    falta = 150 * 55 - np.count_nonzero(saco.mascara) / PPM**2
+    assert falta < 40, f"faltam {falta:.0f} mm² no canto"
+
+
+def test_canto_sem_pedaco_e_objeto_ao_lado_nao_sao_juntos(rng, tmp_path):
+    """Sem a tira, nada prova que o canto é saco: fica de fora para o M3. E um objeto claro ao lado do
+    saco, fora do retângulo dele, não entra (só completaria o invólucro aumentando as medidas)."""
+    img, vazio = _saco_com_canto_igual_ao_fundo(rng, tira=False, objeto_ao_lado=True)
+    guardar_imagem(tmp_path / "fundo.png", vazio)
+    diagnostico = Diagnostico()
+    saco = Localizador(_com_referencia(tmp_path / "fundo.png")).localizar(img, diagnostico=diagnostico)
+    assert diagnostico.medidas["pedacos_juntos"] == 0
+    assert abs(saco.largura_mm - 55) < 0.2, saco.largura_mm
+    falta = 150 * 55 - np.count_nonzero(saco.mascara) / PPM**2
+    assert falta > 0.7 * 20 * 15, f"o canto foi tapado: faltam só {falta:.0f} mm²"
+
+
 def test_referencia_em_falta_da_erro_no_arranque():
     with pytest.raises(FileNotFoundError):
         Localizador(_com_referencia("nao_existe.png"))
