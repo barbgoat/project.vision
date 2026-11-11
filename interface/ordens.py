@@ -31,8 +31,8 @@ from interface.login import IDENTIFICAR, assinatura, pode
 from interface.vista_dashboard import VistaDashboard
 from nucleo import dashboard
 from nucleo.especificacoes import (
-    MEDIDAS, ErroRepositorio, Escolha, Especificacao, OrdemFabrico, Repositorio, caminho_base_dados, compor,
-    efetiva, repor_medidas, resolver,
+    MEDIDAS, ErroRepositorio, Escolha, Especificacao, OrdemFabrico, Repositorio, ajustes_entre, caminho_base_dados,
+    compor, efetiva, repor_medidas, resolver,
 )
 
 
@@ -164,7 +164,9 @@ class DialogoOrdem(QDialog):
 
 class DialogoEspecificacao(QDialog):
     """O formulário de um produto, ou de uma OF: comprimento e largura com as tolerâncias, cor e verniz
-    e, só no produto, a resolução da localização (0 = a do perfil; a OF não a muda).
+    e a resolução da localização (0 = a do perfil) e, só no produto, o raio dos cantos (−1 = os do
+    perfil). A resolução é sempre do produto: mudada na janela de uma OF, grava uma versão nova do
+    produto (fica a última que se definiu, para todas as OFs dele).
 
     modo:
         "novo"     um produto novo (e a OF, se tiver número); para duplicar, parte de `produto`
@@ -213,18 +215,38 @@ class DialogoEspecificacao(QDialog):
         self.resolucao.setValue(inicial.resolucao_localizacao_px_por_mm or 0.0)
         self.resolucao.setToolTip(
             "20 = sem redução (brilhantes); 5 = mais rápido (mate). Valores ≥ resolução da câmara "
-            f"({perfil.geral.px_por_mm:.1f} px/mm) equivalem a sem redução. 0 = a do perfil da montagem.")
+            f"({perfil.geral.px_por_mm:.1f} px/mm) equivalem a sem redução. Mais baixa = inspeção mais "
+            "rápida, a segmentação menos fina (o contorno subpíxel é sempre à resolução total). "
+            "0 = a do perfil da montagem. É do produto: fica para todas as OFs dele.")
+        # Cantos do saco bom (a forma ideal do M3): −1 = os do perfil; com o raio, a outra ponta é −1 = igual
+        outra_perfil = perfil.dimensoes.forma_raio_canto_outra_ponta_mm
+        do_perfil = f"{perfil.dimensoes.forma_raio_canto_mm:g}" + (f" e {outra_perfil:g}" if outra_perfil >= 0 else "")
+        self.raio_canto, self.raio_outra_ponta = QDoubleSpinBox(), QDoubleSpinBox()
+        for campo, valor, texto in ((self.raio_canto, inicial.raio_canto_mm, f"do perfil ({do_perfil})"),
+                                    (self.raio_outra_ponta, inicial.raio_canto_outra_ponta_mm, "igual")):
+            campo.setRange(-1, 60)
+            campo.setDecimals(1)
+            campo.setSingleStep(0.5)
+            campo.setSpecialValueText(texto)
+            campo.setValue(-1.0 if valor is None else valor)
+            campo.setToolTip(
+                "Raio dos cantos do saco bom, com que o M3 compara a forma. 0 = cantos vivos. Cantos cortados "
+                "em diagonal: um raio maior (p.ex. 20). Se as pontas forem diferentes, o da outra ponta "
+                "(o saco pode vir virado para qualquer lado). −1 no primeiro = os do perfil da montagem.")
+        self.raio_canto.valueChanged.connect(lambda v: self.raio_outra_ponta.setEnabled(v >= 0))
+        self.raio_outra_ponta.setEnabled(self.raio_canto.value() >= 0)
 
         grelha = QGridLayout()
         linhas = [("Produto", self.ed_produto)] + ([("Ordem de fabrico", self.ed_of)] if modo != "produto" else [])
         linhas += [("Comprimento (mm)", "comprimento"), ("Largura (mm)", "largura"),
                    ("Cor predominante", self.ed_cor), ("Verniz", self.verniz)]
-        if modo != "of":  # é do produto: a OF não a muda
-            linhas.append(("Resolução da localização (px/mm)", self.resolucao))
+        linhas.append(("Resolução da localização (px/mm)" + (", do produto" if modo == "of" else ""), self.resolucao))
+        if modo != "of":  # são do produto: a OF não os muda
+            linhas += [("Raio dos cantos (mm)", self.raio_canto), ("Raio na outra ponta (mm)", self.raio_outra_ponta)]
         for linha, (texto, campo) in enumerate(linhas):
             rotulo = QLabel(texto)
-            if campo is self.resolucao:
-                rotulo.setToolTip(self.resolucao.toolTip())
+            if campo in (self.resolucao, self.raio_canto, self.raio_outra_ponta):
+                rotulo.setToolTip(campo.toolTip())
             grelha.addWidget(rotulo, linha, 0)
             if isinstance(campo, str):  # nominal ± tolerância
                 grelha.addWidget(self.medidas[f"{campo}_nominal_mm"], linha, 1)
@@ -253,16 +275,31 @@ class DialogoEspecificacao(QDialog):
 
     def _lido(self) -> Especificacao:
         """O que está escrito no formulário."""
-        resolucao = (self.resolucao.value() or None) if self.modo != "of" else self._inicial.resolucao_localizacao_px_por_mm
+        resolucao = self.resolucao.value() or None
+        if self.modo != "of":
+            raio = self.raio_canto.value() if self.raio_canto.value() >= 0 else None
+            outra = self.raio_outra_ponta.value() if raio is not None and self.raio_outra_ponta.value() >= 0 else None
+        else:
+            raio, outra = self._inicial.raio_canto_mm, self._inicial.raio_canto_outra_ponta_mm
         return Especificacao(self.ed_produto.text(), **{c: campo.value() for c, campo in self.medidas.items()},
                              cor=self.ed_cor.text(), verniz=self.verniz.isChecked(),
-                             resolucao_localizacao_px_por_mm=resolucao, autor=self.autor)
+                             resolucao_localizacao_px_por_mm=resolucao, raio_canto_mm=raio,
+                             raio_canto_outra_ponta_mm=outra, autor=self.autor)
 
     def _guardar(self) -> None:
         montagem, lido = self.janela._cfg_edicao, self._lido()
         try:
             if self.modo == "of":
-                self.of = dashboard.guardar_of(self.repo, montagem, self.ed_of.text(), self.produto, lido, self.autor)
+                # A resolução é do produto: se mudou, uma versão nova do produto (validada já com a OF por
+                # cima, antes de gravar nada), e a OF guarda o resto dos ajustes face a ele.
+                produto = self.produto
+                if lido.resolucao_localizacao_px_por_mm != produto.resolucao_localizacao_px_por_mm:
+                    produto = dataclasses.replace(produto, resolucao_localizacao_px_por_mm=lido.resolucao_localizacao_px_por_mm,
+                                                  autor=self.autor)
+                    compor(montagem, produto, OrdemFabrico(self.ed_of.text(), produto.produto, ajustes_entre(produto, lido)))
+                    produto = dashboard.guardar_produto(self.repo, montagem, produto)
+                self.produto = produto
+                self.of = dashboard.guardar_of(self.repo, montagem, self.ed_of.text(), produto, lido, self.autor)
             elif self.modo == "produto":
                 self.produto = dashboard.guardar_produto(self.repo, montagem,
                                                          dataclasses.replace(lido, produto=self.produto.produto))
@@ -426,8 +463,8 @@ class Ordens:
 
     def _usar_ordem(self, escolha: Escolha | None) -> bool:
         """Passa a usar esta OF/produto: montagem → produto → OF. A correr, entra no próximo saco."""
-        # A montagem sem o produto que estava em uso (medidas e, se a tinha, a resolução da localização)
-        anterior = self._ordem.produto if self._ordem is not None else None
+        # A montagem sem o produto que estava em uso, com a sua OF (medidas, resolução e cantos, se os tinha)
+        anterior = efetiva(self._ordem.produto, self._ordem.of) if self._ordem is not None else None
         montagem = repor_medidas(self._cfg_edicao, self._cfg_perfil, anterior)
         try:
             if escolha is None or escolha.produto is None:  # sem OF: o produto volta a ser o do perfil

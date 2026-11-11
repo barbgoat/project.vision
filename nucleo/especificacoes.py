@@ -1,8 +1,9 @@
 """Especificações: o que cada produto tem de ser, as ordens de fabrico (OF) e as inspeções de cada uma.
 
     Produto (Especificacao)  comprimento e largura nominais e as tolerâncias, a cor
-                             predominante (escrita), se tem verniz e, opcional, a
-                             resolução da localização (px/mm do mapa do M2)
+                             predominante (escrita), se tem verniz e, opcionais, a
+                             resolução da localização (px/mm do mapa do M2) e o raio
+                             dos cantos (a forma ideal do M3)
     Ordem de fabrico (OF)    um número, o produto e o que esta OF muda nele
 
 A configuração de cada saco faz-se por camadas e é sempre validada pela Config:
@@ -11,8 +12,11 @@ A configuração de cada saco faz-se por camadas e é sempre validada pela Confi
 
 O produto só mexe nas medidas e tolerâncias do M3 (MEDIDAS) e, se a tiver, na resolução
 da localização (localizacao.resolucao_px_por_mm: 20 = sem redução, para os brilhantes; 5 =
-mais rápido, para os mate); o resto (cantos, esquadria, câmara, px/mm...) é do perfil da
-montagem. A OF não muda a resolução: é do produto. A cor e o verniz ficam
+mais rápido, para os mate) e nos cantos da forma ideal (dimensoes.forma_raio_canto_mm e
+..._outra_ponta_mm: um saco com os cantos de uma ponta cortados não é um saco de cantos
+redondos com defeito); o resto (esquadria, câmara, px/mm...) é do perfil da montagem. A
+resolução e os cantos são do produto, não da OF: a resolução mudada na janela de uma OF
+grava uma versão nova do produto (fica para todas as OFs dele). A cor e o verniz ficam
 guardados, mas por agora nenhum módulo os verifica.
 
 Correspondência BD ↔ OpenCV (CORRESPONDENCIA): o comprimento e a largura que o M2
@@ -74,6 +78,11 @@ class Especificacao:
     # px/mm do mapa de segmentação do M2 para este produto (localizacao.resolucao_px_por_mm); None = a do
     # perfil da montagem. Valores ≥ px/mm da câmara (geral.px_por_mm) equivalem a sem redução.
     resolucao_localizacao_px_por_mm: float | None = None
+    # Raio (mm) dos cantos do saco bom, para a forma ideal do M3 (dimensoes.forma_raio_canto_mm); None =
+    # os do perfil da montagem (os dois). Com ele, o da outra ponta é o deste produto: None = igual.
+    # Cantos cortados em diagonal aproximam-se por um raio maior (bluey: 6 numa ponta, 20 na outra).
+    raio_canto_mm: float | None = None
+    raio_canto_outra_ponta_mm: float | None = None
     autor: str = ""  # quem gravou esta versão
     data_hora: str = ""  # quando, pelo relógio do PC (preenchido ao guardar)
 
@@ -203,6 +212,16 @@ def compor(montagem: Config, produto: Especificacao | None = None, of: OrdemFabr
             if not float(resolucao) > 0:
                 raise ValueError(f"resolucao_localizacao_px_por_mm tem de ser > 0 (está {resolucao})")
             cfg = replace(cfg, localizacao=replace(cfg.localizacao, resolucao_px_por_mm=float(resolucao)))
+        if p.raio_canto_mm is not None:
+            outra = p.raio_canto_outra_ponta_mm
+            for nome, raio in (("raio_canto_mm", p.raio_canto_mm), ("raio_canto_outra_ponta_mm", outra)):
+                if raio is not None and not float(raio) >= 0:
+                    raise ValueError(f"{nome} tem de ser ≥ 0 (está {raio})")
+            cfg = replace(cfg, dimensoes=replace(
+                cfg.dimensoes, forma_raio_canto_mm=float(p.raio_canto_mm),
+                forma_raio_canto_outra_ponta_mm=-1.0 if outra is None else float(outra)))
+        elif p.raio_canto_outra_ponta_mm is not None:
+            raise ValueError("raio_canto_outra_ponta_mm só com raio_canto_mm (sem ele, os cantos são os do perfil)")
         return cfg
     except (ValueError, TypeError) as erro:
         raise ValueError(f"O produto '{p.produto}'{f' (OF {of.numero})' if of else ''}: {erro}") from None
@@ -210,12 +229,17 @@ def compor(montagem: Config, produto: Especificacao | None = None, of: OrdemFabr
 
 def repor_medidas(cfg: Config, perfil: Config, produto: Especificacao | None = None) -> Config:
     """`cfg` sem o que vinha do produto: as medidas como estão no perfil da montagem e, se `produto`
-    (o que estava em uso) tinha a sua resolução da localização, também a do perfil. Sem ela, a
-    resolução de `cfg` fica (pode ter sido mudada no editor de parâmetros)."""
+    (o que estava em uso, já com a OF por cima: efetiva) tinha a sua resolução da localização ou os
+    seus cantos, também os do perfil.
+    Sem eles, os de `cfg` ficam (podem ter sido mudados no editor de parâmetros)."""
     cfg = replace(cfg, dimensoes=replace(cfg.dimensoes, **{c: getattr(perfil.dimensoes, c) for c in MEDIDAS}))
     if produto is not None and produto.resolucao_localizacao_px_por_mm is not None:
         cfg = replace(cfg, localizacao=replace(cfg.localizacao,
                                                resolucao_px_por_mm=perfil.localizacao.resolucao_px_por_mm))
+    if produto is not None and produto.raio_canto_mm is not None:
+        cfg = replace(cfg, dimensoes=replace(
+            cfg.dimensoes, forma_raio_canto_mm=perfil.dimensoes.forma_raio_canto_mm,
+            forma_raio_canto_outra_ponta_mm=perfil.dimensoes.forma_raio_canto_outra_ponta_mm))
     return cfg
 
 

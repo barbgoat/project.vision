@@ -20,7 +20,7 @@ from interface.janelas import JanelaAuxiliar
 from interface.registos import guardar_correcao, pasta_dataset
 from modulos.m1_aquisicao.disparo import faixa_da_barreira
 from nucleo.config import CAMINHO_POR_OMISSAO, RAIZ, Config, carregar_configuracao
-from nucleo.especificacoes import repor_medidas
+from nucleo.especificacoes import efetiva, repor_medidas
 
 
 
@@ -188,8 +188,8 @@ class Parametros:
 
     def _guardar(self) -> None:
         cfg = self._cfg_edicao
-        if self._ordem is not None:  # as medidas (e a resolução, se a tiver) são do produto: não vão para o perfil
-            cfg = repor_medidas(cfg, self._cfg_perfil, self._ordem.produto)
+        if self._ordem is not None:  # as medidas (e a resolução e os cantos, se os tiver) são do produto/OF: não vão para o perfil
+            cfg = repor_medidas(cfg, self._cfg_perfil, efetiva(self._ordem.produto, self._ordem.of))
         mudancas = diferencas(self._cfg_perfil, cfg)
         if not mudancas:
             self._mensagem("Nada a guardar: os valores são os do perfil.")

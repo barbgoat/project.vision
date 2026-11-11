@@ -81,6 +81,7 @@ def test_resolucao_da_localizacao_por_produto():
     assert compor(CFG, com, of).localizacao.resolucao_px_por_mm == 5.0, "a OF não a muda"
     with pytest.raises(ValueError, match="A OF 7 só pode mudar .*não: resolucao_localizacao_px_por_mm"):
         compor(CFG, sem, OrdemFabrico("7", "PreVital", {"resolucao_localizacao_px_por_mm": 5.0}))
+    assert "resolucao_localizacao_px_por_mm" not in ajustes_entre(sem, com), "não é ajuste de OF"
     for valor in (0.0, -2.0):
         with pytest.raises(ValueError, match="'PreVital'.*resolucao_localizacao_px_por_mm tem de ser > 0"):
             compor(CFG, _produto(resolucao_localizacao_px_por_mm=valor))
@@ -88,6 +89,32 @@ def test_resolucao_da_localizacao_por_produto():
     editada = dataclasses.replace(CFG, localizacao=dataclasses.replace(CFG.localizacao, resolucao_px_por_mm=7.0))
     assert repor_medidas(compor(editada, com), CFG, com).localizacao == CFG.localizacao
     assert repor_medidas(compor(editada, sem), CFG, sem).localizacao.resolucao_px_por_mm == 7.0
+
+
+def test_raio_dos_cantos_por_produto():
+    """O produto pode ter os seus cantos (a forma ideal do M3); sem eles ficam os do perfil. Com o raio,
+    a outra ponta é a do produto (None = igual), nunca a do perfil."""
+    perfil = dataclasses.replace(CFG, dimensoes=dataclasses.replace(
+        CFG.dimensoes, forma_raio_canto_mm=6.0, forma_raio_canto_outra_ponta_mm=12.0))
+    sem, so_raio = _produto(), _produto(raio_canto_mm=0.0)
+    cortados = _produto(raio_canto_mm=6.0, raio_canto_outra_ponta_mm=20.0)
+    d = compor(perfil, sem).dimensoes
+    assert (d.forma_raio_canto_mm, d.forma_raio_canto_outra_ponta_mm) == (6.0, 12.0), "sem o campo: os do perfil"
+    d = compor(perfil, so_raio).dimensoes
+    assert (d.forma_raio_canto_mm, d.forma_raio_canto_outra_ponta_mm) == (0.0, -1.0), "cantos vivos, pontas iguais"
+    d = compor(perfil, cortados, OrdemFabrico("OF1", "PreVital", {"tolerancia_comprimento_mm": 4.0})).dimensoes
+    assert (d.forma_raio_canto_mm, d.forma_raio_canto_outra_ponta_mm) == (6.0, 20.0), "a OF não os muda"
+    assert compor(perfil, cortados).localizacao == perfil.localizacao
+    with pytest.raises(ValueError, match="A OF 7 só pode mudar .*não: raio_canto_mm"):
+        compor(perfil, sem, OrdemFabrico("7", "PreVital", {"raio_canto_mm": 5.0}))
+    with pytest.raises(ValueError, match="'PreVital'.*raio_canto_mm tem de ser ≥ 0"):
+        compor(perfil, _produto(raio_canto_mm=-2.0))
+    with pytest.raises(ValueError, match="'PreVital'.*só com raio_canto_mm"):
+        compor(perfil, _produto(raio_canto_outra_ponta_mm=20.0))
+    # Ao sair do produto, os cantos voltam aos do perfil só se eram dele; os mudados no editor ficam.
+    editada = dataclasses.replace(perfil, dimensoes=dataclasses.replace(perfil.dimensoes, forma_raio_canto_mm=3.0))
+    assert repor_medidas(compor(editada, cortados), perfil, cortados).dimensoes == perfil.dimensoes
+    assert repor_medidas(compor(editada, sem), perfil, sem).dimensoes.forma_raio_canto_mm == 3.0
 
 
 # --- Base de dados ---------------------------------------------------------------------
@@ -155,6 +182,10 @@ def test_mudar_so_a_resolucao_nao_mexe_nas_medidas_nem_nas_ofs(repo):
         bd.commit()
     assert [v.get("resolucao_localizacao_px_por_mm") for v in versoes] == [None, 5.0], "a versão anterior fica"
     assert repo.procurar_produto("Antigo").resolucao_localizacao_px_por_mm is None
+    assert repo.procurar_produto("Antigo").raio_canto_mm is None, "produtos de antes do campo: cantos do perfil"
+    repo.guardar(dataclasses.replace(atual, raio_canto_mm=6.0, raio_canto_outra_ponta_mm=20.0))
+    lido = repo.procurar_produto("PreVital")
+    assert (lido.raio_canto_mm, lido.raio_canto_outra_ponta_mm, lido.resolucao_localizacao_px_por_mm) == (6.0, 20.0, 5.0)
 
 
 def test_listas_e_procura(repo):

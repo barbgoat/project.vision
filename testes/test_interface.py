@@ -565,7 +565,7 @@ def test_permissoes_das_ofs(app, janela, monkeypatch):
 
 def test_resolucao_da_localizacao_no_produto_e_ao_trocar_de_of(app, janela):
     """O produto pode ter a sua resolução da localização (0 = a do perfil): entra com a OF desse produto e sai
-    com ela; a janela da OF não a mostra (é do produto)."""
+    com ela. Mudada na janela de uma OF, grava uma versão nova do produto: fica para todas as OFs dele."""
     repo = janela._repositorio()
     medidas = {c: getattr(janela._cfg_perfil.dimensoes, c) for c in MEDIDAS}
     do_perfil = janela._cfg_perfil.localizacao.resolucao_px_por_mm
@@ -591,9 +591,66 @@ def test_resolucao_da_localizacao_no_produto_e_ao_trocar_de_of(app, janela):
     assert janela._cfg_edicao.localizacao.resolucao_px_por_mm == do_perfil, "sem OF: a do perfil"
 
     form = DialogoEspecificacao(janela, janela, "of", "admin", produto=mate, of=repo.procurar_of("OF-M"))
-    assert not form.isAncestorOf(form.resolucao), "a OF não muda a resolução"
+    assert form.isAncestorOf(form.resolucao) and form.resolucao.value() == 5.0, "a OF mostra a do produto"
+    antes = repo.procurar_produto("Mate")
     form._guardar()
     assert repo.procurar_of("OF-M").ajustes == {}
+    assert repo.procurar_produto("Mate") == antes, "sem mudar a resolução, o produto não ganha versão"
+
+    # Mudada na OF: fica no produto (uma versão nova), não na OF, e vale também para outra OF do produto
+    repo.guardar(OrdemFabrico("OF-M2", "Mate", {"tolerancia_largura_mm": 4.0}, autor="admin"))
+    form = DialogoEspecificacao(janela, janela, "of", "operador", produto=mate, of=repo.procurar_of("OF-M2"))
+    form.resolucao.setValue(4.0)
+    form._guardar()
+    assert form.result() == QDialog.DialogCode.Accepted, form.erro.text()
+    mate = repo.procurar_produto("Mate")
+    assert mate.resolucao_localizacao_px_por_mm == 4.0 and mate.autor == "operador"
+    assert {c: getattr(mate, c) for c in MEDIDAS} == medidas, "as medidas do produto não mudam"
+    assert repo.procurar_of("OF-M2").ajustes == {"tolerancia_largura_mm": 4.0}, "a OF guarda só os seus ajustes"
+    assert janela._usar_ordem(resolver(repo, "OF-M", ""))
+    assert janela._cfg_edicao.localizacao.resolucao_px_por_mm == 4.0, "a última definida, noutra OF do produto"
+    form = DialogoEspecificacao(janela, janela, "of", "admin", produto=mate, of=repo.procurar_of("OF-M"))
+    form.resolucao.setValue(0.0)
+    form._guardar()
+    assert repo.procurar_produto("Mate").resolucao_localizacao_px_por_mm is None, "0 = volta à do perfil"
+    assert janela._usar_ordem(None)
+    assert janela._cfg_edicao.localizacao.resolucao_px_por_mm == do_perfil, "sem OF: a do perfil"
+
+
+def test_raio_dos_cantos_no_produto_e_ao_trocar_de_of(app, janela):
+    """O produto pode ter os seus cantos (−1 = os do perfil): entram com a OF desse produto e saem com ela;
+    a janela da OF não os mostra."""
+    repo = janela._repositorio()
+    medidas = {c: getattr(janela._cfg_perfil.dimensoes, c) for c in MEDIDAS}
+    perfil = janela._cfg_perfil.dimensoes
+    do_perfil = (perfil.forma_raio_canto_mm, perfil.forma_raio_canto_outra_ponta_mm)
+    for produto, of in (("Cortados", "OF-C"), ("Redondos", "OF-R")):
+        repo.guardar(Especificacao(produto, **medidas, autor="admin"))
+        repo.guardar(OrdemFabrico(of, produto, autor="admin"))
+    form = DialogoEspecificacao(janela, janela, "produto", "admin", produto=repo.procurar_produto("Cortados"))
+    assert form.isAncestorOf(form.raio_canto) and form.raio_canto.value() == -1
+    assert form.raio_canto.specialValueText().startswith("do perfil (") and not form.raio_outra_ponta.isEnabled()
+    form.raio_canto.setValue(6.0)
+    assert form.raio_outra_ponta.isEnabled() and form.raio_outra_ponta.specialValueText() == "igual"
+    form.raio_outra_ponta.setValue(20.0)
+    form._guardar()
+    assert form.result() == QDialog.DialogCode.Accepted, form.erro.text()
+    cortados = repo.procurar_produto("Cortados")
+    assert (cortados.raio_canto_mm, cortados.raio_canto_outra_ponta_mm) == (6.0, 20.0)
+    assert repo.procurar_produto("Redondos").raio_canto_mm is None
+
+    def cantos():
+        d = janela._cfg_edicao.dimensoes
+        return d.forma_raio_canto_mm, d.forma_raio_canto_outra_ponta_mm
+    assert janela._usar_ordem(resolver(repo, "OF-C", "")) and cantos() == (6.0, 20.0), "os do produto da OF"
+    assert janela._usar_ordem(resolver(repo, "OF-R", "")) and cantos() == do_perfil, "outro produto: os do perfil"
+    assert janela._usar_ordem(resolver(repo, "OF-C", "")) and janela._usar_ordem(None)
+    assert cantos() == do_perfil, "sem OF: os do perfil"
+
+    form = DialogoEspecificacao(janela, janela, "of", "admin", produto=cortados, of=repo.procurar_of("OF-C"))
+    assert not form.isAncestorOf(form.raio_canto), "a OF não muda os cantos"
+    form._guardar()
+    assert repo.procurar_of("OF-C").ajustes == {} and repo.procurar_produto("Cortados").raio_canto_mm == 6.0
 
 
 def test_criar_produto_e_of_no_formulario_e_no_dialogo(app, janela):
