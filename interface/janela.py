@@ -58,7 +58,7 @@ from interface.ordens import Ordens
 from interface.paineis import (
     Contadores, Etapas, Faixa, PainelLog, RegistoQt, TabelaDefeitos, TabelaModulos, VistaImagem,
 )
-from interface.registos import registar_revisao
+from interface.registos import guardar_correcao, registar_revisao
 from modulos.m2_localizacao.medicao import LADOS
 from nucleo.config import CAMINHO_POR_OMISSAO, RAIZ, Config
 from nucleo.contrato import CLASSES_DATASET, Estado
@@ -676,22 +676,30 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
             return
         self.historico.marcar_decisao(visto.numero, "em revisão")
         self._em_revisao = JanelaRevisao(self, visto if visto.preparado else preparar(visto))
-        self._em_revisao.decidido.connect(lambda decisao, v=visto: self._decidir(v, decisao))
+        self._em_revisao.decidido.connect(lambda decisao, classe, v=visto: self._decidir(v, decisao, classe))
         self._em_revisao.open()
         self._atualizar_botoes()
 
-    def _decidir(self, visto: Visto, decisao: str) -> None:
-        """A decisão da revisão: "NOK" conta como NOK; "descartado" não conta. A inspeção continua."""
+    def _decidir(self, visto: Visto, decisao: str, classe: str = "") -> None:
+        """A decisão da revisão: "NOK" conta como NOK; "falso NOK" e "descartado" não contam. Com uma
+        classe, a imagem vai para o dataset. A inspeção continua sempre, mesmo que guardar falhe."""
         self._contagem["NOK" if decisao == "NOK" else "DESCARTADOS"] += 1
         self.historico.marcar_decisao(visto.numero, decisao)
         if self.ciclo is not None and self.ciclo.pasta_resultados is not None:
             registar_revisao(visto.resultado, visto.numero, decisao, self.ciclo.pasta_resultados)
             if self.ciclo.pedido.repositorio is not None:
-                try:
-                    self.ciclo.pedido.repositorio.marcar_decisao(self.ciclo.pasta_resultados.name, visto.numero,
-                                                                 decisao)
+                try:  # na base de dados, um falso NOK conta como descartado: os números da produção não mudam
+                    self.ciclo.pedido.repositorio.marcar_decisao(
+                        self.ciclo.pasta_resultados.name, visto.numero, "NOK" if decisao == "NOK" else "descartado")
                 except ErroRepositorio as erro:
                     log.warning("%s", erro)
+        if classe:
+            try:
+                feito, visto.no_dataset = guardar_correcao(
+                    visto.resultado, classe, self._dataset, Path(self.args.saida) / "correcoes.csv", visto.no_dataset)
+                log.info("Revisão do saco %d → dataset (%s): %s", visto.numero, classe, feito)
+            except (ValueError, OSError) as erro:
+                log.warning("Revisão do saco %d: não foi para o dataset (%s): %s", visto.numero, classe, erro)
         self._em_revisao = None
         self._atualizar_contadores()
         self._atualizar_botoes()

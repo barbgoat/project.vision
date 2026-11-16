@@ -25,13 +25,14 @@ import gui  # noqa: E402
 from interface.editor import SECOES_CAMARA, SECOES_DEFINICOES, EditorParametros, ajudas  # noqa: E402
 from interface.estilo import ICONE, LOGO, icone  # noqa: E402
 from interface.janela import Janela  # noqa: E402
+from interface.janelas import classe_proposta  # noqa: E402
 from interface.login import JanelaLogin, assinatura, pode, verificar  # noqa: E402
 from interface.ordens import DialogoEspecificacao, DialogoOrdem  # noqa: E402
 from interface.paineis import VistaImagem  # noqa: E402
 from interface import vista_dashboard  # noqa: E402
 from interface.registos import guardar_correcao, pasta_dataset  # noqa: E402
 from nucleo.config import RAIZ, Config, nome_define  # noqa: E402
-from nucleo.contrato import Captura, Estado, Resultado  # noqa: E402
+from nucleo.contrato import Captura, Defeito, Estado, Relatorio, Resultado, TipoDefeito  # noqa: E402
 from nucleo.especificacoes import (  # noqa: E402
     MEDIDAS, Especificacao, OrdemFabrico, Repositorio, resolver,
 )
@@ -118,9 +119,9 @@ def test_interface_nao_depende_das_ferramentas():
 def test_correcao_copia_a_imagem_para_o_dataset_e_regista(tmp_path):
     r = Resultado(IMG, Estado.NOK, None, [], 1.0, captura=Captura(IMG, "linha.mp4#7", 1000.0))
     dataset, registo = tmp_path / "dataset" / "blackfly", tmp_path / "res" / "correcoes.csv"
-    feito = guardar_correcao(r, "ok", dataset, registo)
+    feito, copia = guardar_correcao(r, "ok", dataset, registo)
     copias = list((dataset / "ok").glob("*.png"))
-    assert len(copias) == 1 and "linha" in copias[0].name and "blackfly/ok/" in feito
+    assert copias == [copia] and "linha" in copia.name and "blackfly/ok/" in feito
     guardar_correcao(r, "risco", dataset, registo)
     linhas = ler_csv(registo)
     assert [linha["classe_real"] for linha in linhas] == ["ok", "risco"]
@@ -133,9 +134,30 @@ def test_correcao_de_uma_imagem_do_dataset_so_regista(tmp_path):
     original = dataset / "ok" / "saco 1 ç.png"
     guardar_imagem(original, IMG)
     r = Resultado(IMG, Estado.NOK, None, [], 1.0, captura=Captura(IMG, str(original), 1000.0))
-    feito = guardar_correcao(r, "risco", dataset, tmp_path / "correcoes.csv")
-    assert "já está no dataset" in feito and list(dataset.rglob("*.png")) == [original]
+    feito, copia = guardar_correcao(r, "risco", dataset, tmp_path / "correcoes.csv")
+    assert "já está no dataset" in feito and copia is None and list(dataset.rglob("*.png")) == [original]
     assert ler_csv(tmp_path / "correcoes.csv")[0]["imagem_dataset"] == ""
+
+
+def test_corrigir_outra_vez_move_a_copia_em_vez_de_duplicar(tmp_path):
+    r = Resultado(IMG, Estado.NOK, None, [], 1.0, captura=Captura(IMG, "linha.mp4#7", 1000.0))
+    dataset, registo = tmp_path / "dataset" / "linha", tmp_path / "correcoes.csv"
+    _, copia = guardar_correcao(r, "risco", dataset, registo)
+    feito, mesma = guardar_correcao(r, "risco", dataset, registo, copia)
+    assert mesma == copia and "ficou só registada" in feito
+    feito, movida = guardar_correcao(r, "dobra", dataset, registo, copia)
+    assert movida == dataset / "dobra" / copia.name and "movida" in feito
+    assert list(dataset.rglob("*.png")) == [movida], "uma só cópia, na pasta da última classe"
+    assert [linha["classe_real"] for linha in ler_csv(registo)] == ["risco", "risco", "dobra"]
+
+
+def test_classe_proposta_pela_revisao():
+    def com_tipos(*tipos: TipoDefeito) -> Resultado:
+        estado = Estado.NOK if tipos else Estado.ERRO
+        return Resultado(IMG, estado, None, [Relatorio("m", estado, tuple(Defeito(t) for t in tipos))], 1.0)
+    assert classe_proposta(com_tipos(TipoDefeito.RUGAS, TipoDefeito.RUGAS)) == "rugas"
+    assert classe_proposta(com_tipos(TipoDefeito.RUGAS, TipoDefeito.MANCHA)) == "varios"
+    assert classe_proposta(com_tipos()) == "", "sem defeitos (ERRO, SEM_SACO) não se inventa uma classe"
 
 
 def test_passagem_descartada_nao_se_corrige(tmp_path):
@@ -297,6 +319,36 @@ def test_producao_para_em_cada_saco_nao_ok_ate_decidir(app, janela, tmp_path):
 
     janela._corrigir("dimensao")  # Engenharia: guardar no dataset
     assert len(list((tmp_path / "dataset" / "linha" / "dimensao").glob("*comprido_158.png"))) == 1
+
+
+def test_revisao_manda_a_classe_real_para_o_dataset(app, janela, tmp_path):
+    """Era OK → dataset/ok/; NOK → a pasta do defeito proposto. Na base de dados, o falso NOK conta
+    como descartado (os números da produção não mudam); a correção na Engenharia move, não duplica."""
+    repo = janela._repositorio()
+    medidas = {c: getattr(janela._cfg_perfil.dimensoes, c) for c in MEDIDAS}
+    repo.guardar(Especificacao("A", **medidas, autor="admin"))
+    repo.guardar(OrdemFabrico("OF-A", "A", autor="admin"))
+    assert janela._usar_ordem(resolver(repo, "OF-A", ""))
+    janela.iniciar()
+    esperar(app, lambda: janela._em_revisao is not None)
+    proposta = janela._em_revisao.classe.currentData()
+    assert proposta, "um NOK com defeitos traz a classe proposta"
+    _producao_ate_ao_fim(app, janela, ("falso NOK", "NOK"), arrancar=False)
+
+    assert janela.contadores_op.texto().startswith("2 sacos   OK 1   NOK 1   DESCARTADOS 1")
+    assert [janela.historico.item(i, 6).text() for i in range(3)] == ["NOK", "", "falso NOK"]
+    assert [i.decisao for i in repo.historico("OF-A")] == ["descartado", "", "NOK"]
+    pasta = execucao(tmp_path / "res")
+    assert [linha["decisao"] for linha in ler_csv(pasta / "revisoes.csv")] == ["falso NOK", "NOK"]
+    dataset = tmp_path / "dataset" / "linha"
+    assert len(list((dataset / "ok").glob("*canto_dobrado.png"))) == 1
+    comprido = list(dataset.rglob("*comprido_158.png"))
+    assert len(comprido) == 1 and comprido[0].parent.name == "dimensao"
+    assert [linha["classe_real"] for linha in ler_csv(tmp_path / "res" / "correcoes.csv")] == ["ok", "dimensao"]
+
+    janela._corrigir("varios")  # o saco no ecrã (comprido_158): Engenharia corrige a classe
+    comprido = list(dataset.rglob("*comprido_158.png"))
+    assert len(comprido) == 1 and comprido[0].parent.name == "varios", "movida, não duplicada"
 
 
 def test_parar_durante_uma_revisao(app, janela):

@@ -2,8 +2,11 @@
 
 As imagens vêm da câmara: na BIapp (vista Engenharia), "Guardar no dataset" copia a imagem
 do saco no ecrã para a pasta da classe certa, e a depuração de cada saco guarda a
-`00_original.png`. A pasta `dataset/` não está no git (as imagens são grandes; para as
-guardar, Git LFS) e cria-se sozinha.
+`00_original.png`. A revisão de cada saco não OK também as põe cá: "Era OK" em `ok/`, "Mover
+para NOK" na pasta do defeito escolhido (corrigir depois na Engenharia move a imagem, não a
+duplica). Os `originais/ok|nok|erro/` da sessão são o veredito do sistema, não a verdade: os OK
+não confirmados não entram aqui sozinhos. A pasta `dataset/` não está no git (as imagens são
+grandes; para as guardar, Git LFS) e cria-se sozinha.
 
 ```
 dataset/

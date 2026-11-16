@@ -218,7 +218,8 @@ class Parametros:
             return
         registo = Path(self.args.saida) / "correcoes.csv"
         try:
-            feito = guardar_correcao(visto.resultado, classe, self._dataset, registo)
+            feito, visto.no_dataset = guardar_correcao(visto.resultado, classe, self._dataset, registo,
+                                                       visto.no_dataset)
         except (ValueError, OSError) as erro:
             QMessageBox.warning(self, "Guardar no dataset", str(erro))
             return

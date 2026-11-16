@@ -167,7 +167,11 @@ muitos sacos OK (≥ `referencia.sacos_min`, melhor 30 a 50 para a referência e
 - Nos dois, uma decisão por saco, registada como no `main.py`. Um parâmetro mudado é
   pré-visualizado no saco do ecrã e só entra com "Aplicar à produção".
 - **Revisão**: cada saco não OK para a inspeção e abre uma janela com a imagem;
-  "Descartar" (não conta) ou "Mover para NOK". As decisões ficam em `revisoes.csv`.
+  "Descartar" (passagem má: não conta), "Era OK" (falso NOK: não conta, a imagem vai para
+  `dataset/<perfil>/ok/`) ou "Mover para NOK" (a imagem vai para a pasta do defeito escolhido,
+  proposto pelo sistema). As decisões ficam em `revisoes.csv`, as classes em `correcoes.csv`;
+  na base de dados o falso NOK conta como descartado. Os originais da sessão ficam em
+  `originais/ok/`, `nok/` e `erro/`: o que o sistema disse, ainda por confirmar.
 - Vistas **Operador** (estado em grande) e **Engenharia** (etapas, log, "Guardar no dataset");
   o **Histórico** abre numa janela à parte (menu ⚙). As imagens ampliam com a roda do rato.
 - **Guardar no perfil** escreve os parâmetros no perfil escolhido (`configuracoes/*.json` ou `config.json`).

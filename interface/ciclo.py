@@ -71,6 +71,7 @@ class Visto:
     cfg: Config  # a configuração com que foi analisado
     ciclo_ms: float = 0.0  # inspeção + registo (o que tem de caber no orçamento)
     previsao: bool = False  # analisado com parâmetros ainda não aplicados
+    no_dataset: Path | None = None  # a cópia no dataset (revisão ou "Guardar no dataset"): uma só por saco
     # Preenchidos por preparar(), fora da janela:
     preparado: bool = False
     anotada: np.ndarray | None = None  # None numa passagem descartada
