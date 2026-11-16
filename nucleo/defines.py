@@ -383,11 +383,15 @@ SAIDA_FORMATO_IMAGEM: Final = ".jpg"  # ".jpg" | ".png"
 # Originais: a imagem que a inspeção analisou, tal como veio da câmara (já com a ROI: os píxeis são os da
 # câmara, só cortados), em PNG sem perdas e, de uma câmara mono, num só canal de 8 bits. Com o mesmo
 # nome base da anotada (…_original.png / …_anotada.jpg). São estas que servem para analisar e comparar
-# métodos: as anotadas têm o contorno desenhado por cima da borda.
+# métodos: as anotadas têm o contorno desenhado por cima da borda. Ficam em ok/, nok/ e erro/ (ERRO e
+# SEM_SACO), pelo veredito do sistema; a classe real vai para o dataset na revisão.
 SAIDA_GUARDAR_ORIGINAIS: Final = "nenhuma"  # "nenhuma" | "nok" | "todas"
 SAIDA_ORIGINAIS_PASTA: Final = ""  # "" = <resultados>/<sessão>/originais; senão esta pasta (p.ex. outro disco)
 SAIDA_ORIGINAIS_CADA: Final = 1  # guardar 1 em cada N sacos
 SAIDA_ORIGINAIS_MAX_MB: Final = 0.0  # > 0: na pasta dos originais, apagar os mais antigos acima disto
+# > 0: na pasta dos originais, só os últimos N sacos (os mais antigos saem). Junta-se ao limite em MB:
+# manda o que cortar primeiro. Os que foram revistos já estão no dataset (cópia à parte), não se perdem.
+SAIDA_ORIGINAIS_MAX_SACOS: Final = 0
 SAIDA_SEPARADOR_DECIMAL: Final = ","  # "," para o Excel em português; "." para Python/pandas
 # Base de dados dos produtos, das ordens de fabrico (OF) e das inspeções (nucleo/especificacoes.py):
 # "" = especificacoes.sqlite na pasta dos resultados; senão o caminho do ficheiro (relativo à raiz).

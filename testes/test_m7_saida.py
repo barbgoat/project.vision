@@ -184,5 +184,30 @@ def test_originais_da_camara_ao_lado_das_anotadas(resultado, imagem, tmp_path):
     with Saida(limite, tmp_path / "limite", ["localizacao", "dimensoes"]) as saida:
         for _ in range(5):
             saida.registar(mono)
-    assert len(list(saida.pasta_originais.glob("*_original.png"))) == 2, "só cabem 2: os antigos saem"
-    assert (saida.pasta_originais / f"000005_{nome_curto('cam:1#7')}_NOK_original.png").exists()
+    assert len(list(saida.pasta_originais.rglob("*_original.png"))) == 2, "só cabem 2: os antigos saem"
+    assert (saida.pasta_originais / "nok" / f"000005_{nome_curto('cam:1#7')}_NOK_original.png").exists()
+
+
+def test_originais_limitados_aos_ultimos_n_sacos(resultado, tmp_path):
+    import dataclasses
+    cfg = dataclasses.replace(CFG, saida=dataclasses.replace(CFG.saida, guardar_originais="todas",
+                                                             originais_max_sacos=3))
+    with Saida(cfg, tmp_path, ["localizacao"]) as saida:
+        for estado in (Estado.NOK, Estado.OK, Estado.OK, Estado.NOK, Estado.OK):
+            saida.registar(dataclasses.replace(resultado, estado=estado))
+    ficam = sorted(f.name[:6] for f in saida.pasta_originais.rglob("*_original.png"))
+    assert ficam == ["000003", "000004", "000005"], "só os últimos 3, de todas as pastas"
+
+
+def test_originais_separados_pelo_veredito(resultado, tmp_path):
+    """ok/, nok/ e erro/ (ERRO e SEM_SACO): o que o sistema disse de cada saco."""
+    import dataclasses
+    cfg = dataclasses.replace(CFG, saida=dataclasses.replace(CFG.saida, guardar_originais="todas"))
+    with Saida(cfg, tmp_path, ["localizacao"]) as saida:
+        for estado in (Estado.OK, Estado.NOK, Estado.ERRO, Estado.SEM_SACO):
+            saida.registar(dataclasses.replace(resultado, estado=estado))
+    pastas = {p.name: sorted(f.name.split("_")[-2] for f in p.glob("*_original.png"))
+              for p in saida.pasta_originais.iterdir()}
+    assert pastas == {"ok": ["OK"], "nok": ["NOK"], "erro": ["ERRO", "SACO"]}
+    linhas = ler_csv(saida.pasta / "registo.csv")
+    assert all((saida.pasta / linha["imagem_original"]).is_file() for linha in linhas), "o registo aponta para lá"

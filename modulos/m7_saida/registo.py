@@ -7,7 +7,9 @@ Para cada execução do main.py cria uma pasta resultados/<AAAAMMDD_HHMMSS>/ com
     defeitos.csv  uma linha por defeito, com o mesmo número que aparece na imagem
     imagens/      imagens anotadas, …_anotada.jpg (conforme SAIDA_GUARDAR_IMAGENS)
     originais/    as imagens da câmara, …_original.png, com o mesmo nome base (SAIDA_GUARDAR_ORIGINAIS;
-                  noutra pasta com SAIDA_ORIGINAIS_PASTA)
+                  noutra pasta com SAIDA_ORIGINAIS_PASTA), separadas pelo veredito do sistema:
+                  ok/, nok/ e erro/ (ERRO e SEM_SACO). É o que o sistema disse, não a verdade: a
+                  classe real só entra no dataset/ depois de revista.
     depuracao/    uma pasta por saco depurado (conforme SAIDA_DEPURAR / --depurar)
 
 Os CSV usam ";" como separador e "utf-8-sig", para o Excel em português os
@@ -37,6 +39,13 @@ COLUNAS_DEFEITOS = [
     "data_hora", "of", "produto", "passagem", "origem", "numero", "modulo", "tipo", "x_mm", "y_mm", "comprimento_mm",
     "largura_mm", "area_mm2", "angulo_graus", "intensidade", "descricao",
 ]
+
+
+def pasta_do_estado(estado: Estado) -> str:
+    """A subpasta dos originais pelo veredito do sistema: "ok", "nok" ou "erro" (ERRO e SEM_SACO)."""
+    if estado is Estado.OK:
+        return "ok"
+    return "nok" if estado is Estado.NOK else "erro"
 
 
 class Saida:
@@ -80,7 +89,8 @@ class Saida:
         self.pasta_originais = raiz / self.pasta.name if raiz else self.pasta / "originais"
         self._originais_vistos = 0
         self._originais: deque[tuple[Path, int]] = deque()  # (ficheiro, bytes), do mais antigo ao mais novo
-        if s.guardar_originais != "nenhuma" and s.originais_max_mb > 0 and self._raiz_originais.is_dir():
+        com_limite = s.originais_max_mb > 0 or s.originais_max_sacos > 0
+        if s.guardar_originais != "nenhuma" and com_limite and self._raiz_originais.is_dir():
             antigos = sorted(self._raiz_originais.rglob("*_original.png"), key=lambda p: p.stat().st_mtime)
             self._originais.extend((p, p.stat().st_size) for p in antigos)
 
@@ -179,7 +189,7 @@ class Saida:
         imagem = resultado.imagem
         if imagem.ndim == 3 and (imagem == imagem[..., :1]).all():
             imagem = imagem[..., 0]  # câmara mono: os mesmos 8 bits, num só canal
-        caminho = self.pasta_originais / f"{base}_original.png"
+        caminho = self.pasta_originais / pasta_do_estado(resultado.estado) / f"{base}_original.png"
         try:
             guardar_imagem(caminho, imagem)
         except OSError as erro:  # p.ex. disco cheio: a inspeção continua, o registo diz que não ficou
@@ -189,13 +199,15 @@ class Saida:
         return caminho
 
     def _limitar_originais(self, novo: Path) -> None:
-        """Buffer circular: acima de originais_max_mb, apaga os originais mais antigos (só …_original.png)."""
-        limite = self.cfg.saida.originais_max_mb * 1e6
-        if limite <= 0:
+        """Buffer circular: acima de originais_max_mb ou de originais_max_sacos, apaga os originais mais
+        antigos (só …_original.png). 0 = sem esse limite."""
+        s = self.cfg.saida
+        limite_bytes, limite_sacos = s.originais_max_mb * 1e6, s.originais_max_sacos
+        if limite_bytes <= 0 and limite_sacos <= 0:
             return
         self._originais.append((novo, novo.stat().st_size))
         total = sum(tamanho for _, tamanho in self._originais)
-        while total > limite and len(self._originais) > 1:
+        while len(self._originais) > 1 and ((0 < limite_bytes < total) or (0 < limite_sacos < len(self._originais))):
             antigo, tamanho = self._originais.popleft()
             antigo.unlink(missing_ok=True)
             total -= tamanho
