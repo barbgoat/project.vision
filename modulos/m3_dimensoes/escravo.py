@@ -11,7 +11,7 @@ import cv2
 
 from modulos.m3_dimensoes import forma, geometria
 from nucleo.config import Config
-from nucleo.contrato import Captura, Defeito, Escravo, Relatorio, Saco, TipoDefeito
+from nucleo.contrato import NOTA_PODE_SER_RELEVO, Captura, Defeito, Escravo, Relatorio, Saco, TipoDefeito
 
 
 class Dimensoes(Escravo):
@@ -96,7 +96,9 @@ class Dimensoes(Escravo):
                     angulo_graus=geo.paralelismo_graus,
                     intensidade=abs(geo.paralelismo_graus),
                     severidade=abs(geo.paralelismo_graus) / p.paralelismo_max_graus,
-                    descricao=f"lados compridos não paralelos: {geo.paralelismo_graus:+.1f} graus (saco em trapézio?)",
+                    descricao=(f"lados compridos não paralelos: {geo.paralelismo_graus:+.1f} graus (saco em trapézio?)"
+                               + NOTA_PODE_SER_RELEVO),
+                    pode_ser_relevo=True,
                 ))
         # O par falta/sobra de um corte torto numa ponta já marcada é o mesmo defeito
         repetidos = {id(d) for par in cortes_tortos if (1 if par[0].x_mm > 0 else -1) in pontas_tortas for d in par}

@@ -60,7 +60,7 @@ def test_registo_csv(resultado, tmp_path):
     (linha,) = ler_csv(saida.pasta / "registo.csv")
     assert linha["estado"] == "NOK"
     assert (linha["dimensoes"], linha["relevo"], linha["cor"]) == ("NOK(2)", "NOK(2)", "ERRO")
-    assert linha["tipos"] == "dimensao:2,risco:1,rugas:1"
+    assert linha["tipos"] == "risco:1,rugas:1", "a dimensão alterada pela ruga é consequência: não conta"
     assert "," in linha["t_relevo_ms"], "vírgula decimal"
     assert "cor: IndexError" in linha["mensagens"]
 
@@ -68,6 +68,9 @@ def test_registo_csv(resultado, tmp_path):
     assert [d["numero"] for d in defeitos] == ["1", "2", "3", "4"]
     risco = next(d for d in defeitos if d["tipo"] == "risco")
     assert risco["modulo"] == "relevo" and risco["x_mm"] == "1,00"
+    dimensao = [d for d in defeitos if d["tipo"] == "dimensao"]
+    assert len(dimensao) == 2 and all(d["descricao"].endswith("(consequência de rugas)") for d in dimensao), \
+        "continuam no defeitos.csv, ligados à causa"
 
     assert caminho is not None and caminho.exists() and caminho.name.startswith("000001_saco_é_2_NOK")
 

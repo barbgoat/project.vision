@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 
 from nucleo import defines as D
-from nucleo.contrato import Defeito, Saco, TipoDefeito
+from nucleo.contrato import NOTA_PODE_SER_RELEVO, Defeito, Saco, TipoDefeito
 
 _COR_RETAS = (255, 255, 0)  # retas ajustadas aos lados: ciano
 
@@ -107,7 +107,9 @@ def defeito_ponta(geo: Geometria, ponta: str, saco: Saco, ppm: float, limite_gra
         intensidade=abs(angulo),
         severidade=abs(angulo) / limite_graus,
         contorno=saco.px_para_mm(poligono, ppm),
-        descricao=f"ponta {ponta} fora de esquadria (corte torto?): {angulo:+.1f} graus em x={x_mm:.0f} mm",
+        descricao=(f"ponta {ponta} fora de esquadria (corte torto?): {angulo:+.1f} graus em x={x_mm:.0f} mm"
+                   + NOTA_PODE_SER_RELEVO),
+        pode_ser_relevo=True,  # um vinco que puxa o saco também entorta a ponta
     )
 
 

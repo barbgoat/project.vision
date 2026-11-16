@@ -57,8 +57,8 @@ from modulos.m4_cor import Cor
 from modulos.m5_relevo import Relevo
 from modulos.m6_manchas import Manchas
 from nucleo.config import RAIZ, Config
-from nucleo.contrato import (Captura, Escravo, Estado, Passagem, Relatorio, Resultado, Saco, SemConfianca,
-                             SemSaco)
+from nucleo.contrato import (NOTA_PODE_SER_RELEVO, TIPOS_RELEVO, Captura, Escravo, Estado, Passagem, Relatorio,
+                             Resultado, Saco, SemConfianca, SemSaco, TipoDefeito, nota_consequencia)
 from nucleo.referencia import Referencia, medidas_do_saco
 
 log = logging.getLogger("mestre")
@@ -179,7 +179,7 @@ class Mestre:
 
         # 2. Escravos de inspeção, cada um protegido, com as imagens no espaço métrico
         metrica = _captura_metrica(captura, img, self.cfg.geral.px_por_mm)
-        relatorios += self._correr_escravos(saco, metrica, guardar_intermedios)
+        relatorios += ligar_causas(self._correr_escravos(saco, metrica, guardar_intermedios))
 
         # 3. Decisão
         estado, mensagem = self._decidir(relatorios[1:])
@@ -354,6 +354,28 @@ class Mestre:
 
 
 # --- Auxiliares ------------------------------------------------------------------------
+
+def ligar_causas(relatorios: list[Relatorio]) -> list[Relatorio]:
+    """Um saco com relevo (p.ex. uma ruga) e com a dimensão ou a forma fora: a ruga é a causa.
+
+    Os defeitos de dimensão ficam na lista, com Defeito.causa e a descrição "(consequência de rugas)",
+    e deixam de contar no tipo do saco (Resultado.contagem_tipos). A decisão não muda: o saco já é NOK.
+    """
+    tipos = {d.tipo for r in relatorios for d in r.defeitos}
+    causa = next((t for t in TIPOS_RELEVO if t in tipos), None)
+    if causa is None:
+        return relatorios
+    ligados = []
+    for r in relatorios:
+        if any(d.tipo is TipoDefeito.DIMENSAO for d in r.defeitos):
+            r = replace(r, defeitos=tuple(
+                replace(d, causa=str(causa),
+                        descricao=d.descricao.replace(NOTA_PODE_SER_RELEVO, "") + nota_consequencia(str(causa)))
+                if d.tipo is TipoDefeito.DIMENSAO else d
+                for d in r.defeitos))
+        ligados.append(r)
+    return ligados
+
 
 _FORA_DO_PROJETO = "fora do código do projeto"
 

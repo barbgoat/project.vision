@@ -226,6 +226,23 @@ class Defeito:
     contorno: np.ndarray | None = None  # em mm no referencial do saco (N×2, float); None = o saco todo
     descricao: str = ""  # texto legível, p.ex. "comprimento 158.2 mm (150 +/- 3)"
     modulo: str = ""  # preenchido pelo Mestre: o módulo que o encontrou
+    # Um desvio de forma (M3) que um vinco ou uma ruga também explicam: a revisão propõe "rugas".
+    pode_ser_relevo: bool = False
+    # Preenchido pelo Mestre: o defeito de relevo (p.ex. "rugas") de que este é consequência. Continua
+    # na lista (e no defeitos.csv), mas não conta no tipo do saco: a causa é que conta.
+    causa: str = ""
+
+
+# O que um desvio de forma diz na descrição antes e depois de o Mestre o ligar a um defeito de relevo.
+NOTA_PODE_SER_RELEVO = " (pode ser ruga/relevo)"
+
+
+def nota_consequencia(causa: str) -> str:
+    return f" (consequência de {causa})"
+
+
+# Os tipos do M5 Relevo: a causa de um desvio de dimensão/forma no mesmo saco, pela ordem de preferência.
+TIPOS_RELEVO = (TipoDefeito.RUGAS, TipoDefeito.DOBRA, TipoDefeito.AMASSO, TipoDefeito.RISCO)
 
 
 @dataclass(frozen=True, eq=False)
@@ -368,8 +385,9 @@ class Resultado:
 
     @property
     def contagem_tipos(self) -> Counter[str]:
-        """Nº de defeitos por tipo, p.ex. Counter({"risco": 2, "rugas": 1})."""
-        return Counter(str(d.tipo) for d in self.defeitos)
+        """Nº de defeitos por tipo, p.ex. Counter({"risco": 2, "rugas": 1}). Um defeito que é
+        consequência de outro (Defeito.causa, p.ex. a dimensão alterada por uma ruga) não conta."""
+        return Counter(str(d.tipo) for d in self.defeitos if not d.causa)
 
     def relatorio(self, modulo: str) -> Relatorio | None:
         """O relatório de um módulo, ou None se não chegou a ser executado."""

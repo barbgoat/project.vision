@@ -159,6 +159,12 @@ def test_classe_proposta_pela_revisao():
     assert classe_proposta(com_tipos(TipoDefeito.RUGAS, TipoDefeito.MANCHA)) == "varios"
     assert classe_proposta(com_tipos()) == "", "sem defeitos (ERRO, SEM_SACO) não se inventa uma classe"
 
+    def dimensao(*forma: bool) -> Resultado:
+        defeitos = tuple(Defeito(TipoDefeito.DIMENSAO, pode_ser_relevo=f) for f in forma)
+        return Resultado(IMG, Estado.NOK, None, [Relatorio("dimensoes", Estado.NOK, defeitos)], 1.0)
+    assert classe_proposta(dimensao(False)) == "dimensao", "só o tamanho: é uma medida"
+    assert classe_proposta(dimensao(False, True)) == "rugas", "a forma torta propõe rugas (quem revê confirma)"
+
 
 def test_passagem_descartada_nao_se_corrige(tmp_path):
     r = Resultado(None, Estado.ERRO, None, [], 1.0)

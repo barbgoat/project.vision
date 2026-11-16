@@ -13,7 +13,7 @@ from dataclasses import replace
 import cv2
 import numpy as np
 
-from nucleo.contrato import Defeito, Saco, TipoDefeito
+from nucleo.contrato import NOTA_PODE_SER_RELEVO, Defeito, Saco, TipoDefeito
 
 # Cores da imagem intermédia "forma" (BGR).
 _COR_IDEAL = (0, 255, 255)  # retângulo ideal: amarelo
@@ -114,7 +114,8 @@ def zonas(mascara: np.ndarray, o_que: str, saco: Saco, ppm: float, area_min_mm2:
             intensidade=profundidade_mm,
             severidade=max(area_mm2 / area_min_mm2, profundidade_mm / profundidade_min_mm),
             contorno=saco.px_para_mm(contorno, ppm),
-            descricao=_descrever(o_que, x_mm, y_mm, area_mm2, profundidade_mm, saco),
+            descricao=_descrever(o_que, x_mm, y_mm, area_mm2, profundidade_mm, saco) + NOTA_PODE_SER_RELEVO,
+            pode_ser_relevo=True,  # uma ruga também tira ou põe material à silhueta
         ))
     return defeitos
 
@@ -157,7 +158,8 @@ def reconhecer_cortes_tortos(faltas: list[Defeito], sobras: list[Defeito], saco:
             if na_mesma_ponta and em_lados_opostos:
                 for d, o_que in ((f, "falta material"), (s, "material a mais")):
                     novos[id(d)] = replace(d, descricao=_descrever(o_que, d.x_mm, d.y_mm, d.area_mm2, d.intensidade,
-                                                                   saco, causa="corte torto?"))
+                                                                   saco, causa="corte torto?")
+                                           + NOTA_PODE_SER_RELEVO)
                 pares_idx.append((i, j))
     faltas = [novos.get(id(d), d) for d in faltas]
     sobras = [novos.get(id(d), d) for d in sobras]

@@ -630,3 +630,19 @@ def test_desempenho_a_resolucao_da_camara_cabe_no_orcamento():
         tempos.append((time.perf_counter() - inicio) * 1000)
     assert r.estado is Estado.OK and abs(r.saco.comprimento_mm - 150) < 0.3
     assert sorted(tempos)[1] < cfg.geral.orcamento_ms, f"mediana {sorted(tempos)[1]:.0f} ms"
+
+
+def test_ruga_e_a_causa_do_desvio_de_dimensao():
+    """Com relevo e dimensão no mesmo saco, a dimensão fica como consequência: está na lista, mas o
+    tipo do saco é o da ruga. Sem relevo, nada muda."""
+    from nucleo.contrato import Defeito, Relatorio, Resultado, TipoDefeito
+    dim = Relatorio("dimensoes", Estado.NOK, (Defeito(TipoDefeito.DIMENSAO, descricao="ponta torta (pode ser ruga/relevo)",
+                                                      pode_ser_relevo=True),))
+    rel = Relatorio("relevo", Estado.NOK, (Defeito(TipoDefeito.RUGAS),))
+    so_dim = m.ligar_causas([dim])
+    assert so_dim[0] is dim
+    ligados = m.ligar_causas([dim, rel])
+    d = ligados[0].defeitos[0]
+    assert d.causa == "rugas" and d.descricao == "ponta torta (consequência de rugas)"
+    r = Resultado(IMG, Estado.NOK, None, ligados, 1.0)
+    assert r.contagem_tipos == {"rugas": 1} and len(r.defeitos) == 2

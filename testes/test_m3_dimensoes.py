@@ -191,3 +191,12 @@ def test_severidade_e_contorno_em_mm_dos_defeitos():
     forma = [d for d in dobrado.defeitos if d.contorno is not None]
     assert forma and all(d.severidade >= 1 and d.contorno.shape[1] == 2 for d in forma)
     assert all(np.abs(d.contorno[:, 0]).max() <= 150 / 2 + 2 for d in forma), "em mm, no referencial do saco"
+
+
+def test_desvios_de_forma_podem_ser_relevo_e_os_de_tamanho_nao(mestre, resultados):
+    """Uma ruga entorta a ponta ou tira material à silhueta: a forma fica marcada (a revisão propõe
+    rugas). Um saco só mais comprido é uma medida, não um vinco."""
+    torto = mestre.inspecionar(cena_forma(np.random.default_rng(11), TORTO_4MM, angulo=25)).relatorio("dimensoes")
+    assert torto.defeitos and all(d.pode_ser_relevo and "pode ser ruga/relevo" in d.descricao for d in torto.defeitos)
+    comprido = resultados["comprido_158"].relatorio("dimensoes").defeitos
+    assert comprido and not any(d.pode_ser_relevo for d in comprido if d.descricao.startswith("comprimento"))

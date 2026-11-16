@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QLabel, QPushButt
 from interface.ciclo import Visto
 from interface.estilo import AZUL_ESCURO, NOME_APP
 from interface.paineis import Contadores, Faixa, Historico, VistaImagem
-from nucleo.contrato import CLASSES_DATASET, Resultado
+from nucleo.contrato import CLASSES_DATASET, Resultado, TipoDefeito
 
 
 class JanelaAuxiliar(QWidget):
@@ -60,10 +60,16 @@ class JanelaHistorico(JanelaAuxiliar):
 
 def classe_proposta(resultado: Resultado) -> str:
     """A pasta do dataset que o sistema propõe para um saco NOK: o tipo de defeito, "varios" com mais
-    do que um tipo, ou "" (não guardar) sem defeitos (ERRO, SEM_SACO): aí não há classe a propor."""
+    do que um tipo, ou "" (não guardar) sem defeitos (ERRO, SEM_SACO): aí não há classe a propor.
+
+    Um saco só com dimensão em que algum desvio é de forma (Defeito.pode_ser_relevo: ponta torta,
+    lados não paralelos, material a mais/a menos) propõe "rugas": é a causa mais provável e quem
+    revê confirma ou muda. As consequências de uma ruga já detetada não contam (contagem_tipos)."""
     tipos = sorted(str(tipo) for tipo in resultado.contagem_tipos)
     if not tipos:
         return ""
+    if tipos == [str(TipoDefeito.DIMENSAO)] and any(d.pode_ser_relevo for d in resultado.defeitos):
+        return str(TipoDefeito.RUGAS)
     return tipos[0] if len(tipos) == 1 else "varios"
 
 
