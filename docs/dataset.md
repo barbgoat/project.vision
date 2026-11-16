@@ -8,6 +8,12 @@ duplica). Os `originais/ok|nok|erro/` da sessão são o veredito do sistema, nã
 não confirmados não entram aqui sozinhos. A pasta `dataset/` não está no git (as imagens são
 grandes; para as guardar, Git LFS) e cria-se sozinha.
 
+Para os OK (onde se escondem os falsos OK), rever uma amostra de cada sessão:
+`python -m ferramentas.rever_sessao resultados\<sessão> --config configuracoes\<perfil>.json`
+(50 ao acaso; `--amostra 0` todos; `--pasta nok` ou `erro` para os outros). Enter = OK, 1–7 o
+defeito, v vários, espaço salta. Os já revistos são saltados; no fim diz quantos o sistema errou.
+Com `saida.originais_max_sacos` só ficam os últimos N sacos na sessão: rever antes que saiam.
+
 ```
 dataset/
 └─ <perfil>/     uma pasta por montagem (linha, bancada_botao...): cada uma tem o seu px_por_mm
