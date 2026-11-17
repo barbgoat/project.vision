@@ -134,10 +134,6 @@ class ConfigLente:
             (self.distancia_mm > self.focal_mm, "distancia_mm tem de ser maior do que focal_mm"),
         ])
 
-    def campo_mm(self, sensor_mm: float) -> float:
-        """Largura do campo de visão para uma largura de sensor (lente fina: sensor × (d − f) / f)."""
-        return sensor_mm * (self.distancia_mm - self.focal_mm) / self.focal_mm
-
 
 @dataclass(frozen=True)
 class ConfigAquisicao:
@@ -504,7 +500,7 @@ class ConfigPLC:
 # --- Gama de afinação ------------------------------------------------------------------
 
 # Os parâmetros que se afinam à mão, por secção: (parâmetro, mínimo, máximo, passo).
-# Usada pelas barras do ferramentas/afinar.py e pelas setas do editor da interface.
+# Usada pelas setas do editor da interface.
 AFINACAO: dict[str, list[tuple[str, float, float, float]]] = {
     "localizacao": [
         ("suavizacao_mm", 0, 1, 0.01),
@@ -583,10 +579,6 @@ class Config:
     def px_para_mm(self, px: float) -> float:
         """Converte um comprimento de píxeis para mm."""
         return px / self.geral.px_por_mm
-
-    def mm2_para_px2(self, mm2: float) -> float:
-        """Converte uma área de mm² para píxeis²."""
-        return mm2 * self.geral.px_por_mm**2
 
     # --- Validação ------------------------------------------------------------------
     def validar(self) -> None:

@@ -5,7 +5,7 @@ Para mudar um valor, muda-o aqui; o resto do programa vai buscá-lo.
     [MEDIR]  valor provisório que TEM de ser medido para a montagem ou o
              produto real (régua, sacos de referência...).
     (resto)  ponto de partida razoável, a afinar com imagens reais
-             (python -m ferramentas.afinar <módulo> <imagem>).
+             (na BIapp: Definições, com pré-visualização no saco do ecrã).
 
 Ligação à configuração: cada define tem o nome do parâmetro em maiúsculas,
 com a secção à frente:
@@ -31,9 +31,8 @@ from typing import Final
 # =============================================================================
 # Píxeis por mm no plano do tapete ≈ 2448 px / largura do campo de visão (mm).
 # Com a lente de 8 mm a 300 mm do tapete: campo de ~308 × 258 mm → ~7,9 px/mm
-# (0,13 mm por píxel). Depois de montar, medir com uma régua; a calculadora
-# (python -m ferramentas.calcular_montagem) avisa se este valor não bater com a
-# lente. Telemóvel e outras montagens: noutro config.json.
+# (0,13 mm por píxel). Depois de montar, medir com uma régua.
+# Outras montagens: noutro perfil (configuracoes/*.json).
 # É também a escala do espaço métrico onde o M2 e os escravos trabalham: uma Captura
 # com outra escala conhecida (câmara calibrada) é reamostrada para ela pelo Mestre.
 GERAL_PX_POR_MM: Final = 8.0  # [MEDIR]

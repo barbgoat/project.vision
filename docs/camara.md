@@ -5,7 +5,7 @@
 | | | O que implica |
 |---|---|---|
 | **Câmara** Basler acA1300-30gm (agora), pelo `pypylon` | 1296 × 966 px, 3,75 µm, monocromática, GigE, 30 FPS | `Mono8`; a câmara é **partilhada** (ver abaixo) |
-| **Câmara** FLIR Blackfly S BFS-PGE-50S5C-C (mais tarde) | 2448 × 2048 px, 3,45 µm, PoE GigE | código pronto e comentado em `fontes.py` |
+| **Câmara** FLIR Blackfly S BFS-PGE-50S5C-C (mais tarde) | 2448 × 2048 px, 3,45 µm, PoE GigE | por ligar: falta a `FonteSpinnaker` (rascunho no histórico do git) |
 | **Lente** Basler C23-0828-16M | 8 mm, F2.8–F16 (melhor a F4), distorção 0,07 % | a 300 mm com a Blackfly: campo de 308 × 258 mm, **~7,9 px/mm** |
 
 **Grande-angular:** o que está mais alto parece maior (5 mm de altura → +2,5 mm
@@ -24,7 +24,6 @@ carrega User Sets. Se a outra aplicação (ou o pylon Viewer) a tiver aberta, d�
 ```powershell
 pip install pypylon
 python -m ferramentas.testar_camara --config configuracoes\linha.json   # a câmara responde? (grava frame.png)
-python -m ferramentas.calcular_montagem --distancia 350     # campo, px/mm, FPS, exposição, rede
 ```
 
 Sem câmara à mão: `$env:PYLON_CAMEMU = "1"` dá uma câmara emulada do pylon (nº de série

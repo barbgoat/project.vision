@@ -41,7 +41,8 @@ pip install -r requirements.txt
 ```
 
 Câmara Basler: o `pypylon` (já no `requirements.txt`). Mais tarde a Blackfly: PySpin, da wheel do
-Spinnaker 4.4 em `instaladores\`, e descomentar a `FonteSpinnaker` em `modulos/m1_aquisicao/fontes.py`.
+Spinnaker 4.4 em `instaladores\`, e uma `FonteSpinnaker` em `modulos/m1_aquisicao/fontes.py` (há um rascunho no
+histórico do git, antes da limpeza de 2026-11-17).
 Ligação, modos e ensaios: [docs/camara.md](docs/camara.md).
 
 ## Correr

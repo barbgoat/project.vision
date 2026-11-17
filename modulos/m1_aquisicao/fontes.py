@@ -1,8 +1,6 @@
 """M1 Aquisição, fontes: de onde vêm as imagens. Só câmaras.
 
     FonteBasler     câmara Basler acA1300-30gm (GigE legacy, partilhada), através do pypylon
-    (Blackfly)      câmara FLIR Blackfly S, através do PySpin: comentada no fim deste
-                    ficheiro, para ligar mais tarde
 
 Todas as fontes têm a mesma interface (FonteImagem) e entregam Capturas, uma
 imagem de cada vez, em BGR uint8 (a convenção do OpenCV). Quem junta as imagens
@@ -90,7 +88,7 @@ def criar_fonte(cfg: Config, numero_serie: str | None = None) -> FonteImagem:
     """A câmara, já aberta e configurada para cfg.disparo.modo.
 
     numero_serie: o da câmara a usar (None = a primeira encontrada).
-    Para passar à Blackfly: descomentar a FonteSpinnaker (no fim deste ficheiro) e devolvê-la aqui.
+    Para passar à Blackfly: escrever uma FonteSpinnaker (PySpin) e devolvê-la aqui.
     """
     return FonteBasler(cfg, numero_serie)
 
@@ -276,84 +274,3 @@ class FonteBasler(FonteImagem):
             camara.Close()
         except Exception as erro:
             log.warning("Câmara Basler: ao fechar: %s", erro)
-
-
-# --- Câmara FLIR Blackfly S (Spinnaker): para ligar mais tarde ------------------------------
-# Para a usar: instalar o PySpin (wheel do Spinnaker em instaladores\), descomentar esta classe
-# e devolvê-la em criar_fonte(). A Blackfly (BFS-PGE-50S5C-C) tem a entrada opto-isolada na
-# Line0 (disparo.trigger_linha = "Line0") e o padrão de cor BayerRG8.
-#
-# class FonteSpinnaker(FonteImagem):
-#     """Câmara FLIR Blackfly S (PoE GigE) através do PySpin."""
-#
-#     def __init__(self, cfg: Config, numero_serie: str | None = None) -> None:
-#         import PySpin
-#
-#         self.cfg, self.timeout_ms, self.parada = cfg, cfg.aquisicao.timeout_ms, False
-#         self.trigger = cfg.disparo.modo == "trigger"
-#         self.calibracao = carregar_calibracao(cfg.aquisicao.calibracao) if cfg.aquisicao.calibracao else None
-#         self._sistema = PySpin.System.GetInstance()
-#         self._lista = self._sistema.GetCameras()
-#         if self._lista.GetSize() == 0:
-#             self.fechar()
-#             raise RuntimeError("Blackfly: nenhuma câmara encontrada (placa de rede, IP).")
-#         self._camara = self._lista.GetBySerial(numero_serie) if numero_serie else self._lista.GetByIndex(0)
-#         self._camara.Init()
-#         c, a, d = self._camara, cfg.aquisicao, cfg.disparo
-#         c.TriggerMode.SetValue(PySpin.TriggerMode_Off)
-#         c.GevSCPSPacketSize.SetValue(cfg.camara.pacote_bytes)
-#         c.PixelFormat.SetValue(getattr(PySpin, f"PixelFormat_{cfg.camara.formato_pixel}"))
-#         c.ExposureAuto.SetValue(PySpin.ExposureAuto_Off)
-#         c.ExposureTime.SetValue(a.exposicao_us)
-#         c.GainAuto.SetValue(PySpin.GainAuto_Off)
-#         c.Gain.SetValue(a.ganho_db)
-#         c.BalanceWhiteAuto.SetValue(PySpin.BalanceWhiteAuto_Off)
-#         if self.trigger:
-#             c.LineSelector.SetValue(getattr(PySpin, f"LineSelector_{d.trigger_linha}"))
-#             c.TriggerSelector.SetValue(PySpin.TriggerSelector_FrameStart)
-#             c.TriggerSource.SetValue(getattr(PySpin, f"TriggerSource_{d.trigger_linha}"))
-#             c.TriggerActivation.SetValue(getattr(PySpin, f"TriggerActivation_{d.trigger_ativacao}"))
-#             c.TriggerMode.SetValue(PySpin.TriggerMode_On)
-#         else:
-#             c.AcquisitionFrameRateEnable.SetValue(True)
-#             c.AcquisitionFrameRate.SetValue(d.fps)
-#         c.TLStream.StreamBufferHandlingMode.SetValue(PySpin.StreamBufferHandlingMode_OldestFirst)
-#         c.BeginAcquisition()
-#         self.numero_serie = c.DeviceSerialNumber.GetValue()
-#
-#     def ler(self) -> Captura | None:
-#         import PySpin
-#
-#         while not self.parada and self._camara is not None:
-#             try:
-#                 img = self._camara.GetNextImage(self.timeout_ms)
-#             except PySpin.SpinnakerException:
-#                 continue  # sem imagem no tempo limite: normal com trigger
-#             try:
-#                 if img.IsIncomplete():
-#                     continue
-#                 bruta, numero = img.GetNDArray().copy(), img.GetFrameID()
-#             finally:
-#                 img.Release()
-#             bgr = preparar(bruta, self.cfg.camara.formato_pixel, self.calibracao, self.cfg.aquisicao.roi())
-#             cal = self.calibracao
-#             return Captura(bgr, f"spinnaker:{self.numero_serie}#{numero}", time.time(),
-#                            sensor=True if self.trigger else None, fonte="spinnaker",
-#                            px_por_mm=cal.px_por_mm if cal else None, calibracao_id=cal.id if cal else None)
-#         return None
-#
-#     def fechar(self) -> None:
-#         if getattr(self, "_camara", None) is not None:
-#             try:
-#                 self._camara.EndAcquisition()
-#             except Exception:
-#                 pass
-#             self._camara.TriggerMode.SetValue(0)
-#             self._camara.DeInit()
-#             self._camara = None
-#         if getattr(self, "_lista", None) is not None:
-#             self._lista.Clear()
-#             self._lista = None
-#         if getattr(self, "_sistema", None) is not None:
-#             self._sistema.ReleaseInstance()
-#             self._sistema = None

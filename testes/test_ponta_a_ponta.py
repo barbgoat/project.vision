@@ -22,7 +22,7 @@ PPM = 5.0
 
 @pytest.mark.parametrize("comando", [
     ["main.py"], ["-m", "nucleo.config"], ["-m", "ferramentas.testar_modulo"], ["-m", "ferramentas.testar_disparo"],
-    ["-m", "ferramentas.calcular_montagem"], ["-m", "ferramentas.afinar"], ["-m", "ferramentas.avaliar"],
+    ["-m", "ferramentas.avaliar"],
     [RAIZ / "ferramentas" / "testar_modulo.py"],
 ], ids=lambda c: str(c[-1]).rsplit("\\", 1)[-1])
 def test_ajuda(comando):
@@ -38,11 +38,6 @@ def test_main_sem_a_camara_explica_o_que_falta():
 def test_ver_a_configuracao_de_um_perfil():
     p = correr("-m", "nucleo.config", "--config", RAIZ / "configuracoes" / "linha.json")
     assert p.returncode == 0 and "px_por_mm" in p.stdout
-
-
-def test_calcular_montagem():
-    p = correr("-m", "ferramentas.calcular_montagem")
-    assert p.returncode == 0 and "px/mm" in p.stdout
 
 
 # --- Trigger: um saco por sinal ---------------------------------------------------------

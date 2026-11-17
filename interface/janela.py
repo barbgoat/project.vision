@@ -158,15 +158,6 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         botao.setToolTip(dica)
         return botao
 
-    def _botao_icone(self, icone_botao: QIcon, dica: str) -> QPushButton:
-        """Botão só com um ícone grande (a dica diz o que faz)."""
-        botao = QPushButton()
-        botao.setIcon(icone_botao)
-        botao.setIconSize(QSize(28, 28))
-        botao.setFixedWidth(54)
-        botao.setToolTip(dica)
-        return botao
-
     def _criar_barra(self) -> QFrame:
         """A barra: o menu (⚙) à esquerda, a OF ao centro, o estado, o modo, Iniciar e Parar à direita."""
         # O menu: tudo o que não é do dia a dia (o que cada papel vê: _definir_utilizador).

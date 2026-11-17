@@ -27,9 +27,7 @@ em 150 mm), perto da tolerância de ±3 mm. Para o compensar:
       pousada no tapete;
     - medir na imagem com o saco centrado (o disparo já escolhe essa: longe do
       centro, a perspetiva aumenta o erro).
-A calculadora mostra este erro para outras alturas e lentes
-(python -m ferramentas.calcular_montagem --espessura 8). A distorção da lente
-(0,07 %) é desprezável.
+A distorção da lente (0,07 %) é desprezável.
 
 Está partido em dois ficheiros:
 

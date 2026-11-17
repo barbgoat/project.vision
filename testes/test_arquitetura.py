@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 import mestre as m
-from ferramentas import afinar, avaliar
+from ferramentas import avaliar
 from nucleo import config
 from nucleo import defines as D
 from nucleo.config import RAIZ, Config, carregar_configuracao, nome_define
@@ -106,7 +106,6 @@ def test_conversoes_mm_px():
     cfg, k = Config(), D.GERAL_PX_POR_MM
     assert cfg.mm_para_px(2) == 2 * k
     assert cfg.px_para_mm(10 * k) == 10
-    assert cfg.mm2_para_px2(4) == 4 * k * k
 
 
 def test_gralha_num_parametro_diz_a_secao():
@@ -181,19 +180,13 @@ def test_classes_do_avaliar_sao_as_pastas_do_dataset():
     assert sorted(avaliar.CLASSES) == sorted(CLASSES_DATASET)
 
 
-def test_parametros_do_afinar_estao_na_grelha():
-    for secao, lista in afinar.PARAMETROS.items():
+def test_parametros_da_afinacao_estao_na_grelha():
+    for secao, lista in config.AFINACAO.items():
         s_cfg = getattr(Config(), secao)
         for nome, minimo, maximo, passo in lista:
             v = getattr(s_cfg, nome)
             assert minimo <= v <= maximo, f"{secao}.{nome}"
             assert abs((v - minimo) / passo - round((v - minimo) / passo)) < 1e-9, f"{secao}.{nome}"
-
-
-@pytest.mark.parametrize("ferramenta, argumentos", [(afinar, ["relevo", "x.png"])])
-def test_ferramentas_por_fazer(ferramenta, argumentos):
-    with pytest.raises(NotImplementedError):
-        ferramenta.main(argumentos)
 
 
 # --- Mestre ------------------------------------------------------------------------------
