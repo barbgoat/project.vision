@@ -1,7 +1,6 @@
 r"""Validar a medição do M2 com medidas reais (paquímetro): exatidão, repetibilidade e escala.
 
     python -m ferramentas.validar --config configuracoes\linha.json
-    python -m ferramentas.validar --config configuracoes\linha.json --backends delta_e aprendido
 
 Ensaio na bancada (um operador): 10 sacos × 5 posições fixas, mais um objeto rígido de medida
 conhecida (o padrão) nas mesmas 5 posições, tudo numa sessão da BIapp com as originais guardadas:
@@ -18,20 +17,19 @@ conhecida (o padrão) nas mesmas 5 posições, tudo numa sessão da BIapp com as
 
 O conjunto (--pasta, omissão: dataset\teste):
     imagens/            as fotos, tiradas com a montagem do perfil (px_por_mm medido)
-    mascaras/           (opcional) PNG com o saco anotado, mesmo nome da foto: dá o IoU
     ground_truth.csv    ficheiro; saco; tipo_saco; fundo; comprimento_mm; largura_mm [; posicao]
                         (saco = o saco físico: as fotos do mesmo saco dão a repetibilidade)
     paquimetro.csv      (opcional) saco; comprimento_mm; largura_mm: se existe, as medidas reais
                         vêm daqui (a média das leituras de cada saco), não do ground_truth.csv
 
-Para cada backend e resolução corre o M2 em cada foto e reporta, no terminal e em CSV (--saida,
+Para cada resolução corre o M2 em cada foto e reporta, no terminal e em CSV (--saida,
 omissão resultados\validacao.csv, mais _resumo.csv, _repetibilidade.csv e _escala.csv ao lado):
     viés (erro médio com sinal), erro médio absoluto, máximo e desvio-padrão (mm), face ao paquímetro;
     separados por tipo de saco e por posição (centro vs cantos, e cada posição);
     repetibilidade de cada saco (desvio-padrão das suas fotos, reposto entre fotos) e a
     repetibilidade (um operador) do conjunto: 6σ em % da faixa de tolerância do produto;
     com o padrão: o fator medido/real e o px_por_mm que o corrigiria;
-    IoU da máscara (quando há máscara anotada); taxa de ERRO ou sem saco; tempo médio por foto.
+    taxa de ERRO ou sem saco; tempo médio por foto.
 """
 
 from __future__ import annotations
@@ -46,7 +44,6 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from time import perf_counter
-from typing import get_args
 
 import cv2
 import numpy as np
@@ -55,8 +52,7 @@ if __package__ in (None, ""):  # corrido como ficheiro: python ferramentas\valid
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from mestre import Mestre  # noqa: E402
-from modulos.m2_localizacao.segmentadores import iou, sam3  # noqa: E402
-from nucleo.config import CAMINHO_POR_OMISSAO, RAIZ, Config, TipoSegmentador, carregar_configuracao  # noqa: E402
+from nucleo.config import CAMINHO_POR_OMISSAO, RAIZ, Config, carregar_configuracao  # noqa: E402
 from nucleo.contrato import Estado  # noqa: E402
 from nucleo.imagens import guardar_imagem, ler_imagem, ler_original  # noqa: E402
 
@@ -68,9 +64,8 @@ MEDIDAS = ("comprimento", "largura")
 
 @dataclass
 class Medicao:
-    """Uma foto analisada por um backend, a uma resolução da localização."""
+    """Uma foto analisada a uma resolução da localização."""
 
-    backend: str
     ficheiro: str
     saco: str
     tipo_saco: str
@@ -80,7 +75,6 @@ class Medicao:
     largura_mm: float | None
     erro_comprimento_mm: float | None  # medido − real
     erro_largura_mm: float | None
-    iou: float | None
     tempo_ms: float
     mensagem: str = ""
     resolucao_px_por_mm: float = 0.0  # a do mapa da segmentação (no máximo o px_por_mm da imagem)
@@ -215,9 +209,8 @@ def _folha_de_contacto(fotos: list[tuple[str, str, Path]], grupos: list[str], po
 
 # --- Medir --------------------------------------------------------------------------------------
 
-def medir(pasta: Path, cfg: Config, backend: str, produto: str = "") -> list[Medicao]:
-    """Corre o M2 com o `backend` em cada foto do conjunto."""
-    cfg = replace(cfg, localizacao=replace(cfg.localizacao, segmentador=backend))
+def medir(pasta: Path, cfg: Config, produto: str = "") -> list[Medicao]:
+    """Corre o M2 em cada foto do conjunto."""
     resolucao = min(cfg.localizacao.resolucao_px_por_mm, cfg.geral.px_por_mm)
     mestre = Mestre(cfg, apenas=[], produto=produto)
     medicoes = []
@@ -234,42 +227,32 @@ def medir(pasta: Path, cfg: Config, backend: str, produto: str = "") -> list[Med
         largura = loc.medidas["largura_mm"] if mediu else None
         real_c, real_l = _numero(verdade["comprimento_mm"]), _numero(verdade["largura_mm"])
         medicoes.append(Medicao(
-            backend, verdade["ficheiro"], verdade["saco"], verdade["tipo_saco"], verdade["fundo"],
+            verdade["ficheiro"], verdade["saco"], verdade["tipo_saco"], verdade["fundo"],
             "OK" if mediu else str(loc.estado if loc else resultado.estado),
             comprimento, largura,
             None if comprimento is None else comprimento - real_c,
             None if largura is None else largura - real_l,
-            _iou(pasta, verdade["ficheiro"], resultado) if mediu else None, tempo,
+            tempo,
             "" if mediu else resultado.mensagem,
             resolucao_px_por_mm=resolucao, posicao=(verdade.get("posicao") or "").strip(),
             real_comprimento_mm=real_c, real_largura_mm=real_l))
     return medicoes
 
 
-def _iou(pasta: Path, ficheiro: str, resultado) -> float | None:
-    """IoU da região do saco com a máscara anotada, se houver uma do tamanho da imagem analisada."""
-    caminho = pasta / "mascaras" / f"{Path(ficheiro).stem}.png"
-    anotada = ler_imagem(caminho) if caminho.exists() else None
-    if anotada is None or resultado.saco is None or anotada.shape[:2] != resultado.imagem.shape[:2]:
-        return None  # sem máscara, ou de outro tamanho
-    regiao = np.zeros(anotada.shape[:2], np.uint8)
-    cv2.fillPoly(regiao, [resultado.saco.contorno], 1)
-    return iou(regiao > 0, anotada[..., 0] > 127)
-
 
 # --- Resumos ------------------------------------------------------------------------------------
 
 def _grupos(medicoes: list[Medicao], chaves: tuple[str, ...]) -> list[tuple[dict[str, object], list[Medicao]]]:
-    """As medições agrupadas por backend, resolução e as `chaves` (atributos da Medicao), ordenadas."""
+    """As medições agrupadas por resolução e as `chaves` (atributos da Medicao), ordenadas."""
     grupos: dict[tuple, list[Medicao]] = defaultdict(list)
     for m in medicoes:
-        grupos[(m.backend, m.resolucao_px_por_mm, *(getattr(m, c) for c in chaves))].append(m)
-    return [({"backend": g[0], "resolucao_px_por_mm": g[1], **dict(zip(chaves, g[2:]))}, ms)
+        grupos[(m.resolucao_px_por_mm, *(getattr(m, c) for c in chaves))].append(m)
+    return [({"resolucao_px_por_mm": g[0], **dict(zip(chaves, g[1:]))}, ms)
             for g, ms in sorted(grupos.items(), key=lambda item: tuple(map(str, item[0])))]
 
 
 def resumir(medicoes: list[Medicao], *chaves: str) -> list[dict[str, object]]:
-    """Estatísticas por grupo (backend, resolução e as `chaves`, p.ex. "tipo_saco", "zona")."""
+    """Estatísticas por grupo (resolução e as `chaves`, p.ex. "tipo_saco", "zona")."""
     linhas = []
     for cabeca, ms in _grupos(medicoes, chaves):
         linha: dict[str, object] = {**cabeca, "fotos": len(ms)}
@@ -279,8 +262,6 @@ def resumir(medicoes: list[Medicao], *chaves: str) -> list[dict[str, object]]:
             linha[f"{medida}_erro_medio_mm"] = statistics.fmean(map(abs, erros)) if erros else None
             linha[f"{medida}_erro_max_mm"] = max(map(abs, erros)) if erros else None
             linha[f"{medida}_desvio_padrao_mm"] = statistics.pstdev(erros) if len(erros) > 1 else None
-        ious = [m.iou for m in ms if m.iou is not None]
-        linha["iou_medio"] = statistics.fmean(ious) if ious else None
         linha["taxa_erro_ou_sem_saco"] = sum(m.estado != "OK" for m in ms) / len(ms)
         linha["tempo_medio_ms"] = statistics.fmean(m.tempo_ms for m in ms)
         linhas.append(linha)
@@ -288,7 +269,7 @@ def resumir(medicoes: list[Medicao], *chaves: str) -> list[dict[str, object]]:
 
 
 def repetibilidade(medicoes: list[Medicao]) -> list[dict[str, object]]:
-    """Por backend, resolução e saco físico com ≥ 2 fotos medidas: o desvio-padrão (amostral) e a
+    """Por resolução e saco físico com ≥ 2 fotos medidas: o desvio-padrão (amostral) e a
     amplitude das medidas (mm). Com as fotos em posições diferentes, inclui o efeito da posição."""
     linhas = []
     for cabeca, ms in _grupos([m for m in medicoes if m.comprimento_mm is not None], ("tipo_saco", "saco")):
@@ -300,7 +281,7 @@ def repetibilidade(medicoes: list[Medicao]) -> list[dict[str, object]]:
             linha[f"{medida}_dp_mm"] = statistics.stdev(valores)
             linha[f"{medida}_amplitude_mm"] = max(valores) - min(valores)
         linhas.append(linha)
-    return sorted(linhas, key=lambda l: (l["backend"], l["resolucao_px_por_mm"], _ordem_saco(str(l["saco"]))))
+    return sorted(linhas, key=lambda l: (l["resolucao_px_por_mm"], _ordem_saco(str(l["saco"]))))
 
 
 def repetibilidade_conjunto(medicoes: list[Medicao], tolerancias: dict[str, float] | None = None
@@ -311,10 +292,10 @@ def repetibilidade_conjunto(medicoes: list[Medicao], tolerancias: dict[str, floa
     por_saco = [l for l in repetibilidade(medicoes) if l["tipo_saco"] != PADRAO]
     grupos: dict[tuple, list[dict[str, object]]] = defaultdict(list)
     for l in por_saco:
-        grupos[(l["backend"], l["resolucao_px_por_mm"], l["tipo_saco"])].append(l)
+        grupos[(l["resolucao_px_por_mm"], l["tipo_saco"])].append(l)
     linhas = []
-    for (backend, resolucao, tipo), ls in sorted(grupos.items(), key=lambda item: tuple(map(str, item[0]))):
-        linha: dict[str, object] = {"backend": backend, "resolucao_px_por_mm": resolucao, "tipo_saco": tipo,
+    for (resolucao, tipo), ls in sorted(grupos.items(), key=lambda item: tuple(map(str, item[0]))):
+        linha: dict[str, object] = {"resolucao_px_por_mm": resolucao, "tipo_saco": tipo,
                                     "sacos": len(ls), "fotos": sum(int(l["fotos"]) for l in ls)}
         for medida in MEDIDAS:
             sigma = math.sqrt(statistics.fmean(float(l[f"{medida}_dp_mm"]) ** 2 for l in ls))
@@ -326,7 +307,7 @@ def repetibilidade_conjunto(medicoes: list[Medicao], tolerancias: dict[str, floa
 
 
 def escala(medicoes: list[Medicao], px_por_mm: float) -> list[dict[str, object]]:
-    """Com o padrão (objeto rígido de medida conhecida): por backend, resolução e zona, o fator
+    """Com o padrão (objeto rígido de medida conhecida): por resolução e zona, o fator
     medido/real de cada medida e o px_por_mm que o corrigiria (atual × fator médio)."""
     linhas = []
     padrao = [m for m in medicoes if m.tipo_saco == PADRAO and m.comprimento_mm is not None]
@@ -339,7 +320,7 @@ def escala(medicoes: list[Medicao], px_por_mm: float) -> list[dict[str, object]]
                        "px_por_mm_atual": px_por_mm,
                        "px_por_mm_sugerido": px_por_mm * statistics.fmean(fatores.values())})
     ordem = {"centro": 0, "cantos": 1, "todas": 2}
-    return sorted(linhas, key=lambda l: (l["backend"], l["resolucao_px_por_mm"], ordem.get(str(l["zona"]), 1)))
+    return sorted(linhas, key=lambda l: (l["resolucao_px_por_mm"], ordem.get(str(l["zona"]), 1)))
 
 
 # --- Saída --------------------------------------------------------------------------------------
@@ -379,7 +360,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validar a medição do M2 com medidas reais (paquímetro).")
     parser.add_argument("--pasta", type=Path, default=RAIZ / "dataset" / "teste", help="o conjunto de teste")
     parser.add_argument("--config", type=Path, default=CAMINHO_POR_OMISSAO, help="perfil da montagem (JSON)")
-    parser.add_argument("--backends", nargs="+", default=["delta_e"], choices=list(get_args(TipoSegmentador)))
     parser.add_argument("--saida", type=Path, default=RAIZ / "resultados" / "validacao.csv", help="CSV por foto")
     parser.add_argument("--produto", default="", help="o produto na base de dados (nominal, tolerâncias, resolução)")
     parser.add_argument("--resultados", type=Path, default=RAIZ / "resultados",
@@ -416,13 +396,7 @@ def main(argv: list[str] | None = None) -> int:
     configuracoes = [replace(cfg, localizacao=replace(cfg.localizacao, resolucao_px_por_mm=r))
                      for r in args.resolucao] or [cfg]
 
-    medicoes: list[Medicao] = []
-    for backend in args.backends:
-        if backend in ("sam3", "duplo") and not sam3.disponivel():
-            print(f"{backend}: o SAM 3 não está instalado (ver o README); salto este backend.")
-            continue
-        for c in configuracoes:
-            medicoes += medir(args.pasta, c, backend, produto)
+    medicoes = [m for c in configuracoes for m in medir(args.pasta, c, produto)]
     if not medicoes:
         print("Nada medido.")
         return 1
@@ -443,8 +417,8 @@ def main(argv: list[str] | None = None) -> int:
     if escalas:
         _escrever(args.saida.with_name(f"{args.saida.stem}_escala.csv"), escalas)
 
-    detalhe = ("comprimento_erro_medio_mm", "largura_erro_medio_mm", "iou_medio")
-    print(_tabela("Por backend e resolução", _sem_colunas(resumir(medicoes), *detalhe)))
+    detalhe = ("comprimento_erro_medio_mm", "largura_erro_medio_mm")
+    print(_tabela("Por resolução", _sem_colunas(resumir(medicoes), *detalhe)))
     print(_tabela("Por tipo de saco" + (" e zona (centro vs cantos)" if com_posicao else ""),
                   _sem_colunas(por_tipo, *detalhe, "tempo_medio_ms")))
     if por_posicao:

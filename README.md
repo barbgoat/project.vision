@@ -25,7 +25,7 @@ gui.py, interface/   interface gráfica: ver, corrigir vereditos e afinar (PySid
 biapp_dashboard.py   o dashboard numa janela própria, em tempo real (SSE)
 nucleo/              contrato entre módulos e defines.py (TODOS os valores ajustáveis)
 modulos/             um escravo por pasta: m1_aquisicao/ … m7_saida/
-ferramentas/         testar um módulo, o disparo ou a câmara; montagem; afinar; avaliar; referencia; anotar; validar
+ferramentas/         testar um módulo, o disparo ou a câmara; avaliar; referencia; qualidade; validar; rever_sessao; plc_teste
 configuracoes/       perfis por montagem: bancada_botao, bancada_virtual, linha; referencias/ dos sacos OK
 dataset/             imagens da câmara por montagem e por classe (criadas pela BIapp); fora do git
 testes/              testes automáticos (python -m pytest)
@@ -82,46 +82,18 @@ estado por **SSE** (`http://127.0.0.1:8765/eventos`; uma vez em JSON: `/estado`)
 que muda. Funciona com ou sem a BIapp aberta; `--so-servidor` corre só o servidor. Por omissão só
 neste PC: o endereço e a porta são `SAIDA_DASHBOARD_*`.
 
-## Segmentação do saco (ΔE ou SAM 3) e validação
+## Validação das medidas
 
-O M2 separa o saco do fundo com um **segmentador**, escolhido no perfil em
-`localizacao.segmentador`:
-
-| | |
-|---|---|
-| `delta_e` (omissão) | diferença de cor ao fundo; CPU, ~50 a 80 ms; precisa de um fundo que contraste |
-| `aprendido` | as cores e texturas aprendidas com as fotos anotadas (`ferramentas/anotar.py`); CPU, ~100 ms; fundos variados, se tiverem sido anotados |
-| `sam3` | SAM 3 da Meta, por texto (`localizacao.sam3_prompt`, "plastic bag"); qualquer fundo; GPU |
-| `duplo` | os dois; se as máscaras não coincidirem (IoU < `duplo_iou_min`), ERRO e a foto vai para `dataset/revisao/` |
-
-O contorno subpíxel, as medidas e o M3 são os mesmos com qualquer um. Confiança abaixo de
-`sam3_score_min` ou `aprendido_score_min`, ou nenhuma máscara, dá sempre ERRO ("segmentação
-incerta"), nunca OK. O `aprendido` usa `dataset/segmentacao/modelo.npz`, que o anotador atualiza a
-cada foto guardada: só reconhece bem os fundos que já foram anotados.
-
-**Instalar o SAM 3** (opcional; Python 3.12, PyTorch ≥ 2.7, GPU NVIDIA com CUDA ≥ 12.6):
+O M2 separa o saco do fundo pela diferença de cor ao fundo (ΔE; CPU, ~50 a 80 ms; precisa de um
+fundo que contraste). O `validar` compara as medidas com as do paquímetro:
 
 ```powershell
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
-git clone https://github.com/facebookresearch/sam3.git
-pip install -e .\sam3 pillow
+python -m ferramentas.validar --config configuracoes\linha.json
 ```
 
-Os **pesos estão no Hugging Face com acesso controlado**: pedir acesso em
-<https://huggingface.co/facebook/sam3> (com a conta do Hugging Face), esperar a aprovação, criar
-um token e fazer `hf auth login`. Sem GPU funciona, mas é muito lento (só para testes). Na
-ferramenta de anotação, a proposta por cliques usa o **SAM 2** (`pip install git+https://github.com/facebookresearch/sam2.git`; pesos
-`facebook/sam2.1-hiera-large`, de acesso livre).
-
-```powershell
-python -m ferramentas.anotar <pasta> --tipo PreVital --fundo preto    # anotar (GrabCut, pontos, SAM 3, SAM 2)
-python -m ferramentas.dividir_dataset --copiar                         # treino/validação/teste por saco físico
-python -m ferramentas.validar --config configuracoes\linha.json --backends delta_e sam3
-```
-
-`validar` usa `dataset/teste/` (`imagens/`, `ground_truth.csv` com as medidas do paquímetro e,
-opcional, `mascaras/`) e dá o erro em mm, o IoU, a taxa de ERRO e o tempo de cada segmentador,
-por tipo de saco e por fundo, e a repetibilidade do mesmo saco ([docs/dataset.md](docs/dataset.md)).
+Usa `dataset/teste/` (`imagens/` e `ground_truth.csv` com as medidas do paquímetro) e dá o erro em
+mm, a taxa de ERRO e o tempo, por tipo de saco e por fundo, e a repetibilidade do mesmo saco
+([docs/dataset.md](docs/dataset.md)).
 
 ## O que um OK garante
 

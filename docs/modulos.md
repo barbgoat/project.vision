@@ -5,18 +5,14 @@
 A câmara está fixa, a uma distância conhecida: a escala é `geral.px_por_mm`, medido uma vez
 com uma régua na imagem.
 
-1. **Segmentador** (`localizacao.segmentador`): `delta_e` (abaixo), `aprendido` (as cores e
-   texturas das fotos anotadas, completadas pelo GrabCut, CPU; P(saco) dentro menos à volta < `aprendido_score_min` → ERRO), `sam3` (SAM 3 por texto,
-   qualquer fundo, GPU; confiança < `sam3_score_min` → ERRO) ou `duplo` (os dois; IoU <
-   `duplo_iou_min` → ERRO e a foto para `dataset/revisao/`). No ΔE:
-   **Fundo**: foto do fundo vazio (`LOCALIZACAO_FUNDO_REFERENCIA`; na BIapp, Afinar câmara → **Fundo
+1. **Fundo**: foto do fundo vazio (`LOCALIZACAO_FUNDO_REFERENCIA`; na BIapp, Afinar câmara → **Fundo
    vazio**) ou superfície ajustada à borda da imagem. **Com a foto, recomendado:** cada píxel compara-se
    com o mesmo píxel do fundo, a luz desigual e os vincos do papel desaparecem, e o limiar sai do ruído
    do fundo (não do Otsu): até um saco claro só ~6 ΔE diferente de um fundo claro é apanhado.
 2. **Diferença de cor** ao fundo (ΔE em CIELAB), limiar automático: sacos de qualquer cor.
 3. **Arestas**, só se a cor não chegar (sacos transparentes).
-4. **Contorno subpíxel**: cada ponto vai para o máximo do gradiente ao longo da normal (do ΔE,
-   ou da cor em CIELAB com o SAM 3), por isso as medidas não dependem do limiar nem da máscara. **Ângulo e medidas** como um paquímetro
+4. **Contorno subpíxel**: cada ponto vai para o máximo do gradiente ao longo da normal (do ΔE),
+   por isso as medidas não dependem do limiar nem da máscara. **Ângulo e medidas** como um paquímetro
    (mediana de cada lado, sem os cantos).
 5. **Recorte** rodado e centrado + **zona útil** (sem as margens), entregue aos outros módulos.
 

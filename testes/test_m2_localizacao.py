@@ -355,16 +355,15 @@ def test_tempo_numa_imagem_da_blackfly(rng):
     assert min(tempos) < 400, f"{min(tempos):.0f} ms"
 
 
-# --- Segmentadores (ΔE, SAM 3, duplo) -------------------------------------------------------
+# --- Segmentador ΔE e contorno subpíxel -------------------------------------------------------
 
 from modulos.m2_localizacao import fundo as fundo_m2, segmentadores  # noqa: E402
 from modulos.m2_localizacao.segmentadores import ResultadoSegmentacao, SegmentacaoIncerta  # noqa: E402
-from modulos.m2_localizacao.segmentadores import sam3 as seg_sam3  # noqa: E402
 from modulos.m2_localizacao.segmentadores.delta_e import SegmentadorDeltaE  # noqa: E402
 
 
 class _Fixo(segmentadores.Segmentador):
-    """Um segmentador que devolve sempre a mesma máscara (e o mapa de cor, como o SAM 3)."""
+    """Um segmentador que devolve sempre a mesma máscara (e o mapa de cor em CIELAB)."""
 
     def __init__(self, mascara: np.ndarray, score: float = 0.9, nome: str = "fixo", mapa=None) -> None:
         self.mascara, self.score, self.nome, self.mapa = mascara, score, nome, mapa
@@ -380,17 +379,26 @@ def _verdade(rng, **kw):
     return img, alfa_retangulo(*img.shape[:2], cx, cy, 150 * PPM, 55 * PPM, kw.get("angulo", 23.0)) > 0.5
 
 
-def test_o_segmentador_por_omissao_e_o_delta_e(rng):
+def _iou(a: np.ndarray, b: np.ndarray) -> float:
+    """Coincidência de duas máscaras (interseção / união), na resolução da maior."""
+    if a.shape != b.shape:
+        maior, menor = (a, b) if a.size >= b.size else (b, a)
+        menor = cv2.resize(menor.astype(np.uint8), maior.shape[1::-1], interpolation=cv2.INTER_NEAREST) > 0
+        a, b = maior, menor
+    return np.count_nonzero(a & b) / np.count_nonzero(a | b)
+
+
+def test_o_segmentador_e_o_delta_e(rng):
     seg = segmentadores.criar(CFG)
-    assert isinstance(seg, SegmentadorDeltaE) and CFG.localizacao.segmentador == "delta_e"
+    assert isinstance(seg, SegmentadorDeltaE)
     img, verdade = _verdade(rng)
     r = seg.segmentar(img, PPM)
     assert r.backend == "delta_e" and r.mascara.dtype == bool and 0.5 < r.score <= 1 and r.tempo_ms > 0
-    assert segmentadores.iou(r.mascara, verdade) > 0.97, "a máscara reduzida, comparada na resolução total"
+    assert _iou(r.mascara, verdade) > 0.97, "a máscara reduzida, comparada na resolução total"
 
 
 def test_contorno_subpixel_com_o_mapa_de_cor(rng):
-    """Com o mapa CIELAB (o do SAM 3) as medidas saem tão certas como com o ΔE, mesmo com uma
+    """Com o mapa CIELAB as medidas saem tão certas como com o ΔE, mesmo com uma
     máscara grosseira (2 px a mais em cada lado)."""
     img, verdade = _verdade(rng, cor=CORES["azul"])
     grosseira = cv2.dilate(verdade.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
@@ -442,46 +450,6 @@ def test_contorno_que_nao_fechou_e_erro_e_nao_medidas(rng):
     assert abs(saco.comprimento_mm - 150) < 0.3
 
 
-def test_sam3_escolhe_a_maior_mascara_confiante_e_completa():
-    def retangulo(x0, y0, x1, y1):
-        m = np.zeros((100, 120), bool)
-        m[y0:y1, x0:x1] = True
-        return m
-    pequena, grande, na_borda, incerta = (retangulo(10, 10, 30, 30), retangulo(20, 20, 100, 80),
-                                         retangulo(0, 10, 110, 90), retangulo(5, 5, 115, 95))
-    mascaras, scores = np.array([pequena, grande, na_borda, incerta]), np.array([0.95, 0.8, 0.9, 0.3])
-    mascara, score = seg_sam3.escolher(mascaras, scores, 0.5, rejeitar_borda=True)
-    assert np.array_equal(mascara, grande) and score == 0.8
-    assert np.array_equal(seg_sam3.escolher(mascaras, scores, 0.5, rejeitar_borda=False)[0], na_borda)
-    assert seg_sam3.escolher(mascaras, scores, 0.99, rejeitar_borda=True) is None
-    assert seg_sam3.escolher(np.zeros((0, 100, 120), bool), np.zeros(0), 0.5, True) is None
-
-
-def test_sam3_com_fake_mede_e_sem_confianca_da_erro(rng, monkeypatch):
-    img, verdade = _verdade(rng, cor=CORES["verde"])
-    cfg = config_teste(geral={"px_por_mm": PPM}, localizacao={"segmentador": "sam3"})
-    monkeypatch.setattr(seg_sam3, "mascaras_por_texto", lambda im, texto: (verdade[None], np.array([0.92])))
-    r = m.Mestre(cfg, apenas=[]).inspecionar(img)
-    medidas = r.relatorio("localizacao").medidas
-    assert r.relatorio("localizacao").estado is Estado.OK and medidas["score_segmentacao"] == 0.92
-    assert abs(medidas["comprimento_mm"] - 150) < 0.3 and abs(medidas["largura_mm"] - 55) < 0.3, medidas
-
-    monkeypatch.setattr(seg_sam3, "mascaras_por_texto", lambda im, texto: (verdade[None], np.array([0.2])))
-    r = m.Mestre(cfg, apenas=[]).inspecionar(img)
-    assert r.estado is Estado.ERRO and "segmentação incerta" in r.mensagem, r.mensagem
-    monkeypatch.setattr(seg_sam3, "mascaras_por_texto", lambda im, texto: (np.zeros((0, *img.shape[:2]), bool),
-                                                                            np.zeros(0)))
-    assert m.Mestre(cfg, apenas=[]).inspecionar(img).estado is Estado.ERRO, "sem máscara: nunca OK"
-
-
-def test_sam3_sem_fecho_nao_tapa_entalhes():
-    saco = np.zeros((200, 300), bool)
-    saco[50:150, 50:250] = True
-    saco[50:80, 140:146] = False  # entalhe de 6 px de largura, 30 de fundo
-    assert not seg_sam3.limpar(saco, 0.0)[60, 143], "sem fecho o entalhe fica"
-    assert seg_sam3.limpar(saco, 15.0)[60, 143], "um fecho largo tapa-o"
-
-
 def test_fecho_tapa_falhas_mas_nao_cola_manchas_do_fundo():
     """Na bancada, manchas do fundo a poucos px da aresta ficavam coladas ao saco pelo fecho (bossas de ~3 mm)."""
     from modulos.m2_localizacao import segmentacao
@@ -493,95 +461,6 @@ def test_fecho_tapa_falhas_mas_nao_cola_manchas_do_fundo():
     assert limpa[55, 143], "a falha fica tapada"
     assert not limpa[95, 38] and not limpa[95, 46], "a mancha e a ponte até ela ficam de fora"
     assert limpa[95, 52], "o saco fica todo"
-
-
-@pytest.mark.parametrize("campo, valor", [("segmentador", "yolo"), ("sam3_score_min", 1.5), ("sam3_prompt", " "),
-                                          ("sam3_fecho_mm", -1.0), ("duplo_iou_min", 0.0),
-                                          ("aprendido_score_min", 1.5), ("aprendido_modelo", " ")])
-def test_opcoes_do_segmentador_sao_validadas(campo, valor):
-    with pytest.raises(ValueError, match=campo):
-        config_teste(localizacao={campo: valor})
-
-
-def test_duplo_aceita_quando_coincidem_e_manda_rever_quando_nao(rng, tmp_path):
-    img, verdade = _verdade(rng)
-    torta = np.roll(verdade, 40, axis=1)
-    duplo = segmentadores.SegmentadorDuplo(_Fixo(verdade, nome="a"), _Fixo(verdade, 0.9, "b"), 0.95, tmp_path / "rev")
-    r = duplo.segmentar(img, PPM)
-    assert r.medidas["iou_duplo"] == 1.0 and r.score == 0.9 and r.backend == "b+a"
-    saco = Localizador(CFG, segmentador=duplo).localizar(img)
-    assert abs(saco.comprimento_mm - 150) < 0.3
-
-    duplo = segmentadores.SegmentadorDuplo(_Fixo(verdade, nome="a"), _Fixo(torta, nome="b"), 0.95, tmp_path / "rev")
-    with pytest.raises(SegmentacaoIncerta, match="duvidosa"):
-        duplo.segmentar(img, PPM)
-    assert len(list((tmp_path / "rev").glob("*.png"))) == 1, "a foto fica para rever"
-
-
-@pytest.mark.skipif(not seg_sam3.disponivel(), reason="SAM 3 não instalado (ver o README)")
-def test_sam3_real_numa_foto():
-    import torch
-    from pathlib import Path
-    from nucleo.imagens import ler_imagem
-    if not torch.cuda.is_available():
-        pytest.skip("SAM 3 sem GPU: lento demais para os testes")
-    from nucleo.imagens import listar_imagens
-    fotos = listar_imagens("dataset") if Path("dataset").is_dir() else []
-    if not fotos:
-        pytest.skip("sem imagens em dataset/")
-    try:
-        mascaras, scores = seg_sam3.mascaras_por_texto(ler_imagem(fotos[0]), "plastic bag")
-    except Exception as erro:  # sem acesso aos pesos no Hugging Face
-        pytest.skip(f"SAM 3 não carregou: {erro}")
-    assert mascaras.shape[0] == len(scores) and (len(scores) == 0 or mascaras.shape[1:] == ler_imagem(fotos[0]).shape[:2])
-
-
-# --- Segmentador aprendido (o modelo das fotos anotadas) ---------------------------------------
-
-from modulos.m2_localizacao.segmentadores.aprendido import Modelo, reduzir  # noqa: E402
-
-
-def _riscas(rng, angulo: float, cx: float, cy: float):
-    """Saco vermelho de 150 × 55 mm (5 px/mm) num fundo às riscas de duas cores, e a sua máscara."""
-    altura, largura = 1000, 1250
-    risca = ((np.arange(largura) // 40) % 2)[None, :, None] == 0
-    img = np.where(risca, np.float32((110, 115, 105)), np.float32((150, 95, 50))) + rng.normal(0, 3, (altura, largura, 3))
-    a = alfa_retangulo(altura, largura, cx, cy, 150 * PPM, 55 * PPM, angulo)[..., None]
-    img = img * (1 - a) + np.float32(CORES["vermelho"]) * a
-    return np.clip(img, 0, 255).astype(np.uint8), a[..., 0] > 0.5
-
-
-@pytest.fixture
-def modelo_riscas(rng, tmp_path):
-    """Um modelo que aprendeu uma foto anotada do fundo às riscas (como o anotar.py faz)."""
-    img, saco = _riscas(rng, 23.0, 640, 480)
-    pequena = reduzir(img)
-    modelo = Modelo()
-    modelo.aprender(pequena, cv2.resize(saco.astype(np.uint8), pequena.shape[1::-1], interpolation=cv2.INTER_NEAREST) > 0)
-    modelo.guardar(tmp_path)
-    return tmp_path / "modelo.npz"
-
-
-def test_aprendido_mede_o_saco_noutra_foto(rng, modelo_riscas):
-    img, _ = _riscas(rng, -30.0, 600, 520)
-    cfg = config_teste(geral={"px_por_mm": PPM}, localizacao={"segmentador": "aprendido",
-                                                              "aprendido_modelo": str(modelo_riscas)})
-    loc = m.Mestre(cfg, apenas=[]).inspecionar(img).relatorio("localizacao")
-    assert loc.estado is Estado.OK, loc.mensagem
-    medidas = loc.medidas
-    assert abs(medidas["comprimento_mm"] - 150) < 0.4 and abs(medidas["largura_mm"] - 55) < 0.4, medidas
-    assert diferenca_angulo(medidas["angulo_graus"], -30.0) < 0.3 and medidas["score_segmentacao"] > 0.9
-
-
-def test_aprendido_incerto_da_erro_e_sem_modelo_diz_como_criar(rng, modelo_riscas, tmp_path):
-    img, _ = _riscas(rng, 10.0, 620, 500)
-    cfg = config_teste(geral={"px_por_mm": PPM}, localizacao={"segmentador": "aprendido", "aprendido_score_min": 1.0,
-                                                              "aprendido_modelo": str(modelo_riscas)})
-    r = m.Mestre(cfg, apenas=[]).inspecionar(img)
-    assert r.estado is Estado.ERRO and "segmentação incerta" in r.mensagem, r.mensagem
-    sem = config_teste(localizacao={"segmentador": "aprendido", "aprendido_modelo": str(tmp_path / "nao.npz")})
-    with pytest.raises(FileNotFoundError, match="ferramentas.anotar"):
-        m.Mestre(sem)
 
 
 # --- Controlo da medição (qualidade.py): a imagem deixou medir bem? --------------------------

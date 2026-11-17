@@ -2,7 +2,7 @@
 
 Liga as etapas pela ordem, um ficheiro cada:
 
-    segmentadores/    1. separar o saco do fundo (ΔE, SAM 3 ou os dois)
+    segmentadores/    1. separar o saco do fundo (ΔE)
     segmentacao.py    2. contorno subpíxel (e o limiar, arestas e limpeza do ΔE)
     medicao.py        3. ângulo, comprimento e largura
     normalizacao.py   4. rodar, recortar, zona útil
@@ -44,7 +44,7 @@ class Localizador:
     def __init__(self, cfg: Config, segmentador: segmentadores.Segmentador | None = None) -> None:
         """Prepara o M2 e o segmentador (com o ΔE e fundo_referencia, lê-a já: erro claro no arranque).
 
-        segmentador: para usar outro que não o de cfg.localizacao.segmentador (testes).
+        segmentador: para usar outro que não o ΔE (testes: uma máscara feita à mão).
         """
         self.cfg = cfg
         self.segmentador = segmentador or segmentadores.criar(cfg)
@@ -69,7 +69,7 @@ class Localizador:
         p = self.cfg.localizacao
         diag = diagnostico if diagnostico is not None else Diagnostico()
 
-        # 1. Segmentação (o backend de localizacao.segmentador: ΔE, SAM 3 ou os dois)
+        # 1. Segmentação (ΔE)
         try:
             seg = self.segmentador.segmentar(img, self.cfg.geral.px_por_mm, guardar_intermedios)
         except SemSaco as erro:  # o ΔE junta o diagnóstico (limiar, mapa) ao motivo

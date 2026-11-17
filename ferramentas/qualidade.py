@@ -143,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
         print("Nenhuma imagem: indicar as pastas dos sacos bons, p.ex. dataset\\bancada_botao\\ok")
         return 1
     ppm = cfg.geral.px_por_mm
-    print(f"{len(imagens)} imagens; px_por_mm {ppm:g}, segmentador {cfg.localizacao.segmentador}")
+    print(f"{len(imagens)} imagens; px_por_mm {ppm:g}")
 
     por_imagem, medidas, por_saco, sem_medida = [], [], [], []
     for i, caminho in enumerate(imagens, start=1):

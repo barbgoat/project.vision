@@ -47,7 +47,6 @@ SeparadorDecimal = Literal[",", "."]
 ModoDisparo = Literal["ao_vivo", "trigger"]
 AtivacaoTrigger = Literal["RisingEdge", "FallingEdge"]
 Direcao = Literal["horizontal", "vertical"]
-TipoSegmentador = Literal["delta_e", "aprendido", "sam3", "duplo"]
 FormatoPixel = Literal["BGR8", "Mono8", "BayerRG8", "BayerBG8", "BayerGB8", "BayerGR8"]
 
 
@@ -220,13 +219,6 @@ class ConfigDisparo:
 class ConfigLocalizacao:
     """M2 Localização: separar o saco do fundo, medi-lo e normalizá-lo."""
 
-    segmentador: TipoSegmentador = D.LOCALIZACAO_SEGMENTADOR
-    aprendido_modelo: str = D.LOCALIZACAO_APRENDIDO_MODELO
-    aprendido_score_min: float = D.LOCALIZACAO_APRENDIDO_SCORE_MIN
-    sam3_prompt: str = D.LOCALIZACAO_SAM3_PROMPT
-    sam3_score_min: float = D.LOCALIZACAO_SAM3_SCORE_MIN
-    sam3_fecho_mm: float = D.LOCALIZACAO_SAM3_FECHO_MM
-    duplo_iou_min: float = D.LOCALIZACAO_DUPLO_IOU_MIN
     resolucao_px_por_mm: float = D.LOCALIZACAO_RESOLUCAO_PX_POR_MM
     suavizacao_mm: float = D.LOCALIZACAO_SUAVIZACAO_MM
     fundo_referencia: str = D.LOCALIZACAO_FUNDO_REFERENCIA
@@ -277,13 +269,6 @@ class ConfigLocalizacao:
             (self.folga_mm >= 0, "folga_mm tem de ser ≥ 0"),
             (self.margem_borda_mm >= 0, "margem_borda_mm tem de ser ≥ 0"),
             (self.margem_extremidades_mm >= 0, "margem_extremidades_mm tem de ser ≥ 0"),
-            _opcao(self, "segmentador", TipoSegmentador),
-            (bool(self.aprendido_modelo.strip()), "aprendido_modelo não pode estar vazio"),
-            (0 <= self.aprendido_score_min <= 1, "aprendido_score_min tem de estar entre 0 e 1"),
-            (bool(self.sam3_prompt.strip()), "sam3_prompt não pode estar vazio"),
-            (0 <= self.sam3_score_min <= 1, "sam3_score_min tem de estar entre 0 e 1"),
-            (self.sam3_fecho_mm >= 0, "sam3_fecho_mm tem de ser ≥ 0 (0 = sem fecho)"),
-            (0 < self.duplo_iou_min <= 1, "duplo_iou_min tem de estar entre 0 (exclusive) e 1"),
         ])
 
 

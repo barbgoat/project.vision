@@ -159,17 +159,6 @@ DISPARO_FILA_MAX: Final = 4  # passagens à espera de análise; acima disto a an
 # =============================================================================
 # M2 LOCALIZAÇÃO (encontrar o saco, medir, endireitar)
 # =============================================================================
-# Segmentador (o que separa o saco do fundo): "delta_e" (diferença de cor ao fundo, CPU, rápido),
-# "aprendido" (as cores e texturas aprendidas com as fotos anotadas em ferramentas/anotar.py:
-# fundos variados, CPU), "sam3" (SAM 3 da Meta por texto: qualquer fundo, precisa de GPU e dos
-# pesos; ver o README) ou "duplo" (ΔE e SAM 3; se discordarem, ERRO e a foto vai para dataset/revisao/).
-LOCALIZACAO_SEGMENTADOR: Final = "delta_e"
-LOCALIZACAO_APRENDIDO_MODELO: Final = "dataset/segmentacao/modelo.npz"  # criado e atualizado pelo anotar.py
-LOCALIZACAO_APRENDIDO_SCORE_MIN: Final = 0.15  # P(saco) dentro do saco menos à volta (fundo claro ~0,25, fundo preto ~0,5); abaixo: ERRO "incerta"
-LOCALIZACAO_SAM3_PROMPT: Final = "plastic bag"  # o que o SAM 3 procura (texto, em inglês)
-LOCALIZACAO_SAM3_SCORE_MIN: Final = 0.5  # confiança mínima (0–1); abaixo: ERRO "segmentação incerta"
-LOCALIZACAO_SAM3_FECHO_MM: Final = 0.0  # fecho morfológico com o SAM 3 (0 = nenhum: não tapa entalhes)
-LOCALIZACAO_DUPLO_IOU_MIN: Final = 0.95  # "duplo": coincidência mínima (IoU) das duas máscaras
 LOCALIZACAO_RESOLUCAO_PX_POR_MM: Final = 4.0  # resolução da segmentação (a imagem é reduzida para isto; ≥ geral.px_por_mm = sem redução). O contorno subpíxel, a pose e o controlo da medição são sempre à resolução total
 # Desfoque antes de comparar com o fundo (tira o ruído do sensor). Bordas do saco finas e escuras ao lado
 # de soldaduras brilhantes perdem-se com ele: então baixá-lo (p.ex. 0,04) e segmentar sem reduzir.
@@ -217,18 +206,6 @@ LOCALIZACAO_QUALIDADE_CONTRASTE_MIN: Final = 0.4  # [MEDIR] só ΔE: 1 − limia
 LOCALIZACAO_QUALIDADE_LUZ_MAX_PCT: Final = 30.0  # [MEDIR] só ΔE com a foto do fundo vazio: luz do fundo face à da foto, ± % (bons: −18 a +3)
 
 # --- M2: afinação interna ----------------------------------------------------------
-M2_APRENDIDO_LADO_PX: Final = 800  # o modelo aprendido aprende e trabalha a esta resolução (lado maior)
-M2_APRENDIDO_NIVEIS_COR: Final = 16  # níveis por canal de CIELAB no modelo (16³ cores)
-M2_APRENDIDO_NIVEIS_TEXTURA: Final = 4  # níveis do desvio-padrão local da luminosidade
-M2_APRENDIDO_TEXTURA_JANELA_PX: Final = 7  # janela (px da versão de 800 px) do desvio-padrão que mede a textura
-M2_APRENDIDO_COR_SUAVIZACAO_PX: Final = 1.0  # desfoque (px da versão de 800 px) antes de ler a cor
-M2_APRENDIDO_TEXTURA_MAX: Final = 24.0  # desvio-padrão (níveis de cinzento) a partir do qual é o último nível
-M2_APRENDIDO_PROBABILIDADE_MIN: Final = 0.6  # P(saco) para ser saco: > 0,5 (o ambíguo e o nunca visto ficam de fora)
-M2_APRENDIDO_SUAVIZACAO_PX: Final = 2.0  # desfoque do mapa de P(saco) antes do limiar
-M2_APRENDIDO_FAIXA_INCERTA: Final = 0.02  # zona junto à aresta (fração da imagem) que o GrabCut decide
-M2_APRENDIDO_GRABCUT_LADO_PX: Final = 400  # o GrabCut corre numa versão com este lado maior (é o passo lento)
-M2_APRENDIDO_GRABCUT_ITERACOES: Final = 3
-M2_REVISAO: Final = "dataset/revisao"  # "duplo": onde ficam as fotos em que os segmentadores discordam
 # A aresta subpíxel procura-se a ± isto px DO MAPA do segmentador. Fica em px (não em mm): é a
 # precisão da máscara grosseira na sua própria resolução (≥ 1: os degraus dos seus píxeis; mais o que
 # o limiar a engorda ou emagrece), não uma tolerância do saco. Mais larga entra na textura das

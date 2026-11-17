@@ -45,7 +45,7 @@ _PRETO = (0, 0, 0)
 
 def resolucao_localizacao(resultado: Resultado) -> str:
     """"loc. 5 px/mm": a resolução do mapa em que o M2 segmentou este saco (a efetiva: sem redução é a
-    da câmara); "" se o segmentador não a diz (p.ex. SAM 3) ou o M2 não chegou a correr."""
+    da câmara); "" se o segmentador não a diz ou o M2 não chegou a correr."""
     localizacao = resultado.relatorio("localizacao")
     valor = localizacao.medidas.get("resolucao_px_por_mm") if localizacao is not None else None
     return f"loc. {f'{valor:.1f}'.rstrip('0').rstrip('.')} px/mm" if valor else ""

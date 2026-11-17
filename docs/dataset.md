@@ -28,28 +28,12 @@ Em cada uma:  ok/   dimensao/ cor/ risco/ dobra/ rugas/ amasso/ mancha/ (um defe
   modo zonas: cada retângulo arrastado à volta do defeito vai para esse `.json` ("Concluir zonas" no
   fim). Mudar a classe depois leva a imagem e as zonas para a pasta nova.
 
-## Segmentação (para treinar uma rede)
-
-`python -m ferramentas.anotar dataset\linha` propõe o contorno do saco em cada imagem (qualquer
-fundo); Enter guarda, um retângulo à volta do saco corrige (GrabCut), o pincel afina; também pontos com
-zoom (3, e para editar), SAM 3 por texto (s) e SAM 2 por cliques (4). Fica em
-`dataset/segmentacao/`: `imagens/`, `mascaras/` (PNG), `etiquetas/` (YOLO-seg), `anotacoes_coco.json` e
-`metadados.csv` (`--tipo`, `--fundo`, `--saco`). Variar fundos, luz e tipos de saco; incluir
-algumas imagens sem saco (tecla v). Cada imagem guardada ensina o modelo (`modelo.npz`: cores e
-textura do saco e do fundo), que dá as propostas seguintes; `--treinar` refaz-o depois de
-corrigir máscaras à mão. O M2 usa o mesmo modelo com `localizacao.segmentador = "aprendido"`.
-Um fundo nunca anotado engana-o: anotar algumas imagens de cada fundo.
-
-Divisão: `python -m ferramentas.dividir_dataset` põe cada saco físico (`--saco`, ou a pasta da
-imagem) num só conjunto (treino, validação ou teste); `--fora-fundo X` / `--fora-tipo Y` testam
-num fundo ou num saco nunca vistos; `--copiar` cria `rfdetr/` (COCO) e `yolo/` prontos a treinar.
-
 ## Conjunto de teste (validar as medidas)
 
 `dataset/teste/imagens/` com imagens da câmara (tiradas com a montagem do perfil), `ground_truth.csv`
 (`ficheiro;saco;tipo_saco;fundo;comprimento_mm;largura_mm`, medidas com o paquímetro; `saco` = o
-saco físico) e, opcional, `mascaras/` (PNG com o mesmo nome) para o IoU. Várias imagens do mesmo
-saco dão a repetibilidade. `python -m ferramentas.validar --config <perfil> --backends delta_e sam3`.
+saco físico). Várias imagens do mesmo saco dão a repetibilidade.
+`python -m ferramentas.validar --config <perfil>`.
 
 ## Avaliar o sistema e a referência dos sacos OK
 
