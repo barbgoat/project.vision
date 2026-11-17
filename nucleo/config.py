@@ -308,13 +308,28 @@ class ConfigDimensoes:
 
 @dataclass(frozen=True)
 class ConfigRelevo:
-    """M5 Relevo: riscos, dobras, rugas e amassos (por fazer)."""
+    """M5 Relevo: rugas (linhas finas e compridas que não são impressão)."""
 
     ativo: bool = D.RELEVO_ATIVO
     timeout_ms: float = D.RELEVO_TIMEOUT_MS
+    referencia_pasta: str = D.RELEVO_REFERENCIA_PASTA
+    margem_mm: float = D.RELEVO_MARGEM_MM
+    limiar: float = D.RELEVO_LIMIAR
+    ruga_min_mm: float = D.RELEVO_RUGA_MIN_MM
+    prova_min_mm: float = D.RELEVO_PROVA_MIN_MM
+    queimado_max_pct: float = D.RELEVO_QUEIMADO_MAX_PCT
 
     def erros(self) -> list[str]:
-        return []
+        erros = []
+        if self.margem_mm < 0:
+            erros.append("relevo.margem_mm tem de ser >= 0")
+        if self.limiar <= 0:
+            erros.append("relevo.limiar tem de ser > 0")
+        if not 0 < self.prova_min_mm <= self.ruga_min_mm:
+            erros.append("relevo.prova_min_mm tem de ser > 0 e <= relevo.ruga_min_mm")
+        if not 0 < self.queimado_max_pct <= 100:
+            erros.append("relevo.queimado_max_pct tem de estar entre 0 e 100")
+        return erros
 
 
 @dataclass(frozen=True)
@@ -429,6 +444,13 @@ AFINACAO: dict[str, list[tuple[str, float, float, float]]] = {
         ("forma_profundidade_min_mm", 0.5, 20, 0.5),
         ("esquadria_max_graus", 0.5, 15, 0.5),
         ("paralelismo_max_graus", 0.5, 15, 0.5),
+    ],
+    "relevo": [
+        ("margem_mm", 0, 15, 0.5),
+        ("limiar", 0.05, 1, 0.01),
+        ("ruga_min_mm", 10, 200, 5),
+        ("prova_min_mm", 5, 200, 5),
+        ("queimado_max_pct", 5, 100, 5),
     ],
 }
 

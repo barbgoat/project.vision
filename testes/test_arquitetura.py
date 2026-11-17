@@ -145,17 +145,17 @@ def test_validacao_cruzada_camara():
 def test_guardar_e_carregar_com_acentos(tmp_path):
     pasta = com_acentos(tmp_path)
     caminho = pasta / "configuração ç.json"
-    caminho.write_text(json.dumps({"relevo": {"ativo": False}}), encoding="utf-8-sig")
-    assert Config.carregar(caminho).relevo.ativo is False
+    caminho.write_text(json.dumps({"relevo": {"ativo": True}}), encoding="utf-8-sig")
+    assert Config.carregar(caminho).relevo.ativo is True
 
-    c = Config.de_dict({"geral": {"px_por_mm": 12.4}, "relevo": {"ativo": False}})
+    c = Config.de_dict({"geral": {"px_por_mm": 12.4}, "relevo": {"ativo": True}})
     caminho = pasta / "telemóvel.json"
     c.guardar(caminho)
-    assert json.loads(caminho.read_text(encoding="utf-8")) == {"geral": {"px_por_mm": 12.4}, "relevo": {"ativo": False}}
+    assert json.loads(caminho.read_text(encoding="utf-8")) == {"geral": {"px_por_mm": 12.4}, "relevo": {"ativo": True}}
     assert Config.carregar(caminho) == c
     assert c.descrever_alteracoes() == [
         f"geral.px_por_mm = 12.4 (define GERAL_PX_POR_MM = {D.GERAL_PX_POR_MM})",
-        "relevo.ativo = False (define RELEVO_ATIVO = True)",
+        "relevo.ativo = True (define RELEVO_ATIVO = False)",
     ]
     c.guardar(pasta / "completo.json", completo=True)
     completo = json.loads((pasta / "completo.json").read_text(encoding="utf-8"))
@@ -195,12 +195,12 @@ IMG = np.zeros((40, 60, 3), np.uint8)
 
 def test_ordem_e_escolha_dos_modulos():
     cfg = Config()
-    assert m.Mestre(cfg).nomes == ["localizacao", "dimensoes", "relevo"]
+    assert m.Mestre(cfg).nomes == ["localizacao", "dimensoes"], "o M5 só entra na inspeção quando se liga"
     with pytest.raises(ValueError):
         m.Mestre(cfg, apenas=["xpto"])
-    sem_relevo = dataclasses.replace(cfg, relevo=dataclasses.replace(cfg.relevo, ativo=False))
-    assert "relevo" not in m.Mestre(sem_relevo).nomes
-    assert m.Mestre(sem_relevo, apenas=["relevo"]).nomes == ["localizacao", "relevo"]
+    com_relevo = dataclasses.replace(cfg, relevo=dataclasses.replace(cfg.relevo, ativo=True))
+    assert m.Mestre(com_relevo).nomes == ["localizacao", "dimensoes", "relevo"]
+    assert m.Mestre(cfg, apenas=["relevo"]).nomes == ["localizacao", "relevo"], "o Verificar rugas da BIapp"
 
 
 def test_imagem_sem_saco_da_sem_saco_com_motivo():
@@ -333,11 +333,11 @@ def test_sem_saco_nao_chama_mais_ninguem(monkeypatch):
     assert r.estado is Estado.SEM_SACO and len(r.relatorios) == 1
 
 
-def test_escravos_reais_m3_decide_enquanto_m5_por_implementar(saco_falso):
+def test_escravos_reais_m3_decide_e_m5_desligado_por_omissao(saco_falso):
     r = m.Mestre(config_teste()).inspecionar(IMG.copy())
     estados = {x.modulo: x.estado for x in r.relatorios}
     assert estados["dimensoes"] in (Estado.OK, Estado.NOK)
-    assert estados["relevo"] is Estado.POR_IMPLEMENTAR
+    assert "relevo" not in estados and "relevo" in r.desligados
     assert r.estado is estados["dimensoes"]
 
 
@@ -408,7 +408,7 @@ def test_defeito_e_relatorio_sao_imutaveis():
     assert r.defeitos == (d,) and r.estado is Estado.NOK
 
 
-def test_escravos_cumprem_o_protocolo_e_m4_m6_por_implementar_sem_rebentar():
+def test_escravos_cumprem_o_protocolo_sem_rebentar():
     from nucleo.contrato import Escravo as Protocolo
     rng = np.random.default_rng(2)
     img, _ = cena_saco(rng, comprimento=150, largura=55)
@@ -420,8 +420,10 @@ def test_escravos_cumprem_o_protocolo_e_m4_m6_por_implementar_sem_rebentar():
         assert isinstance(escravo, Protocolo), classe.__name__
         r = escravo.inspecionar(saco, Captura(img, "x", 0.0), cfg)  # não levanta exceções
         assert isinstance(r, Relatorio) and r.modulo == classe.nome
-        if classe.nome in ("cor", "relevo", "manchas"):
+        if classe.nome in ("cor", "manchas"):
             assert r.estado is Estado.POR_IMPLEMENTAR and r.mensagem.startswith("por implementar")
+        if classe.nome == "relevo":
+            assert r.estado is Estado.OK, f"um saco liso não tem rugas: {r.resumo} {r.mensagem}"
 
 
 def test_escravos_recebem_a_captura_no_espaco_metrico(saco_falso):

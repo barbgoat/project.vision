@@ -338,7 +338,7 @@ def test_producao_para_em_cada_saco_nao_ok_ate_decidir(app, janela, tmp_path):
     assert len(ler_csv(pasta / "registo.csv")) == 3, "regista como o main.py"
     assert [linha["decisao"] for linha in ler_csv(pasta / "revisoes.csv")] == ["descartado", "NOK"]
     assert janela.faixa_eng.text().startswith("NOK") and janela.defeitos.rowCount() >= 1
-    assert janela.etapas.count() >= 2 and janela.modulos.rowCount() == 3
+    assert janela.etapas.count() >= 2 and janela.modulos.rowCount() == 2, "o M2 e o M3 (o M5 vem desligado)"
 
     janela._corrigir("dimensao")  # Engenharia: guardar no dataset
     assert len(list((tmp_path / "dataset" / "linha" / "dimensao").glob("*comprido_158.png"))) == 1

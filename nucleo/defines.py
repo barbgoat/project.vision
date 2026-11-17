@@ -299,8 +299,15 @@ M3_GEOMETRIA_PONTOS_MIN: Final = 10  # pontos mínimos num lado para lhe ajustar
 # =============================================================================
 # M5 RELEVO (riscos, dobras, rugas, amassos)
 # =============================================================================
-RELEVO_ATIVO: Final = True
+RELEVO_ATIVO: Final = False  # na inspeção; o Verificar rugas da BIapp corre-o sempre. Ligar só depois de validado
 RELEVO_TIMEOUT_MS: Final = 0.0  # tempo máximo do módulo por saco; acima disto ERRO; 0 = sem limite
+# Rugas (modulos/m5_relevo/linhas.py): uma ruga é uma linha fina e comprida, escura ou clara, que não é impressão.
+RELEVO_REFERENCIA_PASTA: Final = ""  # pasta dos recortes de sacos OK ("É OK: ensinar" na BIapp): as marcas impressas aprendem-se deles; "" = sem
+RELEVO_MARGEM_MM: Final = 3.0  # faixa junto às bordas do saco (além da do M2) que não se inspeciona
+RELEVO_LIMIAR: Final = 0.10  # [MEDIR] força mínima de um ponto de linha, relativa ao brilho local (menor = mais sensível; um vinco de 10 % dá ~0,12)
+RELEVO_RUGA_MIN_MM: Final = 40.0  # [MEDIR] comprimento mínimo de uma ruga
+RELEVO_PROVA_MIN_MM: Final = 20.0  # [MEDIR] traço visível mínimo ao longo dela (o resto pode estar queimado ou falhado)
+RELEVO_QUEIMADO_MAX_PCT: Final = 50.0  # acima desta parte do saco saturada (branco puro) não se veem rugas: ERRO
 
 # =============================================================================
 # REFERÊNCIA DOS SACOS OK (nucleo/referencia.py)

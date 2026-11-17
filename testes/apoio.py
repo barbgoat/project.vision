@@ -116,6 +116,7 @@ MONTAGEM: dict[str, dict[str, Any]] = {
     "dimensoes": {"comprimento_nominal_mm": COMPRIMENTO, "largura_nominal_mm": LARGURA,
                   "tolerancia_comprimento_mm": 3.0, "tolerancia_largura_mm": 3.0, "forma_raio_canto_mm": 0.0, "forma_raio_canto_outra_ponta_mm": -1.0,
                   "esquadria_max_graus": 2.0, "paralelismo_max_graus": 2.0},
+    "relevo": {"limiar": 0.10, "ruga_min_mm": 40.0, "prova_min_mm": 20.0},
 }
 
 

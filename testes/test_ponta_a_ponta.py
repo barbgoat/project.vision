@@ -78,7 +78,7 @@ def test_main_um_resultado_por_saco(corrida_nok):
     assert all(linhas[n]["estado"] == "NOK" for n in FORMAS if n != "certo")
     assert linhas["vazio"]["estado"] == "ERRO" and "localizacao:" in linhas["vazio"]["mensagens"], \
         "o sinal disparou mas não se viu o saco: nunca é aprovado"
-    assert all(linhas[n]["relevo"] == "POR_IMPLEMENTAR" for n in FORMAS), "os módulos por fazer aparecem"
+    assert "relevo" not in linhas["certo"] and linhas["certo"]["nao_verificado"] == "relevo",         "o M5 desligado não tem coluna, mas fica dito que não verificou"
 
 
 def test_main_um_defeito_por_linha(corrida_nok):

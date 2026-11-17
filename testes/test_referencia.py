@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from types import SimpleNamespace
 
@@ -35,12 +36,31 @@ def saco():
     return cena_saco(np.random.default_rng(4))[0]
 
 
+@pytest.fixture
+def relevo_por_fazer(monkeypatch):
+    """O M5 ativo mas por implementar (como antes de ter detetor): verifica-se "não verificado"."""
+    from modulos.m5_relevo import Relevo
+    monkeypatch.setattr(Relevo, "inspecionar", lambda self, *a, **k: Relatorio.por_implementar("relevo"))
+    return config_teste(relevo={"ativo": True})
+
+
 def test_ok_diz_que_modulos_o_verificaram(saco):
-    r = m.Mestre(config_teste()).inspecionar(saco.copy())
+    r = m.Mestre(config_teste(relevo={"ativo": True})).inspecionar(saco.copy())
     assert r.estado is Estado.OK
-    assert r.verificado_por == ["dimensoes"]
+    assert r.verificado_por == ["dimensoes", "relevo"]
+    assert r.por_verificar == [] and r.desligados == () and r.aviso == ""
+
+
+def test_por_implementar_fica_por_verificar(saco, relevo_por_fazer):
+    r = m.Mestre(relevo_por_fazer).inspecionar(saco.copy())
+    assert r.estado is Estado.OK and r.verificado_por == ["dimensoes"]
     assert r.por_verificar == ["relevo"] and r.desligados == ()
     assert r.aviso == "não verificado: relevo"
+
+
+def test_relevo_desligado_por_omissao_fica_por_verificar(saco):
+    r = m.Mestre(config_teste()).inspecionar(saco.copy())
+    assert r.estado is Estado.OK and r.desligados == ("relevo",) and r.aviso == "não verificado: relevo"
 
 
 def test_desligados_tambem_ficam_por_verificar(saco):
@@ -49,8 +69,9 @@ def test_desligados_tambem_ficam_por_verificar(saco):
     assert r.desligados == ("relevo",) and r.nao_verificado == ["relevo"]
 
 
-def test_exigir_todos_nao_aprova_um_ok_incompleto(saco):
-    r = m.Mestre(config_teste(geral={"exigir_todos": True})).inspecionar(saco.copy())
+def test_exigir_todos_nao_aprova_um_ok_incompleto(saco, relevo_por_fazer):
+    exigir = dataclasses.replace(relevo_por_fazer, geral=dataclasses.replace(relevo_por_fazer.geral, exigir_todos=True))
+    r = m.Mestre(exigir).inspecionar(saco.copy())
     assert r.estado is Estado.ERRO and "não verificado por relevo" in r.mensagem
     # Desligar é uma escolha: com só as dimensões ativas, o OK é completo.
     so_dimensoes = config_teste(geral={"exigir_todos": True}, relevo={"ativo": False})
@@ -203,7 +224,7 @@ def test_avaliar_conta_falsas_rejeicoes_e_escapados(tmp_path, capsys):
     assert (dimensao["responsavel"], dimensao["apanhados_pelo_responsavel"], dimensao["escapados"]) == \
         ("dimensoes", "1", "1")
     modulos = {x["modulo"]: x for x in ler_csv(saida / "avaliacao_modulos.csv")}
-    assert modulos["relevo"]["POR_IMPLEMENTAR"] == "4"
+    assert "relevo" not in modulos, "o M5 vem desligado"
     assert len(list((saida / "escapados").iterdir())) == 1
 
 
