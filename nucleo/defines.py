@@ -408,3 +408,23 @@ SAIDA_DASHBOARD_LIMPAR: Final = True  # botão "Limpar dados" no dashboard (apag
 SAIDA_DEPURAR: Final = "nenhuma"
 SAIDA_PAINEL_COLUNAS: Final = 4  # etapas por linha no painel
 SAIDA_PAINEL_LARGURA_ETAPA_PX: Final = 480  # largura de cada etapa no painel
+
+
+# =============================================================================
+# PLC (nucleo/plc.py): Delta DVP-12SE por Modbus TCP
+# =============================================================================
+# O PLC dá o ID de cada saco e recebe o resultado da inspeção. Registos D (endereço Modbus = 4096 + n):
+#   D100  ID do saco (escrito pelo PLC)       D101  ID a que o PC responde
+#   D102  resultado: 1 OK, 2 NOK, 3 ERRO, 4 SEM_SACO       D103  heartbeat do PC (contador)
+# False: a BIapp não fala com o PLC e fica como sem ele. Com True, a ligação só existe com a
+# inspeção a correr (depois de Iniciar); parada, nada se liga nem se escreve no PLC.
+PLC_ATIVO: Final = False
+PLC_IP: Final = "192.168.1.5"
+PLC_PORTA: Final = 502  # a porta normal do Modbus TCP
+PLC_UNIDADE: Final = 1  # endereço de estação Modbus do PLC (alguns Delta só respondem a 0)
+# Espera máxima por cada resposta do PLC. Curta de propósito: se o PLC falhar, a inspeção não
+# pode ficar à espera dele. Numa rede local o PLC responde em poucos ms.
+PLC_TIMEOUT_MS: Final = 100
+# Sem ligação, tenta religar no máximo de tanto em tanto tempo (cada tentativa falhada custa um
+# PLC_TIMEOUT_MS; assim um PLC desligado não gasta esse tempo a cada saco).
+PLC_RELIGAR_MS: Final = 1000

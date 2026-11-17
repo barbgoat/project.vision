@@ -24,6 +24,7 @@ Para ver todos os valores em uso (defines + config.json):
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import logging
 import math
@@ -471,6 +472,35 @@ class ConfigSaida:
         ])
 
 
+def _ipv4_valido(texto: str) -> bool:
+    try:
+        ipaddress.IPv4Address(texto)
+    except ValueError:
+        return False
+    return True
+
+
+@dataclass(frozen=True)
+class ConfigPLC:
+    """PLC (nucleo/plc.py): o ID de cada saco e o resultado da inspeção, por Modbus TCP."""
+
+    ativo: bool = D.PLC_ATIVO
+    ip: str = D.PLC_IP
+    porta: int = D.PLC_PORTA
+    unidade: int = D.PLC_UNIDADE
+    timeout_ms: int = D.PLC_TIMEOUT_MS
+    religar_ms: int = D.PLC_RELIGAR_MS
+
+    def erros(self) -> list[str]:
+        return _verificar([
+            (_ipv4_valido(self.ip), "ip tem de ser um endereço IPv4, p.ex. 192.168.1.5"),
+            (1 <= self.porta <= 65535, "porta tem de estar entre 1 e 65535"),
+            (0 <= self.unidade <= 255, "unidade tem de estar entre 0 e 255"),
+            (10 <= self.timeout_ms <= 1000, "timeout_ms tem de estar entre 10 e 1000 (a inspeção não pode esperar pelo PLC)"),
+            (self.religar_ms >= 100, "religar_ms tem de ser ≥ 100"),
+        ])
+
+
 # --- Gama de afinação ------------------------------------------------------------------
 
 # Os parâmetros que se afinam à mão, por secção: (parâmetro, mínimo, máximo, passo).
@@ -540,6 +570,7 @@ class Config:
     manchas: ConfigManchas = field(default_factory=ConfigManchas)
     referencia: ConfigReferencia = field(default_factory=ConfigReferencia)
     saida: ConfigSaida = field(default_factory=ConfigSaida)
+    plc: ConfigPLC = field(default_factory=ConfigPLC)
 
     def __post_init__(self) -> None:
         self.validar()
