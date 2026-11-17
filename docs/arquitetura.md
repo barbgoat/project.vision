@@ -9,9 +9,7 @@ falhar, o problema fica nele e o registo diz qual foi e onde.
 | M1 Aquisição | quais são as imagens deste saco? | `Passagem` |
 | M2 Localização | onde está o saco? está completo? | `Saco` (recorte endireitado + medidas) |
 | M3 Dimensões | tamanho e forma certos? | `Relatorio` |
-| M4 Cor | cor certa? | `Relatorio` |
-| M5 Relevo | riscos, dobras, rugas, amassos? | `Relatorio` |
-| M6 Manchas | manchas? | `Relatorio` |
+| M5 Relevo | riscos, dobras, rugas, amassos? (por fazer) | `Relatorio` |
 | M7 Saída | — | CSV, imagens, depuração |
 
 Cada `Relatorio` tem o estado (OK / NOK / ERRO / POR_IMPLEMENTAR), os defeitos
@@ -34,7 +32,7 @@ OK, NOK, ERRO ou SEM_SACO.
 1. Os módulos só importam do `nucleo/`, nunca uns dos outros (verificado nos testes).
 2. Cada módulo é uma pasta; o Mestre chama o `escravo.py` e cada etapa tem o seu ficheiro.
 3. **Nenhum número no código**: tudo o que pode variar está em `nucleo/defines.py`, em mm.
-4. Cada defeito tem um só dono (linhas: M5; áreas: M6).
+4. Cada defeito tem um só dono (o tipo de defeito diz o módulo: `TipoDefeito` em `nucleo/contrato.py`).
 5. Os testes não dependem dos valores `[MEDIR]`: usam `config_teste()` (`testes/apoio.py`),
    que os fixa em `MONTAGEM`. Um `[MEDIR]` novo nos defines entra também em `MONTAGEM`.
 

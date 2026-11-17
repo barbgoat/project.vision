@@ -57,16 +57,8 @@ mínima (`DIMENSOES_FORMA_PROFUNDIDADE_MIN_MM`, p.ex. 3 mm).
 
 ## M5 Relevo (`modulos/m5_relevo/`, por fazer)
 
-Riscos, dobras, rugas e amassos aparecem, com luz rasante, como cristas:
-
-1. `preprocessamento.py`: remove as variações lentas de iluminação.
-2. `cristas.py`: Hessiana multiescala + linhas centrais (Steger).
-3. `zonas.py`: muitas cristas juntas → rugas (paralelas) ou amasso (caóticas).
-4. `linhas.py`: cristas isoladas → risco (fina) ou dobra (larga).
-
-Defeitos que se tocam ficam separados: linhas partidas nos cruzamentos e
-religadas pela direção; troços alinhados religados; rugas e amasso separados
-pela coerência de orientação.
+Riscos, dobras, rugas e amassos aparecem, com luz rasante, como linhas mais claras ou
+mais escuras do que a vizinhança. O `escravo.py` devolve por agora `por_implementar`.
 
 ## Depuração
 
@@ -84,7 +76,7 @@ errada é onde está o problema. Gasta tempo: só em ensaios.
 
 - **Luz rasante** realça o relevo: testar posições da luz antes de afinar.
 - **Arrasto** (px) ≈ velocidade × exposição × px/mm (500 mm/s × 120 µs × 8 ≈ 0,5 px).
-- **Impressão** nos sacos pode dar falsos riscos (M5) e manchas (M6).
+- **Impressão** nos sacos pode dar falsos riscos (M5).
 - **Acentos nos caminhos:** usar `nucleo.imagens.ler_imagem`/`guardar_imagem`, não `cv2.imread`/`imwrite`.
 - **Referências:** Frangi 1998 (Hessiana), Steger 1998 (linhas), Bigün 1987
   (coerência de orientação), CIE ΔE. Para depois: estéreo fotométrico, câmara

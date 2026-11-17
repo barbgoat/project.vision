@@ -44,7 +44,6 @@ class Medida:
 
 # As medidas dos sacos (as do M3, que já incluem as do M2). As que dependem do sentido do saco
 # (a ponta que fica à esquerda não está resolvida) entram em valor absoluto e pela pior ponta.
-# Quando o M4 Cor estiver feito, as suas medidas (L*, a*, b*, ΔE) entram aqui.
 MEDIDAS: dict[str, Medida] = {
     "comprimento_mm": Medida(0.1, False, "comprimento (mm)"),
     "largura_mm": Medida(0.1, False, "largura (mm)"),

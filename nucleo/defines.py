@@ -297,47 +297,10 @@ M3_GEOMETRIA_ITERACOES: Final = 2  # voltas de reajuste sem os pontos afastados
 M3_GEOMETRIA_PONTOS_MIN: Final = 10  # pontos mínimos num lado para lhe ajustar uma reta
 
 # =============================================================================
-# M4 COR (o saco tem a cor certa?)
-# =============================================================================
-COR_ATIVO: Final = True  # desligar com fotos de telemóvel (balanço de brancos automático)
-COR_TIMEOUT_MS: Final = 0.0  # tempo máximo do módulo por saco; acima disto ERRO; 0 = sem limite
-COR_REFERENCIA_LAB: Final = (70.0, 0.0, 0.0)  # [MEDIR] cor média de sacos OK em CIELAB (L* 0–100, a*, b*)
-COR_DELTA_E_MAX: Final = 6.0  # diferença de cor máxima aceite (ΔE)
-
-# =============================================================================
 # M5 RELEVO (riscos, dobras, rugas, amassos)
 # =============================================================================
 RELEVO_ATIVO: Final = True
 RELEVO_TIMEOUT_MS: Final = 0.0  # tempo máximo do módulo por saco; acima disto ERRO; 0 = sem limite
-RELEVO_CANAL: Final = "cinzento"  # "cinzento" | "b" | "g" | "r" | "h" | "s" | "v"
-RELEVO_FUNDO_SIGMA_MM: Final = 5.0  # desfoque que estima a iluminação; bem maior do que os defeitos
-RELEVO_CRISTA_SIGMAS_MM: Final = (0.25, 0.5, 1.0, 2.0)  # escalas da Hessiana (larguras de crista)
-RELEVO_CRISTA_POLARIDADE: Final = "ambas"  # "ambas" | "clara" | "escura"
-RELEVO_CRISTA_LIMIAR_ALTO: Final = 0.05  # histerese: sementes
-RELEVO_CRISTA_LIMIAR_BAIXO: Final = 0.025  # histerese: continuação de uma semente
-RELEVO_LINHA_COMPRIMENTO_MIN_MM: Final = 10.0  # linha mais curta que conta como defeito
-RELEVO_LINHA_ALONGAMENTO_MIN: Final = 5.0  # comprimento / largura mínimo para ser "linha"
-RELEVO_RISCO_LARGURA_MAX_MM: Final = 1.0  # largura ≤ isto → risco; acima → dobra
-RELEVO_DOBRA_LARGURA_MAX_MM: Final = 6.0  # acima disto a crista não é considerada linha
-RELEVO_LINHA_LIGAR_DISTANCIA_MM: Final = 2.0  # religar troços de uma linha separados por menos do que isto
-RELEVO_LINHA_LIGAR_ANGULO_GRAUS: Final = 20.0  # ... e com direções que diferem menos do que isto
-RELEVO_ZONA_JANELA_MM: Final = 10.0  # janela onde se medem a densidade e a coerência de cristas
-RELEVO_ZONA_DENSIDADE_MIN: Final = 0.15  # fração de píxeis de crista na janela para ser zona densa
-RELEVO_ZONA_AREA_MIN_MM2: Final = 100.0
-RELEVO_ZONA_LINHAS_MIN: Final = 3  # nº mínimo de cristas distintas numa zona
-RELEVO_RUGAS_COERENCIA_MIN: Final = 0.5  # coerência de orientação ≥ isto → rugas; abaixo → amasso
-
-# =============================================================================
-# M6 MANCHAS
-# =============================================================================
-MANCHAS_ATIVO: Final = True
-MANCHAS_TIMEOUT_MS: Final = 0.0  # tempo máximo do módulo por saco; acima disto ERRO; 0 = sem limite
-MANCHAS_CANAL: Final = "cinzento"  # "cinzento" | "b" | "g" | "r" | "h" | "s" | "v"
-MANCHAS_FUNDO_SIGMA_MM: Final = 10.0  # desfoque que estima a iluminação; maior do que as manchas
-MANCHAS_POLARIDADE: Final = "ambas"  # "ambas" | "clara" | "escura"
-MANCHAS_CONTRASTE_MIN: Final = 0.15  # 0,15 = 15 % mais clara/escura do que a vizinhança
-MANCHAS_AREA_MIN_MM2: Final = 4.0
-MANCHAS_ALONGAMENTO_MAX: Final = 4.0  # acima disto é uma linha (assunto do M5), não uma mancha
 
 # =============================================================================
 # REFERÊNCIA DOS SACOS OK (nucleo/referencia.py)

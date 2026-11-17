@@ -51,7 +51,7 @@ def test_camadas_montagem_produto_of():
     assert cfg.dimensoes.tolerancia_comprimento_mm == 4.0, "a OF por cima do produto"
     assert compor(CFG, produto).dimensoes.tolerancia_comprimento_mm == 2.0
     assert cfg.dimensoes.forma_raio_canto_mm == CFG.dimensoes.forma_raio_canto_mm, "os cantos são da montagem"
-    assert (cfg.geral, cfg.localizacao, cfg.cor) == (CFG.geral, CFG.localizacao, CFG.cor), "a montagem fica"
+    assert (cfg.geral, cfg.localizacao, cfg.relevo) == (CFG.geral, CFG.localizacao, CFG.relevo), "a montagem fica"
     assert compor(CFG) == CFG
     assert efetiva(produto, of).cor == "creme" and ajustes_entre(produto, efetiva(produto, of)) == of.ajustes
     assert repor_medidas(cfg, CFG) == CFG

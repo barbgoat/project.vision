@@ -39,22 +39,21 @@ def test_ok_diz_que_modulos_o_verificaram(saco):
     r = m.Mestre(config_teste()).inspecionar(saco.copy())
     assert r.estado is Estado.OK
     assert r.verificado_por == ["dimensoes"]
-    assert r.por_verificar == ["cor", "relevo", "manchas"] and r.desligados == ()
-    assert r.aviso == "não verificado: cor, relevo, manchas"
+    assert r.por_verificar == ["relevo"] and r.desligados == ()
+    assert r.aviso == "não verificado: relevo"
 
 
 def test_desligados_tambem_ficam_por_verificar(saco):
-    cfg = config_teste(cor={"ativo": False})
+    cfg = config_teste(relevo={"ativo": False})
     r = m.Mestre(cfg).inspecionar(saco.copy())
-    assert r.desligados == ("cor",) and r.nao_verificado == ["relevo", "manchas", "cor"]
+    assert r.desligados == ("relevo",) and r.nao_verificado == ["relevo"]
 
 
 def test_exigir_todos_nao_aprova_um_ok_incompleto(saco):
     r = m.Mestre(config_teste(geral={"exigir_todos": True})).inspecionar(saco.copy())
-    assert r.estado is Estado.ERRO and "não verificado por cor, relevo, manchas" in r.mensagem
+    assert r.estado is Estado.ERRO and "não verificado por relevo" in r.mensagem
     # Desligar é uma escolha: com só as dimensões ativas, o OK é completo.
-    so_dimensoes = config_teste(geral={"exigir_todos": True}, cor={"ativo": False}, relevo={"ativo": False},
-                                manchas={"ativo": False})
+    so_dimensoes = config_teste(geral={"exigir_todos": True}, relevo={"ativo": False})
     assert m.Mestre(so_dimensoes).inspecionar(saco.copy()).estado is Estado.OK
 
 
@@ -69,7 +68,7 @@ def test_medidas_do_saco_so_dos_que_concluiram_e_sem_o_sentido():
     relatorios = [
         Relatorio("dimensoes", Estado.OK, medidas={"comprimento_mm": 150.2, "esquadria_esquerda_graus": 0.3,
                                                    "esquadria_direita_graus": -0.8, "paralelismo_graus": -0.4}),
-        Relatorio("cor", Estado.POR_IMPLEMENTAR, medidas={"largura_mm": 1.0}),
+        Relatorio("relevo", Estado.POR_IMPLEMENTAR, medidas={"largura_mm": 1.0}),
     ]
     assert medidas_do_saco(relatorios) == {"comprimento_mm": 150.2, "esquadria_max_graus": 0.8,
                                            "paralelismo_graus": 0.4}
@@ -204,12 +203,12 @@ def test_avaliar_conta_falsas_rejeicoes_e_escapados(tmp_path, capsys):
     assert (dimensao["responsavel"], dimensao["apanhados_pelo_responsavel"], dimensao["escapados"]) == \
         ("dimensoes", "1", "1")
     modulos = {x["modulo"]: x for x in ler_csv(saida / "avaliacao_modulos.csv")}
-    assert modulos["cor"]["POR_IMPLEMENTAR"] == "4"
+    assert modulos["relevo"]["POR_IMPLEMENTAR"] == "4"
     assert len(list((saida / "escapados").iterdir())) == 1
 
 
 def test_culpados_de_uma_falsa_rejeicao():
-    a = avaliar.Avaliado("x.png", "ok", "NOK", {"localizacao": "OK", "dimensoes": "NOK", "cor": "ERRO"}, {}, 1.0)
+    a = avaliar.Avaliado("x.png", "ok", "NOK", {"localizacao": "OK", "dimensoes": "NOK", "relevo": "ERRO"}, {}, 1.0)
     assert a.falsa_rejeicao and a.culpados == ["dimensoes"]
     sem_saco = avaliar.Avaliado("y.png", "ok", "SEM_SACO", {"localizacao": "SEM_SACO"}, {}, 1.0)
     assert sem_saco.culpados == ["localizacao"]

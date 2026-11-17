@@ -23,13 +23,7 @@
     "forma_raio_canto_mm": 6.0,
     "forma_profundidade_min_mm": 3.5
   },
-  "cor": {
-    "ativo": false
-  },
   "relevo": {
-    "ativo": false
-  },
-  "manchas": {
     "ativo": false
   },
   "saida": {

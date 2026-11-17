@@ -5,7 +5,7 @@ Para cada saco (uma passagem do M1, com as suas melhores imagens):
        o saco completo (inspecionar_passagem);
     1. pede ao M2 Localização o Saco;
     2. entrega o mesmo Saco, só de leitura, a cada escravo de inspeção ativo
-       (M3 Dimensões, M4 Cor, M5 Relevo, M6 Manchas);
+       (M3 Dimensões, M5 Relevo);
     3. protege cada chamada: um escravo que rebente fica com ERRO no seu
        relatório (com o ficheiro e a linha onde falhou) e os outros continuam;
        um que não pode decidir com confiança (SemConfianca: segmentação incerta,
@@ -53,9 +53,7 @@ import numpy as np
 
 from modulos.m2_localizacao import Diagnostico, Localizador
 from modulos.m3_dimensoes import Dimensoes
-from modulos.m4_cor import Cor
 from modulos.m5_relevo import Relevo
-from modulos.m6_manchas import Manchas
 from nucleo.config import RAIZ, Config
 from nucleo.contrato import (NOTA_PODE_SER_RELEVO, TIPOS_RELEVO, Captura, Escravo, Estado, Passagem, Relatorio,
                              Resultado, Saco, SemConfianca, SemSaco, TipoDefeito, nota_consequencia)
@@ -75,7 +73,7 @@ def no_espaco_metrico(img: np.ndarray, px_por_mm: float | None, canonico: float)
 # Escravos de inspeção, pela ordem em que são chamados. Para acrescentar um
 # módulo novo (selagem, furos...): criar o ficheiro em modulos/, a secção em
 # nucleo/config.py (com os valores em nucleo/defines.py) e juntá-lo aqui.
-ESCRAVOS: tuple[type[Escravo], ...] = (Dimensoes, Cor, Relevo, Manchas)
+ESCRAVOS: tuple[type[Escravo], ...] = (Dimensoes, Relevo)
 
 
 class Mestre:

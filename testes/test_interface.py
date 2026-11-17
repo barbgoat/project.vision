@@ -316,12 +316,13 @@ def test_editor_so_emite_configuracoes_validas(app):
     _campo(editor, "dimensoes", "tolerancia_comprimento_mm").setValue(4.5)
     assert recebidas[-1].dimensoes.tolerancia_comprimento_mm == 4.5 and not editor.erro.text()
 
-    baixo, alto = _campo(editor, "relevo", "crista_limiar_baixo"), _campo(editor, "relevo", "crista_limiar_alto")
-    baixo.setValue(alto.value() + 0.1)  # inválido: baixo > alto
-    assert len(recebidas) == 1 and "crista_limiar_baixo" in editor.erro.text()
-    alto.setValue(baixo.value() + 0.1)  # corrigido: as duas mudanças entram juntas
+    folga, profundidade = (_campo(editor, "dimensoes", "forma_folga_mm"),
+                           _campo(editor, "dimensoes", "forma_profundidade_min_mm"))
+    folga.setValue(profundidade.value() + 0.5)  # inválido: a folga não pode chegar à profundidade
+    assert len(recebidas) == 1 and "forma_folga_mm" in editor.erro.text()
+    profundidade.setValue(folga.value() + 1.0)  # corrigido: as duas mudanças entram juntas
     assert len(recebidas) == 2 and not editor.erro.text()
-    assert recebidas[-1].relevo.crista_limiar_baixo == pytest.approx(baixo.value())
+    assert recebidas[-1].dimensoes.forma_folga_mm == pytest.approx(folga.value())
     assert recebidas[-1].dimensoes.tolerancia_comprimento_mm == 4.5
 
 
@@ -337,7 +338,7 @@ def test_producao_para_em_cada_saco_nao_ok_ate_decidir(app, janela, tmp_path):
     assert len(ler_csv(pasta / "registo.csv")) == 3, "regista como o main.py"
     assert [linha["decisao"] for linha in ler_csv(pasta / "revisoes.csv")] == ["descartado", "NOK"]
     assert janela.faixa_eng.text().startswith("NOK") and janela.defeitos.rowCount() >= 1
-    assert janela.etapas.count() >= 2 and janela.modulos.rowCount() == 5
+    assert janela.etapas.count() >= 2 and janela.modulos.rowCount() == 3
 
     janela._corrigir("dimensao")  # Engenharia: guardar no dataset
     assert len(list((tmp_path / "dataset" / "linha" / "dimensao").glob("*comprido_158.png"))) == 1

@@ -13,7 +13,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from nucleo.config import Canal
 
 log = logging.getLogger(__name__)
 
@@ -135,43 +134,3 @@ def para_ver(imagem: np.ndarray) -> np.ndarray:
 def texto_ascii(texto: str) -> str:
     """Tira os acentos (o cv2.putText só desenha ASCII): "rasgão" → "rasgao", "mm²" → "mm2"."""
     return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
-
-
-# --- Operações comuns (usadas pelo M5 Relevo e pelo M6 Manchas) ------------------------
-
-def extrair_canal(img: np.ndarray, canal: Canal) -> np.ndarray:
-    """Extrai um canal de uma imagem BGR.
-
-    Recebe:
-        img: imagem BGR uint8.
-        canal: "cinzento", um canal BGR ("b", "g", "r") ou HSV ("h", "s", "v").
-    Devolve:
-        Imagem float32 de um só canal, com valores de 0 a 255.
-    O que vai fazer:
-        cv2.cvtColor para cinzento ou HSV, ou indexar o canal BGR; converter
-        para float32.
-    """
-    raise NotImplementedError
-
-
-def contraste_relativo(canal: np.ndarray, mascara: np.ndarray, sigma_px: float) -> np.ndarray:
-    """Remove as variações lentas de iluminação: quanto cada píxel é mais claro/escuro do que a vizinhança.
-
-    Recebe:
-        canal: imagem float32 de um só canal (saída de extrair_canal).
-        mascara: zona do saco, uint8 0/255; o que está fora não entra nas contas.
-        sigma_px: σ do desfoque que estima a iluminação; tem de ser bem maior
-            do que os defeitos a detetar.
-    Devolve:
-        Imagem float32: ≈0 onde a superfície é uniforme, +0,2 num sítio 20 %
-        mais claro do que a vizinhança, −0,2 num 20 % mais escuro; 0 fora da máscara.
-    O que vai fazer:
-        1. Estimar a iluminação com um desfoque gaussiano normalizado pela
-           máscara, para o tapete não "entrar" no saco junto à borda:
-           fundo = G∗(canal·m) / G∗m. Para ganhar tempo, pode ser feito numa
-           versão reduzida da imagem.
-        2. Contraste = canal / fundo − 1 (dividir compensa melhor do que
-           subtrair, porque a iluminação multiplica a refletância).
-        3. Pôr a 0 fora da máscara.
-    """
-    raise NotImplementedError

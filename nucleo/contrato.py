@@ -42,12 +42,12 @@ class TipoDefeito(StrEnum):
     """Tipos de defeito e o módulo responsável. Os valores são também pastas do dataset."""
 
     DIMENSAO = "dimensao"  # M3: tamanho fora da tolerância ou forma irregular
-    COR = "cor"  # M4: cor diferente da referência
+    COR = "cor"  # cor diferente da referência (ainda sem módulo)
     RISCO = "risco"  # M5: linha fina e comprida
     DOBRA = "dobra"  # M5: vinco, linha larga e comprida
     RUGAS = "rugas"  # M5: zona com várias linhas paralelas
     AMASSO = "amasso"  # M5: zona com várias linhas em direções caóticas
-    MANCHA = "mancha"  # M6: zona mais clara ou mais escura do que a vizinhança
+    MANCHA = "mancha"  # zona mais clara ou mais escura do que a vizinhança (ainda sem módulo)
 
 
 # Pastas do dataset: "ok", uma por tipo de defeito e "varios" (mais do que um defeito).

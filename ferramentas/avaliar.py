@@ -56,11 +56,12 @@ from nucleo.imagens import guardar_imagem, listar_imagens, ler_original  # noqa:
 
 CLASSES = CLASSES_DATASET  # as pastas do dataset (nucleo/contrato.py)
 
-# O módulo que tem de encontrar cada tipo de defeito (os comentários de TipoDefeito).
+# O módulo que tem de encontrar cada tipo de defeito (os comentários de TipoDefeito). A cor e as
+# manchas ainda não têm módulo: contam as rejeições de qualquer um.
 RESPONSAVEL: dict[str, str] = {
-    TipoDefeito.DIMENSAO: "dimensoes", TipoDefeito.COR: "cor",
+    TipoDefeito.DIMENSAO: "dimensoes",
     TipoDefeito.RISCO: "relevo", TipoDefeito.DOBRA: "relevo", TipoDefeito.RUGAS: "relevo",
-    TipoDefeito.AMASSO: "relevo", TipoDefeito.MANCHA: "manchas",
+    TipoDefeito.AMASSO: "relevo",
 }
 
 

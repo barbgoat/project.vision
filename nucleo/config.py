@@ -38,8 +38,6 @@ RAIZ = Path(__file__).resolve().parent.parent
 CAMINHO_POR_OMISSAO = RAIZ / "config.json"
 
 # Opções válidas dos parâmetros de texto.
-Canal = Literal["cinzento", "b", "g", "r", "h", "s", "v"]
-Polaridade = Literal["ambas", "clara", "escura"]
 PoliticaErro = Literal["rejeitar", "ignorar"]
 GuardarImagens = Literal["nenhuma", "nok", "todas"]
 FormatoImagem = Literal[".jpg", ".png"]
@@ -309,92 +307,14 @@ class ConfigDimensoes:
 
 
 @dataclass(frozen=True)
-class ConfigCor:
-    """M4 Cor: cor média do saco face à referência."""
-
-    ativo: bool = D.COR_ATIVO
-    timeout_ms: float = D.COR_TIMEOUT_MS
-    referencia_lab: list[float] = field(default_factory=lambda: list(D.COR_REFERENCIA_LAB))
-    delta_e_max: float = D.COR_DELTA_E_MAX
-
-    def erros(self) -> list[str]:
-        return _verificar([
-            (len(self.referencia_lab) == 3, "referencia_lab tem de ter 3 valores (L*, a*, b*)"),
-            (len(self.referencia_lab) == 3 and 0 <= self.referencia_lab[0] <= 100,
-             "o L* de referencia_lab tem de estar entre 0 e 100"),
-            (self.delta_e_max > 0, "delta_e_max tem de ser > 0"),
-        ])
-
-
-@dataclass(frozen=True)
 class ConfigRelevo:
-    """M5 Relevo: riscos, dobras, rugas e amassos (cristas na imagem)."""
+    """M5 Relevo: riscos, dobras, rugas e amassos (por fazer)."""
 
     ativo: bool = D.RELEVO_ATIVO
     timeout_ms: float = D.RELEVO_TIMEOUT_MS
-    canal: Canal = D.RELEVO_CANAL
-    fundo_sigma_mm: float = D.RELEVO_FUNDO_SIGMA_MM
-    crista_sigmas_mm: list[float] = field(default_factory=lambda: list(D.RELEVO_CRISTA_SIGMAS_MM))
-    crista_polaridade: Polaridade = D.RELEVO_CRISTA_POLARIDADE
-    crista_limiar_alto: float = D.RELEVO_CRISTA_LIMIAR_ALTO
-    crista_limiar_baixo: float = D.RELEVO_CRISTA_LIMIAR_BAIXO
-    linha_comprimento_min_mm: float = D.RELEVO_LINHA_COMPRIMENTO_MIN_MM
-    linha_alongamento_min: float = D.RELEVO_LINHA_ALONGAMENTO_MIN
-    risco_largura_max_mm: float = D.RELEVO_RISCO_LARGURA_MAX_MM
-    dobra_largura_max_mm: float = D.RELEVO_DOBRA_LARGURA_MAX_MM
-    linha_ligar_distancia_mm: float = D.RELEVO_LINHA_LIGAR_DISTANCIA_MM
-    linha_ligar_angulo_graus: float = D.RELEVO_LINHA_LIGAR_ANGULO_GRAUS
-    zona_janela_mm: float = D.RELEVO_ZONA_JANELA_MM
-    zona_densidade_min: float = D.RELEVO_ZONA_DENSIDADE_MIN
-    zona_area_min_mm2: float = D.RELEVO_ZONA_AREA_MIN_MM2
-    zona_linhas_min: int = D.RELEVO_ZONA_LINHAS_MIN
-    rugas_coerencia_min: float = D.RELEVO_RUGAS_COERENCIA_MIN
 
     def erros(self) -> list[str]:
-        return _verificar([
-            _opcao(self, "canal", Canal),
-            _opcao(self, "crista_polaridade", Polaridade),
-            (self.fundo_sigma_mm > 0, "fundo_sigma_mm tem de ser > 0"),
-            (len(self.crista_sigmas_mm) > 0 and all(s > 0 for s in self.crista_sigmas_mm),
-             "crista_sigmas_mm tem de ter pelo menos uma escala e todas > 0"),
-            (0 <= self.crista_limiar_baixo <= self.crista_limiar_alto,
-             "tem de ser 0 ≤ crista_limiar_baixo ≤ crista_limiar_alto"),
-            (self.linha_comprimento_min_mm > 0, "linha_comprimento_min_mm tem de ser > 0"),
-            (self.linha_alongamento_min >= 1, "linha_alongamento_min tem de ser ≥ 1"),
-            (0 < self.risco_largura_max_mm < self.dobra_largura_max_mm,
-             "tem de ser 0 < risco_largura_max_mm < dobra_largura_max_mm"),
-            (self.linha_ligar_distancia_mm >= 0, "linha_ligar_distancia_mm tem de ser ≥ 0"),
-            (0 <= self.linha_ligar_angulo_graus <= 90, "linha_ligar_angulo_graus tem de estar entre 0 e 90"),
-            (self.zona_janela_mm > 0, "zona_janela_mm tem de ser > 0"),
-            (0 < self.zona_densidade_min < 1, "zona_densidade_min tem de estar entre 0 e 1"),
-            (self.zona_area_min_mm2 >= 0, "zona_area_min_mm2 tem de ser ≥ 0"),
-            (self.zona_linhas_min >= 1, "zona_linhas_min tem de ser ≥ 1"),
-            (0 <= self.rugas_coerencia_min <= 1, "rugas_coerencia_min tem de estar entre 0 e 1"),
-        ])
-
-
-@dataclass(frozen=True)
-class ConfigManchas:
-    """M6 Manchas: zonas mais claras ou mais escuras do que a vizinhança."""
-
-    ativo: bool = D.MANCHAS_ATIVO
-    timeout_ms: float = D.MANCHAS_TIMEOUT_MS
-    canal: Canal = D.MANCHAS_CANAL
-    fundo_sigma_mm: float = D.MANCHAS_FUNDO_SIGMA_MM
-    polaridade: Polaridade = D.MANCHAS_POLARIDADE
-    contraste_min: float = D.MANCHAS_CONTRASTE_MIN
-    area_min_mm2: float = D.MANCHAS_AREA_MIN_MM2
-    alongamento_max: float = D.MANCHAS_ALONGAMENTO_MAX
-
-    def erros(self) -> list[str]:
-        return _verificar([
-            _opcao(self, "canal", Canal),
-            _opcao(self, "polaridade", Polaridade),
-            (self.fundo_sigma_mm > 0, "fundo_sigma_mm tem de ser > 0"),
-            (self.contraste_min > 0, "contraste_min tem de ser > 0"),
-            (self.area_min_mm2 >= 0, "area_min_mm2 tem de ser ≥ 0"),
-            (self.alongamento_max >= 1, "alongamento_max tem de ser ≥ 1"),
-        ])
+        return []
 
 
 @dataclass(frozen=True)
@@ -510,26 +430,6 @@ AFINACAO: dict[str, list[tuple[str, float, float, float]]] = {
         ("esquadria_max_graus", 0.5, 15, 0.5),
         ("paralelismo_max_graus", 0.5, 15, 0.5),
     ],
-    "cor": [
-        ("delta_e_max", 0.5, 30, 0.5),
-    ],
-    "relevo": [
-        ("fundo_sigma_mm", 1, 20, 0.5),
-        ("crista_limiar_alto", 0, 0.3, 0.005),
-        ("crista_limiar_baixo", 0, 0.3, 0.005),
-        ("linha_comprimento_min_mm", 1, 60, 1),
-        ("risco_largura_max_mm", 0.1, 4, 0.1),
-        ("linha_ligar_distancia_mm", 0, 10, 0.5),
-        ("linha_ligar_angulo_graus", 0, 60, 5),
-        ("zona_densidade_min", 0.01, 0.6, 0.01),
-        ("rugas_coerencia_min", 0, 1, 0.05),
-    ],
-    "manchas": [
-        ("fundo_sigma_mm", 1, 30, 0.5),
-        ("contraste_min", 0.01, 1, 0.01),
-        ("area_min_mm2", 0, 100, 1),
-        ("alongamento_max", 1, 20, 0.5),
-    ],
 }
 
 
@@ -546,9 +446,7 @@ class Config:
     disparo: ConfigDisparo = field(default_factory=ConfigDisparo)
     localizacao: ConfigLocalizacao = field(default_factory=ConfigLocalizacao)
     dimensoes: ConfigDimensoes = field(default_factory=ConfigDimensoes)
-    cor: ConfigCor = field(default_factory=ConfigCor)
     relevo: ConfigRelevo = field(default_factory=ConfigRelevo)
-    manchas: ConfigManchas = field(default_factory=ConfigManchas)
     referencia: ConfigReferencia = field(default_factory=ConfigReferencia)
     saida: ConfigSaida = field(default_factory=ConfigSaida)
     plc: ConfigPLC = field(default_factory=ConfigPLC)
@@ -583,7 +481,7 @@ class Config:
         if self.lente.circulo_imagem_mm < diagonal_sensor:
             erros.append(f"lente.circulo_imagem_mm ({self.lente.circulo_imagem_mm:g}) não cobre a diagonal do "
                          f"sensor ({diagonal_sensor:.1f} mm): os cantos da imagem ficam escuros")
-        for secao in ("dimensoes", "cor", "relevo", "manchas"):
+        for secao in ("dimensoes", "relevo"):
             if getattr(self, secao).timeout_ms < 0:
                 erros.append(f"{secao}.timeout_ms tem de ser ≥ 0 (0 = sem limite)")
         # O M2 não pode rejeitar sacos com as medidas nominais.

@@ -25,11 +25,11 @@ from nucleo.config import AFINACAO, RAIZ, Config, nome_define
 
 
 # O que se muda em cada janela: definições (roda dentada) e câmara.
-SECOES_DEFINICOES = ("geral", "localizacao", "dimensoes", "cor", "relevo", "manchas", "referencia", "saida")
+SECOES_DEFINICOES = ("geral", "localizacao", "dimensoes", "relevo", "referencia", "saida")
 SECOES_CAMARA = ("aquisicao", "disparo", "lente")
 NOMES_SECOES = {
     "geral": "Geral (px/mm, orçamento)", "localizacao": "M2 Localização", "dimensoes": "M3 Dimensões",
-    "cor": "M4 Cor", "relevo": "M5 Relevo", "manchas": "M6 Manchas",
+    "relevo": "M5 Relevo",
     "referencia": "Comparação com os sacos OK", "saida": "M7 Saída (imagens, registos)",
     "aquisicao": "Exposição e ganho", "disparo": "Trigger e barreira", "lente": "Lente",
 }
@@ -51,9 +51,7 @@ ESSENCIAIS: dict[tuple[str, str], str] = {
     ("dimensoes", "forma_raio_canto_mm"): "Raio dos cantos (mm)",
     ("dimensoes", "esquadria_max_graus"): "Pontas: desvio máximo do esquadro (°)",
     ("dimensoes", "paralelismo_max_graus"): "Lados: desvio máximo do paralelo (°)",
-    ("cor", "ativo"): "Verificar a cor",
     ("relevo", "ativo"): "Verificar o relevo",
-    ("manchas", "ativo"): "Verificar manchas",
     ("saida", "guardar_imagens"): "Guardar as imagens anotadas",
     ("saida", "guardar_originais"): "Guardar os originais da câmara",
     ("saida", "depurar"): "Guardar as etapas (depuração)",

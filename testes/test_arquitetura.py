@@ -70,7 +70,7 @@ def test_cada_parametro_tem_o_seu_define_com_o_mesmo_valor():
             elif (list(getattr(D, nd)) if isinstance(valor, list) else getattr(D, nd)) != valor:
                 diferentes.append(nd)
     # Os defines M2_, M3_... são afinações internas, sem parâmetro na configuração
-    defines_secao = {n for n in dir(D) if n.isupper() and (not n.startswith("M") or n.startswith("MANCHAS_"))}
+    defines_secao = {n for n in dir(D) if n.isupper() and not n.startswith("M")}
     assert not sem_define
     assert not diferentes
     assert not sorted(defines_secao - nomes_param), "defines de secção sem parâmetro"
@@ -117,23 +117,22 @@ def test_gralha_num_parametro_diz_a_secao():
 
 def test_varios_erros_aparecem_juntos():
     with pytest.raises(ValueError) as erro:
-        Config.de_dict({"geral": {"px_por_mm": 0}, "relevo": {"canal": "x"},
+        Config.de_dict({"geral": {"px_por_mm": 0}, "relevo": {"timeout_ms": -1.0},
                         "dimensoes": {"comprimento_nominal_mm": 500.0}})
-    for parametro in ("geral.px_por_mm", "relevo.canal", "dimensoes.comprimento_nominal_mm"):
+    for parametro in ("geral.px_por_mm", "relevo.timeout_ms", "dimensoes.comprimento_nominal_mm"):
         assert parametro in str(erro.value)
 
 
 def test_tipos_convertidos_e_secoes_em_falta_por_omissao():
-    c = Config.de_dict({"geral": {"px_por_mm": 8}, "cor": {"referencia_lab": [60, 1, 2]}})
+    c = Config.de_dict({"geral": {"px_por_mm": 8}})
     assert c.geral.px_por_mm == 8.0 and type(c.geral.px_por_mm) is float
-    assert c.cor.referencia_lab == [60.0, 1.0, 2.0]
     assert c.relevo == Config().relevo
 
 
 def test_replace_de_uma_secao_revalida_tudo():
     cfg = Config()
     with pytest.raises(ValueError):
-        dataclasses.replace(cfg, relevo=dataclasses.replace(cfg.relevo, crista_limiar_baixo=0.9))
+        dataclasses.replace(cfg, relevo=dataclasses.replace(cfg.relevo, timeout_ms=-1.0))
 
 
 def test_validacao_cruzada_camara():
@@ -146,17 +145,17 @@ def test_validacao_cruzada_camara():
 def test_guardar_e_carregar_com_acentos(tmp_path):
     pasta = com_acentos(tmp_path)
     caminho = pasta / "configuração ç.json"
-    caminho.write_text(json.dumps({"manchas": {"ativo": False}}), encoding="utf-8-sig")
-    assert Config.carregar(caminho).manchas.ativo is False
+    caminho.write_text(json.dumps({"relevo": {"ativo": False}}), encoding="utf-8-sig")
+    assert Config.carregar(caminho).relevo.ativo is False
 
-    c = Config.de_dict({"geral": {"px_por_mm": 12.4}, "cor": {"ativo": False}})
+    c = Config.de_dict({"geral": {"px_por_mm": 12.4}, "relevo": {"ativo": False}})
     caminho = pasta / "telemóvel.json"
     c.guardar(caminho)
-    assert json.loads(caminho.read_text(encoding="utf-8")) == {"geral": {"px_por_mm": 12.4}, "cor": {"ativo": False}}
+    assert json.loads(caminho.read_text(encoding="utf-8")) == {"geral": {"px_por_mm": 12.4}, "relevo": {"ativo": False}}
     assert Config.carregar(caminho) == c
     assert c.descrever_alteracoes() == [
         f"geral.px_por_mm = 12.4 (define GERAL_PX_POR_MM = {D.GERAL_PX_POR_MM})",
-        "cor.ativo = False (define COR_ATIVO = True)",
+        "relevo.ativo = False (define RELEVO_ATIVO = True)",
     ]
     c.guardar(pasta / "completo.json", completo=True)
     completo = json.loads((pasta / "completo.json").read_text(encoding="utf-8"))
@@ -196,12 +195,12 @@ IMG = np.zeros((40, 60, 3), np.uint8)
 
 def test_ordem_e_escolha_dos_modulos():
     cfg = Config()
-    assert m.Mestre(cfg).nomes == ["localizacao", "dimensoes", "cor", "relevo", "manchas"]
+    assert m.Mestre(cfg).nomes == ["localizacao", "dimensoes", "relevo"]
     with pytest.raises(ValueError):
         m.Mestre(cfg, apenas=["xpto"])
-    sem_cor = dataclasses.replace(cfg, cor=dataclasses.replace(cfg.cor, ativo=False))
-    assert "cor" not in m.Mestre(sem_cor).nomes
-    assert m.Mestre(sem_cor, apenas=["cor"]).nomes == ["localizacao", "cor"]
+    sem_relevo = dataclasses.replace(cfg, relevo=dataclasses.replace(cfg.relevo, ativo=False))
+    assert "relevo" not in m.Mestre(sem_relevo).nomes
+    assert m.Mestre(sem_relevo, apenas=["relevo"]).nomes == ["localizacao", "relevo"]
 
 
 def test_imagem_sem_saco_da_sem_saco_com_motivo():
@@ -334,11 +333,11 @@ def test_sem_saco_nao_chama_mais_ninguem(monkeypatch):
     assert r.estado is Estado.SEM_SACO and len(r.relatorios) == 1
 
 
-def test_escravos_reais_m3_decide_enquanto_m4_m6_por_implementar(saco_falso):
+def test_escravos_reais_m3_decide_enquanto_m5_por_implementar(saco_falso):
     r = m.Mestre(config_teste()).inspecionar(IMG.copy())
     estados = {x.modulo: x.estado for x in r.relatorios}
     assert estados["dimensoes"] in (Estado.OK, Estado.NOK)
-    assert all(estados[k] is Estado.POR_IMPLEMENTAR for k in ("cor", "relevo", "manchas"))
+    assert estados["relevo"] is Estado.POR_IMPLEMENTAR
     assert r.estado is estados["dimensoes"]
 
 
@@ -389,9 +388,9 @@ def test_escravos_declaram_a_iluminacao_e_o_saco_recorta_outras():
 def test_escravos_so_tem_parametros_em_mm():
     """Depois do M2 tudo está no espaço métrico: os parâmetros dos escravos são em mm, mm² ou graus."""
     cfg = Config()
-    em_px = [f"{secao}.{nome}" for secao in ("dimensoes", "cor", "relevo", "manchas")
+    em_px = [f"{secao}.{nome}" for secao in ("dimensoes", "relevo")
              for nome in dataclasses.asdict(getattr(cfg, secao)) if "px" in nome]
-    em_px += [n for n in dir(D) if re.match(r"M[3-6]_", n) and "PX" in n]
+    em_px += [n for n in dir(D) if re.match(r"M[3-5]_", n) and "PX" in n]
     assert not em_px
 
 
@@ -465,13 +464,13 @@ def _lento(nome_modulo, segundos):
 
 @pytest.mark.parametrize("paralelo", [False, True])
 def test_escravo_que_passa_o_tempo_limite_da_erro(saco_falso, paralelo):
-    cfg = config_teste(geral={"paralelo": paralelo}, manchas={"timeout_ms": 50.0})
+    cfg = config_teste(geral={"paralelo": paralelo}, relevo={"timeout_ms": 50.0})
     mestre = m.Mestre(cfg, apenas=[])
-    mestre.escravos = [Bom(), _lento("manchas", 0.4)()]
+    mestre.escravos = [Bom(), _lento("relevo", 0.4)()]
     inicio = time.perf_counter()
     r = mestre.inspecionar(IMG.copy())
     assert time.perf_counter() - inicio < 0.3, "o Mestre não espera pelo módulo atrasado"
-    assert r.relatorio("manchas").estado is Estado.ERRO and "tempo limite de 50 ms" in r.relatorio("manchas").mensagem
+    assert r.relatorio("relevo").estado is Estado.ERRO and "tempo limite de 50 ms" in r.relatorio("relevo").mensagem
     assert r.relatorio("dimensoes").estado is Estado.OK and r.estado is Estado.ERRO
 
 
