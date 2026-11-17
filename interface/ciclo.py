@@ -72,6 +72,7 @@ class Visto:
     ciclo_ms: float = 0.0  # inspeção + registo (o que tem de caber no orçamento)
     previsao: bool = False  # analisado com parâmetros ainda não aplicados
     no_dataset: Path | None = None  # a cópia no dataset (revisão ou "Guardar no dataset"): uma só por saco
+    nota: str = ""  # o que é preciso saber ao ver este saco (p.ex. como o Verificar rugas o localizou)
     # Preenchidos por preparar(), fora da janela:
     preparado: bool = False
     anotada: np.ndarray | None = None  # None numa passagem descartada

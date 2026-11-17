@@ -12,7 +12,7 @@ industrial: uma decisão **OK/NOK por saco** e cada defeito localizado.
 MESTRE (main.py, mestre.py)
  ├─► M1 Aquisição ...... as imagens de cada saco
  ├─► M2 Localização .... onde está o saco? (mede-o e endireita-o)
- ├─► M3 Dimensões · M5 Relevo (por fazer)     ← um relatório cada
+ ├─► M3 Dimensões · M5 Relevo (rugas)       ← um relatório cada
  ├─  decisão: OK só se nenhum módulo der NOK ou ERRO
  └─► M7 Saída .......... CSV, imagens anotadas, depuração
 ```
@@ -148,13 +148,20 @@ muitos sacos OK (≥ `referencia.sacos_min`, melhor 30 a 50 para a referência e
 - Vistas **Operador** (estado em grande) e **Engenharia** (etapas, log, "Guardar no dataset");
   o **Histórico** abre numa janela à parte (menu ⚙). As imagens ampliam com a roda do rato.
 - **Guardar no perfil** escreve os parâmetros no perfil escolhido (`configuracoes/*.json` ou `config.json`).
+- **Verificar rugas** (F6): só o M2 e o M5 no saco à frente da câmara (parada: tira uma imagem; a afinar:
+  a imagem ao vivo; a inspecionar: o último saco), ou numa imagem guardada. Diz RUGA ou SEM RUGAS com
+  o saco anotado; se o M2 não localizar o saco, tenta sem a foto do fundo e, se preciso, vê a imagem
+  toda. As imagens da câmara ficam em `resultados/verificar_rugas/`. O administrador ensina: "É OK:
+  ensinar" (as marcas impressas desse saco deixam de passar por ruga) e "Tem rugas: guardar" (para o
+  dataset). Ver [docs/modulos.md](docs/modulos.md).
 
 ## Estado
 
 | | |
 |---|---|
 | **Funcional** | Mestre, M1 (câmara Basler, Ao vivo e Trigger), M2, M3, M7, interface gráfica, produtos e OFs, referência dos sacos OK, `avaliar` (por saco, módulo e classe), testes |
-| **Por fazer** | ensaios com a Basler real, Blackfly (`FonteSpinnaker`), M5 Relevo, verificar a cor e as manchas, `avaliar` por defeito (anotações), servidor partilhado, assistente do nominal |
+| **Protótipo** | M5 Relevo (rugas): Verificar rugas na BIapp; desligado na inspeção até ser validado com rugas reais |
+| **Por fazer** | ensaios com a Basler real, Blackfly (`FonteSpinnaker`), validar o M5, verificar a cor e as manchas, `avaliar` por defeito (anotações), servidor partilhado, assistente do nominal |
 
 Próximos passos: dataset e `px_por_mm` medido → validar M2/M3 com fotos reais → referência dos
 sacos OK e `avaliar` → M5 Relevo → câmara → PLC.

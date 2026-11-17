@@ -55,10 +55,45 @@ que `LOCALIZACAO_FECHO_MM` são tapados pelo M2. Fotos reais (PreVital na folha)
 sobre um fundo branco perde contraste nas zonas sem impressão: subir então a profundidade
 mínima (`DIMENSOES_FORMA_PROFUNDIDADE_MIN_MM`, p.ex. 3 mm).
 
-## M5 Relevo (`modulos/m5_relevo/`, por fazer)
+## M5 Relevo (`modulos/m5_relevo/`): rugas
 
-Riscos, dobras, rugas e amassos aparecem, com luz rasante, como linhas mais claras ou
-mais escuras do que a vizinhança. O `escravo.py` devolve por agora `por_implementar`.
+Uma ruga (um vinco de lado a lado, ou vários) é uma linha fina e comprida, mais escura ou mais
+clara do que a vizinhança conforme o ângulo da luz. No recorte normalizado do M2 (`linhas.py`):
+
+1. pontos de linha pela Hessiana, em 3 escalas e nas duas polaridades, cada um com a sua direção,
+   com o teste de simetria (uma linha tem os dois lados parecidos; a borda de um reflexo não) e o de
+   tinta (um fio muito mais escuro do que os lados é impressão); `relevo.limiar` é a força mínima
+   (um vinco de 10 % dá ~0,12; o ruído do papel fica abaixo de ~0,08);
+2. a **tinta do próprio saco** (texto, desenhos: traços finos e escuros), com 1 mm de folga, não é
+   ruga; a **impressão** que não é tinta (traços claros, contornos) desconta-se com a referência: as
+   marcas que se repetem nos sacos OK do produto, alinhados a este (`referencia.py`, pasta
+   `relevo.referencia_pasta`);
+3. retas por ângulo, cada uma só com os pontos que têm a direção dela (±15°): troços de pelo menos
+   `relevo.ruga_min_mm` com pelo menos `relevo.prova_min_mm` de traço visível, e com pelo menos
+   `relevo.prova_min_mm` a mais do que as retas paralelas a ±2,5 mm (numa textura, como os reflexos
+   da folha metalizada, qualquer reta junta pontos ao acaso, e as do lado também). O que não deixa
+   ver uma ruga (queimado, tinta, impressão, zonas muito escuras como um quadrado preto)
+   atravessa-se sem contar como prova.
+
+Um Defeito `rugas` por ruga, com uma faixa ao longo dela. ERRO (`SemConfianca`) se mais de
+`relevo.queimado_max_pct` do saco estiver saturado. ~0,7–1 s por saco a 7 px/mm.
+
+**Desligado na inspeção por omissão** (`RELEVO_ATIVO = False`) até estar validado. Corre a pedido
+no **Verificar rugas** da BIapp (F6): só o M2 e o M5 no saco à frente da câmara. Para ver rugas não
+é preciso medir o saco: se o M2 não o localizar com o perfil (foto do fundo desatualizada, saco a
+tocar na borda, controlos da medição), tenta sem a foto do fundo e sem os controlos; se nem assim, o
+M5 vê a imagem toda, menos as bordas. Cada imagem da câmara fica em
+`resultados/verificar_rugas/<dia>/`, com o veredito no nome. O administrador ensina: "É OK:
+ensinar" põe o recorte na referência (sem `referencia_pasta`, usa `<dataset>/relevo_referencia`, a
+guardar no perfil) e "Tem rugas: guardar" põe a imagem em `<dataset>/rugas/`. Ensinar 3 a 5 sacos
+OK de cada produto (sacos diferentes, em posições diferentes).
+
+Estado (2026-11-17), sem referência ensinada: numa foto real de um PreVital com um vinco na faixa
+clara, só o vinco (77 mm, 72 mm visíveis; sem a tinta, a direção e o destaque eram 16 retas, quase
+todas nos reflexos e no texto); numa Garnier OK, nenhuma. Em vincos desenhados na Garnier: apanha
+os de lado a lado de 10–15 %; não apanha um diagonal que passe quase todo por baixo do texto, um
+vinco claro (crista com sombra) nem um de 6 %. Falta medir com mais rugas reais
+(`ferramentas/bancada_rugas.py`, que usa o mesmo detetor) e afinar os `[MEDIR]`.
 
 ## Depuração
 
@@ -76,7 +111,7 @@ errada é onde está o problema. Gasta tempo: só em ensaios.
 
 - **Luz rasante** realça o relevo: testar posições da luz antes de afinar.
 - **Arrasto** (px) ≈ velocidade × exposição × px/mm (500 mm/s × 120 µs × 8 ≈ 0,5 px).
-- **Impressão** nos sacos pode dar falsos riscos (M5).
+- **Impressão** nos sacos dá falsas rugas no M5 sem a referência dos sacos OK ("É OK: ensinar").
 - **Acentos nos caminhos:** usar `nucleo.imagens.ler_imagem`/`guardar_imagem`, não `cv2.imread`/`imwrite`.
 - **Referências:** Frangi 1998 (Hessiana), Steger 1998 (linhas), Bigün 1987
   (coerência de orientação), CIE ΔE. Para depois: estéreo fotométrico, câmara

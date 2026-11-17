@@ -791,3 +791,79 @@ def test_criar_produto_e_of_no_formulario_e_no_dialogo(app, janela):
     assert janela._usar_ordem(dialogo.escolha)
     assert janela._cfg_edicao.dimensoes.tolerancia_largura_mm == 4.0
     assert janela._cfg_edicao.dimensoes.tolerancia_comprimento_mm == 9.0
+
+
+# --- Verificar rugas (só o M2 e o M5, a pedido) ------------------------------------------------
+
+def _esperar_verificacao(app, j: Janela) -> None:
+    esperar(app, lambda: j._verificacao is None)
+
+
+def test_verificar_rugas_numa_imagem_ensinar_ok_e_guardar_com_rugas(app, janela, tmp_path):
+    from testes.test_m5_relevo import cena
+    caminho = tmp_path / "saco impresso.png"
+    guardar_imagem(caminho, cena(np.random.default_rng(21), impressao=True))
+    janela._abrir_janela_rugas()
+    rugas = janela.janela_rugas
+    assert rugas.btn_ensinar.isVisibleTo(rugas), "o administrador ensina"
+    janela._verificar_rugas_em(str(caminho))
+    _esperar_verificacao(app, janela)
+    assert rugas.lbl_veredito.text().startswith("RUGA DETETADA"), "sem referência, o traço impresso passa por ruga"
+    assert "sem referência" in rugas.lbl_info.text()
+    assert any(nome.startswith("relevo_") for nome, _ in rugas.visto.etapas), "as etapas do M5"
+
+    rugas.btn_ensinar.click()  # é OK: a impressão dele vai para a referência e verifica-se de novo
+    pasta = janela._dataset / "relevo_referencia"
+    assert len(list(pasta.glob("*_util.png"))) == 1 and len(list(pasta.glob("*.png"))) == 2
+    assert janela._cfg_edicao.relevo.referencia_pasta == str(pasta), "fica na edição: Guardar no perfil para manter"
+    assert len(list((janela._dataset / "ok").glob("*.png"))) == 1
+    _esperar_verificacao(app, janela)
+    assert rugas.lbl_veredito.text() == "SEM RUGAS", rugas.lbl_info.text()
+
+    rugas.btn_rugas.click()  # afinal tem rugas: a mesma imagem muda de pasta (não fica em duas)
+    assert not list((janela._dataset / "ok").glob("*.png"))
+    assert len(list((janela._dataset / "rugas").glob("*.png"))) == 1
+
+
+def test_verificar_rugas_com_a_camara_parada(app, janela, monkeypatch):
+    from interface import janela_rugas
+    from testes.test_m5_relevo import VINCO, cena
+    vincado = cena(np.random.default_rng(22), vincos=[VINCO])
+    com_camara(monkeypatch, janela_rugas, lambda cfg: CamaraSimulada([vincado]))
+    janela._verificar_rugas()  # parada: abre a câmara, tira uma imagem e fecha-a
+    _esperar_verificacao(app, janela)
+    assert janela.janela_rugas.lbl_veredito.text() == "RUGA DETETADA", janela.janela_rugas.lbl_info.text()
+    assert "câmara" in janela.janela_rugas.lbl_info.text()
+
+    monkeypatch.setattr(janela_rugas, "ESPERA_CAMARA_S", 0.2)
+    com_camara(monkeypatch, janela_rugas, lambda cfg: CamaraSimulada([], sem_fim=True))
+    janela._verificar_rugas()  # uma câmara que não dá imagens não pendura a verificação
+    _esperar_verificacao(app, janela)
+    assert janela.janela_rugas.lbl_veredito.text() == "NÃO VERIFICADO"
+    assert "não deu nenhuma imagem" in janela.janela_rugas.lbl_info.text()
+
+
+def test_verificar_rugas_so_o_administrador_ensina(app, janela):
+    janela._definir_utilizador("operador")
+    janela._abrir_janela_rugas()
+    assert not janela.janela_rugas.btn_ensinar.isVisibleTo(janela.janela_rugas)
+    assert not janela.janela_rugas.btn_rugas.isVisibleTo(janela.janela_rugas)
+
+
+def test_verificar_rugas_sem_o_m2_do_perfil(tmp_path):
+    """Para ver rugas não é preciso medir o saco: com a foto do fundo errada, localiza-o sem ela; sem fundo
+    nenhum à vista (só o saco por dentro), o M5 vê a imagem toda."""
+    from interface.janela_rugas import saco_localizado, verificar, veredito
+    from testes.test_m5_relevo import VINCO, cena
+    img = cena(np.random.default_rng(23), vincos=[VINCO])
+    fundo_errado = tmp_path / "fundo.png"
+    guardar_imagem(fundo_errado, np.zeros_like(img))  # como uma foto do fundo de outra luz
+    cfg = config_teste(localizacao={"fundo_referencia": str(fundo_errado)})
+    r, nota = verificar(cfg, Captura(img, "camara#1", 0.0))
+    assert saco_localizado(r) and veredito(r)[1] == "RUGA DETETADA"
+    assert "sem a foto do fundo" in nota and "Fundo vazio" in nota
+
+    por_dentro = cena(np.random.default_rng(24), angulo=0.0, vincos=[(40, 10, 110, 80, 0.15)])[325:675, 290:960]
+    r, nota = verificar(config_teste(), Captura(por_dentro, "camara#2", 0.0))
+    assert not saco_localizado(r) and "imagem toda" in nota
+    assert veredito(r)[1] == "RUGA DETETADA" and [d.modulo for d in r.defeitos] == ["relevo"]

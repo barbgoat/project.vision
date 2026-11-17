@@ -9,7 +9,7 @@ falhar, o problema fica nele e o registo diz qual foi e onde.
 | M1 Aquisição | quais são as imagens deste saco? | `Passagem` |
 | M2 Localização | onde está o saco? está completo? | `Saco` (recorte endireitado + medidas) |
 | M3 Dimensões | tamanho e forma certos? | `Relatorio` |
-| M5 Relevo | riscos, dobras, rugas, amassos? (por fazer) | `Relatorio` |
+| M5 Relevo | o saco tem rugas? (desligado por omissão; Verificar rugas na BIapp) | `Relatorio` |
 | M7 Saída | — | CSV, imagens, depuração |
 
 Cada `Relatorio` tem o estado (OK / NOK / ERRO / POR_IMPLEMENTAR), os defeitos

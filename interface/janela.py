@@ -53,6 +53,7 @@ from interface.ciclo import Afinacao, Ciclo, MedicaoContorno, Pedido, Previsao, 
 from interface.estilo import AZUL, CORES_ESTADO, NOME_APP, icone
 from interface.janela_conta import Conta
 from interface.janela_parametros import Parametros
+from interface.janela_rugas import JanelaRugas, Rugas, VerificacaoRugas
 from interface.janelas import JanelaHistorico, JanelaRevisao
 from interface.ordens import Ordens
 from interface.paineis import (
@@ -77,7 +78,7 @@ SEGURAR_SACO_S = 3.0  # quanto tempo um saco analisado fica no ecrã antes de vo
 CORES_INDICADOR = {None: "#78909c", "ao_vivo": AZUL, "trigger": "#2e7d32", "afinar": "#ef6c00"}
 
 
-class Janela(Conta, Parametros, Ordens, QMainWindow):
+class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
     def __init__(self, args: argparse.Namespace, utilizador: str = "admin", memoria: QSettings | None = None) -> None:
         """args: os de gui.py; memoria: onde lembrar o perfil (None = não lembrar)."""
         super().__init__()
@@ -102,6 +103,9 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         self._ensaio_sem_of = False  # o admin escolheu "Sem OF (ensaio)": não se volta a perguntar
         self._repo: Repositorio | None = None
         self.janela_dashboard = None  # criada quando se abre
+        self.janela_rugas: JanelaRugas | None = None  # Verificar rugas (criada quando se abre)
+        self._verificacao: VerificacaoRugas | None = None  # a verificação das rugas em curso
+        self._verificacoes = 0  # quantas verificações de rugas desde o arranque
         self._dataset = args.dataset
         self._zonas_de: tuple[Visto, str] | None = None  # a marcar as zonas do defeito deste saco (classe)
         self._ultimo: Visto | None = None  # o último que chegou do ciclo
@@ -130,7 +134,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         self.setCentralWidget(centro)
         self.lbl_resumo = QLabel()  # perfil e modo em uso, sempre à vista
         self.statusBar().addPermanentWidget(self.lbl_resumo)
-        for tecla, funcao in (("F5", self.iniciar), ("Shift+F5", self.parar)):
+        for tecla, funcao in (("F5", self.iniciar), ("Shift+F5", self.parar), ("F6", self._verificar_rugas)):
             QShortcut(QKeySequence(tecla), self).activated.connect(funcao)
 
         self._registo = RegistoQt()
@@ -206,6 +210,11 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
                                       "sensor. Trocar de modo troca a afinação. A exposição e o ganho (📷 Câmara) "
                                       "mudam logo.")
         self.btn_afinar.clicked.connect(self._alternar_afinacao)
+        self.btn_rugas = self._botao("Verificar rugas", icone_botao=self._icone_qt("SP_FileDialogContentsView"),
+                                     dica="Só o M2 e o M5 no saco que está à frente da câmara: diz se tem rugas "
+                                          "(F6). Com a câmara parada tira uma imagem; a afinar usa a imagem ao "
+                                          "vivo; a inspecionar, o último saco.")
+        self.btn_rugas.clicked.connect(self._verificar_rugas)
         self.btn_iniciar = self._botao("Iniciar", icone_botao=self._icone_qt("SP_MediaPlay"),
                                        dica="Começar a inspeção (F5)")
         self.btn_parar = self._botao("Parar", icone_botao=self._icone_qt("SP_MediaStop"),
@@ -225,7 +234,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         esquerda.addWidget(self.btn_menu)
         esquerda.addStretch()
         direita.addStretch()
-        for item in (self.indicador, 12, self.btn_afinar, 12, _par(self.btn_ao_vivo, self.btn_trigger), 12,
+        for item in (self.indicador, 12, self.btn_rugas, self.btn_afinar, 12, _par(self.btn_ao_vivo, self.btn_trigger), 12,
                      self.btn_iniciar, self.btn_parar):
             _juntar(direita, item)
         barra.addLayout(esquerda, 1)
@@ -459,6 +468,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         if perguntar and not self._escolher_ordem():
             return
         self._parar_afinacao()  # a câmara só abre uma vez: passa da afinação para a inspeção
+        self._esperar_verificacao()
         self._contagem.clear()
         self._tempos.clear()
         self.historico.limpar()
@@ -498,6 +508,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         na secção que interessa: a exposição e o ganho ao vivo, o trigger em Trigger."""
         if self.ciclo is not None or self.afinacao is not None:
             return
+        self._esperar_verificacao()  # a câmara é uma só
         modo = self._modo()
         afinacao = self.afinacao = Afinacao(self._cfg_edicao, modo)
         afinacao.quadro.connect(self._ver_afinacao)
@@ -653,7 +664,9 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
             self.ciclo.wait(5000)
         if self._previsao is not None:
             self._previsao.wait(5000)
-        for janela in (self.janela_historico, self.janela_definicoes, self.janela_camara, self.janela_dashboard):
+        self._esperar_verificacao()
+        for janela in (self.janela_historico, self.janela_definicoes, self.janela_camara, self.janela_dashboard,
+                       self.janela_rugas):
             if janela is not None:
                 janela.close()
         if self._memoria is not None:  # os tamanhos que o utilizador escolheu
