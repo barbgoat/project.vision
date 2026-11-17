@@ -30,7 +30,7 @@ from interface.login import JanelaLogin, assinatura, pode, verificar  # noqa: E4
 from interface.ordens import DialogoEspecificacao, DialogoOrdem  # noqa: E402
 from interface.paineis import VistaImagem  # noqa: E402
 from interface import vista_dashboard  # noqa: E402
-from interface.registos import guardar_correcao, pasta_dataset  # noqa: E402
+from interface.registos import acrescentar_zona, guardar_correcao, pasta_dataset, zonas  # noqa: E402
 from nucleo.config import RAIZ, Config, nome_define  # noqa: E402
 from nucleo.contrato import Captura, Defeito, Estado, Relatorio, Resultado, TipoDefeito  # noqa: E402
 from nucleo.especificacoes import (  # noqa: E402
@@ -164,6 +164,22 @@ def test_classe_proposta_pela_revisao():
         return Resultado(IMG, Estado.NOK, None, [Relatorio("dimensoes", Estado.NOK, defeitos)], 1.0)
     assert classe_proposta(dimensao(False)) == "dimensao", "só o tamanho: é uma medida"
     assert classe_proposta(dimensao(False, True)) == "rugas", "a forma torta propõe rugas (quem revê confirma)"
+
+
+def test_zonas_do_defeito_em_labelme_e_mudam_de_pasta_com_a_imagem(tmp_path):
+    r = Resultado(IMG, Estado.OK, None, [], 1.0, captura=Captura(IMG, "cam#1", 1000.0))
+    dataset, registo = tmp_path / "dataset" / "linha", tmp_path / "correcoes.csv"
+    _, copia = guardar_correcao(r, "rugas", dataset, registo)
+    assert zonas(copia) == []
+    assert acrescentar_zona(copia, "rugas", (10, 5, 30, 20), 80, 60) == 1
+    assert acrescentar_zona(copia, "rugas", (40, 30, 8, 9), 80, 60) == 2
+    dados = json.loads(copia.with_suffix(".json").read_text(encoding="utf-8"))
+    assert dados["imagePath"] == copia.name and dados["imageWidth"] == 80 and dados["imageHeight"] == 60
+    assert dados["shapes"][0] == {"label": "rugas", "points": [[10, 5], [40, 25]], "group_id": None,
+                                  "shape_type": "rectangle", "flags": {}}
+    _, movida = guardar_correcao(r, "dobra", dataset, registo, copia)
+    assert zonas(movida) == [(10, 5, 30, 20), (40, 30, 8, 9)] and not copia.with_suffix(".json").exists()
+    assert {f["label"] for f in json.loads(movida.with_suffix(".json").read_text(encoding="utf-8"))["shapes"]}         == {"dobra"}, "as zonas levam o rótulo novo"
 
 
 def test_passagem_descartada_nao_se_corrige(tmp_path):
@@ -355,6 +371,28 @@ def test_revisao_manda_a_classe_real_para_o_dataset(app, janela, tmp_path):
     janela._corrigir("varios")  # o saco no ecrã (comprido_158): Engenharia corrige a classe
     comprido = list(dataset.rglob("*comprido_158.png"))
     assert len(comprido) == 1 and comprido[0].parent.name == "varios", "movida, não duplicada"
+
+
+def test_marcar_zonas_da_ruga_depois_de_guardar(app, janela, tmp_path):
+    """Guardar no dataset como rugas entra no modo zonas: cada retângulo arrastado vai para o .json da
+    imagem (em px da imagem guardada); Concluir sai e o arrastar volta a ser a ROI da câmara."""
+    _producao_ate_ao_fim(app, janela)
+    janela._corrigir("rugas")
+    visto = janela._base
+    assert janela._zonas_de == (visto, "rugas") and janela.imagem_eng.desenhar_roi
+    assert not janela.btn_zonas_fim.isHidden()
+    janela._roi_desenhada(10, 20, 40, 30)
+    janela._roi_desenhada(50, 60, 12, 14)
+    fx = visto.resultado.captura.imagem.shape[1] / visto.anotada.shape[1]
+    assert zonas(visto.no_dataset) == [(round(10 * fx), round(20 * fx), round(40 * fx), round(30 * fx)),
+                                       (round(50 * fx), round(60 * fx), round(12 * fx), round(14 * fx))]
+    assert len(janela.imagem_eng.auxilios) == 2, "as zonas ficam desenhadas por cima"
+    roi = janela._cfg_edicao.aquisicao.roi()
+    janela._terminar_zonas()
+    assert janela._zonas_de is None and not janela.imagem_eng.desenhar_roi and janela.btn_zonas_fim.isHidden()
+    assert janela._cfg_edicao.aquisicao.roi() == roi, "as zonas não mexeram na ROI da câmara"
+    janela._corrigir("ok")
+    assert janela._zonas_de is None, "um saco OK não tem zonas"
 
 
 def test_parar_durante_uma_revisao(app, janela):

@@ -2,11 +2,13 @@
 
     revisoes.csv            a decisão sobre cada saco não OK (NOK, falso NOK ou descartado)
     correcoes.csv, dataset/ a classe real de um saco, para o avaliar e a afinação
+    <imagem>.json           as zonas do defeito nessa imagem do dataset (retângulos, formato LabelMe)
 """
 
 from __future__ import annotations
 
 import csv
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -88,6 +90,7 @@ def guardar_correcao(resultado: Resultado, classe: str, dataset: Path, registo: 
             destino = dataset / classe / anterior.name
             destino.parent.mkdir(parents=True, exist_ok=True)
             anterior.replace(destino)
+            _mover_zonas(anterior, destino, classe)
             feito = f"imagem movida de {anterior.parent.name}/ para {dataset.name}/{classe}/{destino.name}"
         copia: Path | None = destino or anterior
     elif origem.is_file() and origem.resolve().is_relative_to(dataset.parent.resolve()):
@@ -105,3 +108,49 @@ def guardar_correcao(resultado: Resultado, classe: str, dataset: Path, registo: 
         captura.origem, resultado.estado, tipos, classe, destino or "",
     ])
     return feito, copia
+
+
+# --- Zonas do defeito numa imagem do dataset (LabelMe) ------------------------------------
+
+def _json_das_zonas(imagem: Path) -> Path:
+    return imagem.with_suffix(".json")
+
+
+def zonas(imagem: Path) -> list[tuple[int, int, int, int]]:
+    """Os retângulos (x, y, largura, altura, px da imagem) marcados nesta imagem do dataset."""
+    caminho = _json_das_zonas(imagem)
+    if not caminho.is_file():
+        return []
+    caixas = []
+    for forma in json.loads(caminho.read_text(encoding="utf-8")).get("shapes", []):
+        if forma.get("shape_type") == "rectangle":
+            (x0, y0), (x1, y1) = forma["points"]
+            caixas.append((round(min(x0, x1)), round(min(y0, y1)), round(abs(x1 - x0)), round(abs(y1 - y0))))
+    return caixas
+
+
+def acrescentar_zona(imagem: Path, classe: str, caixa: tuple[int, int, int, int],
+                     largura: int, altura: int) -> int:
+    """Acrescenta um retângulo à volta do defeito ao .json da imagem (formato LabelMe: abre-se e corrige-se
+    no labelme, e é o que o docs/dataset.md define). Devolve o nº de zonas da imagem."""
+    caminho = _json_das_zonas(imagem)
+    dados = (json.loads(caminho.read_text(encoding="utf-8")) if caminho.is_file() else
+             {"version": "5.0.1", "flags": {}, "shapes": [], "imagePath": imagem.name, "imageData": None,
+              "imageHeight": altura, "imageWidth": largura})
+    x, y, w, h = caixa
+    dados["shapes"].append({"label": classe, "points": [[x, y], [x + w, y + h]], "group_id": None,
+                            "shape_type": "rectangle", "flags": {}})
+    caminho.write_text(json.dumps(dados, ensure_ascii=False, indent=1), encoding="utf-8")
+    return len(dados["shapes"])
+
+
+def _mover_zonas(de: Path, para: Path, classe: str) -> None:
+    """A imagem mudou de classe: as zonas vão com ela, com o rótulo novo."""
+    origem = _json_das_zonas(de)
+    if not origem.is_file():
+        return
+    dados = json.loads(origem.read_text(encoding="utf-8"))
+    for forma in dados.get("shapes", []):
+        forma["label"] = classe
+    _json_das_zonas(para).write_text(json.dumps(dados, ensure_ascii=False, indent=1), encoding="utf-8")
+    origem.unlink()

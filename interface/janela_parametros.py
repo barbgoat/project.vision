@@ -2,7 +2,7 @@
 
 Métodos da Janela (janela.py), separados por assunto: as janelas ⚙ Definições e
 📷 Câmara, o perfil, a pré-visualização, Aplicar, Repor, Guardar no perfil
-e Guardar no dataset.
+e Guardar no dataset (com as zonas do defeito desenhadas na imagem).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from interface.ciclo import Previsao, Visto
 from interface.editor import SECOES_CAMARA, SECOES_DEFINICOES, EditorParametros, diferencas
 from interface.estilo import icone
 from interface.janelas import JanelaAuxiliar
-from interface.registos import guardar_correcao, pasta_dataset
+from interface.registos import acrescentar_zona, guardar_correcao, pasta_dataset, zonas
 from modulos.m1_aquisicao.disparo import faixa_da_barreira
 from nucleo.config import CAMINHO_POR_OMISSAO, RAIZ, Config, carregar_configuracao
 from nucleo.especificacoes import efetiva, repor_medidas
@@ -73,6 +73,8 @@ class Parametros:
 
     def _desenhar_roi(self, ligado: bool) -> None:
         """Arrastar na imagem desenha a ROI (só a afinar: é a imagem inteira da câmara)."""
+        if ligado and self._zonas_de is not None:
+            self._terminar_zonas()
         if self.btn_roi.isChecked() != ligado:
             self.btn_roi.blockSignals(True)
             self.btn_roi.setChecked(ligado)
@@ -81,6 +83,13 @@ class Parametros:
             vista.desenhar_roi = ligado
             vista.setCursor(Qt.CursorShape.CrossCursor if ligado else Qt.CursorShape.ArrowCursor)
         self._atualizar_passo()
+
+    def _roi_desenhada(self, x: int, y: int, largura: int, altura: int) -> None:
+        """Um retângulo arrastado na imagem: uma zona do defeito (a marcar zonas) ou a ROI da câmara."""
+        if self._zonas_de is not None:
+            self._marcar_zona(x, y, largura, altura)
+        else:
+            self._definir_roi(x, y, largura, altura)
 
     def _definir_roi(self, x: int, y: int, largura: int, altura: int) -> None:
         a = self._cfg_edicao.aquisicao
@@ -224,3 +233,64 @@ class Parametros:
             QMessageBox.warning(self, "Guardar no dataset", str(erro))
             return
         self._mensagem(f"Dataset ({classe}): {feito}")
+        if classe != "ok" and visto.no_dataset is not None and visto.anotada is not None:
+            self._iniciar_zonas(visto, classe)
+        elif self._zonas_de is not None:
+            self._terminar_zonas()
+
+    # --- Zonas do defeito -----------------------------------------------------------------
+    def _iniciar_zonas(self, visto: Visto, classe: str) -> None:
+        """Depois de guardar um defeito no dataset: arrastar na imagem marca onde está (uma ou mais zonas)."""
+        self._zonas_de = (visto, classe)
+        self.imagem_eng.mostrar(visto.anotada)  # as zonas são na imagem do saco, não numa etapa
+        self.titulo_imagem.setText(f"<b>Marcar {classe}</b>: arrasta à volta de cada zona")
+        self.imagem_eng.desenhar_roi = True
+        self.imagem_eng.setCursor(Qt.CursorShape.CrossCursor)
+        self.btn_zonas_fim.show()
+        self._mostrar_zonas()
+        n = len(zonas(visto.no_dataset))
+        self._mensagem(f"Arrasta um retângulo à volta de cada zona com {classe} ({n} marcada(s)); "
+                       "no fim, Concluir zonas.")
+
+    def _escala_zonas(self) -> tuple[float, float]:
+        """Da imagem no ecrã (a anotada) para a imagem guardada no dataset (a da câmara)."""
+        visto = self._zonas_de[0]
+        ah, aw = visto.anotada.shape[:2]
+        oh, ow = visto.resultado.captura.imagem.shape[:2]
+        return ow / aw, oh / ah
+
+    def _marcar_zona(self, x: int, y: int, largura: int, altura: int) -> None:
+        visto, classe = self._zonas_de
+        fx, fy = self._escala_zonas()
+        oh, ow = visto.resultado.captura.imagem.shape[:2]
+        caixa = (round(x * fx), round(y * fy), round(largura * fx), round(altura * fy))
+        try:
+            n = acrescentar_zona(visto.no_dataset, classe, caixa, ow, oh)
+        except (OSError, ValueError) as erro:
+            QMessageBox.warning(self, "Marcar zona", str(erro))
+            return
+        self._mostrar_zonas()
+        self._mensagem(f"Zona {n} de {classe} guardada; arrasta outra ou Concluir zonas.")
+
+    def _mostrar_zonas(self) -> None:
+        visto, classe = self._zonas_de
+        fx, fy = self._escala_zonas()
+        self.imagem_eng.auxilios = [((round(x / fx), round(y / fy), round(w / fx), round(h / fy)), "#d81b60",
+                                     f"{classe} {i}") for i, (x, y, w, h) in enumerate(zonas(visto.no_dataset), 1)]
+        self.imagem_eng.update()
+
+    def _terminar_zonas(self) -> None:
+        if self._zonas_de is None:
+            return
+        visto, classe = self._zonas_de
+        n = len(zonas(visto.no_dataset)) if visto.no_dataset is not None else 0
+        self._zonas_de = None
+        self.imagem_eng.desenhar_roi = False
+        self.imagem_eng.setCursor(Qt.CursorShape.ArrowCursor)
+        self.btn_zonas_fim.hide()
+        self.titulo_imagem.setText("")
+        self._mostrar_auxilios()  # repõe o que lá estava (ROI e barreira, a afinar; nada, a inspecionar)
+        self.imagem_eng.auxilios = [a for a in self.imagem_eng.auxilios if a[1] != "#d81b60"]
+        self.imagem_eng.update()
+        self._mensagem(f"{classe}: {n} zona(s) marcada(s) neste saco." if n else
+                       f"{classe}: guardado sem zonas (podem marcar-se depois no labelme).")

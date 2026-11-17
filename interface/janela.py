@@ -103,6 +103,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         self._repo: Repositorio | None = None
         self.janela_dashboard = None  # criada quando se abre
         self._dataset = args.dataset
+        self._zonas_de: tuple[Visto, str] | None = None  # a marcar as zonas do defeito deste saco (classe)
         self._ultimo: Visto | None = None  # o último que chegou do ciclo
         self._base: Visto | None = None  # o que está no ecrã (sem contar com a pré-visualização)
         self._pendente: Visto | None = None  # à espera de ser desenhado
@@ -312,7 +313,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
     def _criar_operador(self) -> QWidget:
         self.faixa_op = Faixa(40)
         self.imagem_op = VistaImagem(SEM_IMAGEM)
-        self.imagem_op.roi_desenhada.connect(self._definir_roi)
+        self.imagem_op.roi_desenhada.connect(self._roi_desenhada)
         self.contadores_op = Contadores(26)
         vista = QWidget()
         layout = QVBoxLayout(vista)
@@ -325,7 +326,7 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         self.titulo_imagem = QLabel()
         self.titulo_imagem.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.imagem_eng = VistaImagem(SEM_IMAGEM)
-        self.imagem_eng.roi_desenhada.connect(self._definir_roi)
+        self.imagem_eng.roi_desenhada.connect(self._roi_desenhada)
         # Por cima da imagem: congelar o ecrã.
         self.btn_congelar = self._botao("Congelar", True, self._icone_qt("SP_MediaPause"),
                                         "O ecrã fica neste saco, para afinar nele (a linha continua e é registada).")
@@ -346,6 +347,10 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         self.modulos = TabelaModulos()
         self.defeitos = TabelaDefeitos()
         self.btn_corrigir_eng = self._botao_corrigir("Guardar no dataset ▾")
+        self.btn_zonas_fim = QPushButton("Concluir zonas")
+        self.btn_zonas_fim.setToolTip("Termina a marcação das zonas do defeito neste saco")
+        self.btn_zonas_fim.clicked.connect(self._terminar_zonas)
+        self.btn_zonas_fim.hide()
         # Todas as divisórias (QSplitter) se arrastam; os tamanhos ficam lembrados (closeEvent).
         tabelas = QSplitter(Qt.Orientation.Vertical)
         for titulo, tabela in (("Módulos", self.modulos), ("Defeitos", self.defeitos)):
@@ -360,7 +365,8 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
         lateral = QWidget()
         coluna = QVBoxLayout(lateral)
         coluna.setContentsMargins(0, 0, 0, 0)
-        for w, esticar in ((self.faixa_eng, 0), (self.info, 0), (tabelas, 1), (self.btn_corrigir_eng, 0)):
+        for w, esticar in ((self.faixa_eng, 0), (self.info, 0), (tabelas, 1), (self.btn_corrigir_eng, 0),
+                           (self.btn_zonas_fim, 0)):
             coluna.addWidget(w, esticar)
 
         topo = QSplitter(Qt.Orientation.Horizontal)
@@ -734,6 +740,8 @@ class Janela(Conta, Parametros, Ordens, QMainWindow):
             self._mostrar(visto)
 
     def _mostrar(self, visto: Visto, original: bool = True) -> None:
+        if self._zonas_de is not None and visto is not self._zonas_de[0]:
+            self._terminar_zonas()  # chegou outro saco: as zonas eram do anterior
         if original:
             self._base = visto
             self._segurar_ate = monotonic() + SEGURAR_SACO_S

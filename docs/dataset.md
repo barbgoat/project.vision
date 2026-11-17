@@ -24,7 +24,9 @@ Em cada uma:  ok/   dimensao/ cor/ risco/ dobra/ rugas/ amasso/ mancha/ (um defe
 - A pasta é a classe real: `ok/` é OK, as outras são NOK.
 - Nunca misturar montagens: cada uma tem o seu `px_por_mm`.
 - **Anotações** (obrigatórias em `varios/`): um `.json` do [LabelMe](https://github.com/wkentaro/labelme)
-  com o nome da imagem; rótulo = tipo do defeito.
+  com o nome da imagem; rótulo = tipo do defeito. Na BIapp, "Guardar no dataset ▾ <defeito>" entra no
+  modo zonas: cada retângulo arrastado à volta do defeito vai para esse `.json` ("Concluir zonas" no
+  fim). Mudar a classe depois leva a imagem e as zonas para a pasta nova.
 
 ## Segmentação (para treinar uma rede)
 
