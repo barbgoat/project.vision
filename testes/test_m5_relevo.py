@@ -16,7 +16,7 @@ from nucleo.contrato import Estado, TipoDefeito
 from testes.apoio import config_teste, fundo
 
 PPM = 5.0  # o px_por_mm de MONTAGEM
-C_MM, L_MM = 150.0, 90.0  # o saco destes testes (abaixo dos 100 mm de LOCALIZACAO_LARGURA_MAX_MM)
+C_MM, L_MM = 150.0, 90.0  # o saco destes testes (abaixo de LOCALIZACAO_LARGURA_MAX_MM)
 
 
 def cena(rng: np.random.Generator, angulo: float = 12.0, desvio: tuple[float, float] = (0.0, 0.0),
