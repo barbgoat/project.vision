@@ -184,7 +184,7 @@ LOCALIZACAO_SOLIDEZ_MIN: Final = 0.95
 LOCALIZACAO_COMPRIMENTO_MIN_MM: Final = 80.0
 LOCALIZACAO_COMPRIMENTO_MAX_MM: Final = 230.0
 LOCALIZACAO_LARGURA_MIN_MM: Final = 20.0
-LOCALIZACAO_LARGURA_MAX_MM: Final = 100.0
+LOCALIZACAO_LARGURA_MAX_MM: Final = 180.0
 # Recorte normalizado e zona inspecionada pelos outros módulos.
 LOCALIZACAO_FOLGA_MM: Final = 3.0  # margem de fundo à volta do saco no recorte
 LOCALIZACAO_MARGEM_BORDA_MM: Final = 3.0  # faixa junto ao contorno do saco que não é inspecionada
@@ -274,7 +274,7 @@ M2_CONTORNO_ANEL_MM: Final = 0.4  # anel junto à aresta que mostra um saco tran
 # =============================================================================
 DIMENSOES_ATIVO: Final = True
 DIMENSOES_TIMEOUT_MS: Final = 0.0  # tempo máximo do módulo por saco; acima disto ERRO; 0 = sem limite
-DIMENSOES_COMPRIMENTO_NOMINAL_MM: Final = 150.0  # [MEDIR] comprimento do produto
+DIMENSOES_COMPRIMENTO_NOMINAL_MM: Final = 200.0  # [MEDIR] comprimento do produto
 DIMENSOES_LARGURA_NOMINAL_MM: Final = 55.0  # [MEDIR] largura do produto
 DIMENSOES_TOLERANCIA_COMPRIMENTO_MM: Final = 3.0  # [MEDIR] aceita nominal ± tolerância
 DIMENSOES_TOLERANCIA_LARGURA_MM: Final = 3.0  # [MEDIR]
