@@ -65,15 +65,20 @@ clara do que a vizinhança conforme o ângulo da luz. No recorte normalizado do 
    tinta (um fio muito mais escuro do que os lados é impressão); `relevo.limiar` é a força mínima
    (um vinco de 10 % dá ~0,12; o ruído do papel fica abaixo de ~0,08);
 2. a **tinta do próprio saco** (texto, desenhos: traços finos e escuros), com 1 mm de folga, não é
-   ruga; a **impressão** que não é tinta (traços claros, contornos) desconta-se com a referência: as
+   ruga. Um traço escuro fino com mais de 25 mm (`tinta_fio_mm`, largura média até 0,8 mm) não é
+   texto: é um vinco forte na folha metalizada (escuro como a tinta) ou uma linha impressa, que só
+   sai com a referência; a **impressão** que não é tinta (traços claros, contornos) desconta-se com a referência: as
    marcas que se repetem nos sacos OK do produto, alinhados a este (`referencia.py`, pasta
    `relevo.referencia_pasta`);
 3. retas por ângulo, cada uma só com os pontos que têm a direção dela (±15°): troços de pelo menos
    `relevo.ruga_min_mm` com pelo menos `relevo.prova_min_mm` de traço visível, e com pelo menos
-   `relevo.prova_min_mm` a mais do que as retas paralelas a ±2,5 mm (numa textura, como os reflexos
+   14 mm (`destaque_mm`) a mais do que as retas paralelas a ±2,5 mm (numa textura, como os reflexos
    da folha metalizada, qualquer reta junta pontos ao acaso, e as do lado também). O que não deixa
    ver uma ruga (queimado, tinta, impressão, zonas muito escuras como um quadrado preto)
    atravessa-se sem contar como prova.
+
+Uma reta paralela a um eixo do saco (±3°) e toda a menos de 3 mm da borda da zona inspecionada
+(`borda_mm`) é a selagem ou a aresta de um painel impresso: não é ruga.
 
 Um Defeito `rugas` por ruga, com uma faixa ao longo dela. ERRO (`SemConfianca`) se mais de
 `relevo.queimado_max_pct` do saco estiver saturado. ~0,7–1 s por saco a 7 px/mm.

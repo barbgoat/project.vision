@@ -13,6 +13,7 @@ Ruga: uma reta com prova >= prova_min_mm e comprimento >= ruga_min_mm.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import cv2
@@ -30,6 +31,8 @@ PARAMETROS = {
     "tinta_limiar": 0.25,  # black-hat (traço escuro fino) relativo ao brilho local: tinta
     "tinta_largura_mm": 1.5,  # traços até esta largura
     "tinta_folga_mm": 1.0,  # à volta da tinta do próprio saco não se procuram rugas (atravessa-se)
+    "tinta_fio_mm": 25.0,  # um traço escuro fino mais comprido do que isto não é texto: é vinco (ou impressão, que sai pela referência)
+    "tinta_fio_largura_mm": 0.8,  # largura média máxima desse traço (área / comprimento); o texto fica acima de ~0,9
     "impressao_fracao": 0.5,  # tinta em >= isto das referências (onde se veem): impressão
     "impressao_folga_mm": 1.0,
     "faixa_mm": 0.6,  # tolerância lateral à volta da reta
@@ -37,7 +40,10 @@ PARAMETROS = {
     "ruga_min_mm": 40.0,
     "prova_min_mm": 20.0,  # traço visível mínimo ao longo da reta
     "cobertura_min": 0.4,  # da parte visível da reta
-    "vizinhas_mm": 2.5,  # retas paralelas a esta distância: a ruga tem de ter pelo menos prova_min a mais do que elas
+    "vizinhas_mm": 2.5,  # retas paralelas a esta distância: a ruga tem de ter pelo menos destaque_mm a mais do que elas
+    "borda_mm": 3.0,  # uma reta paralela a um eixo do saco e toda a menos disto da borda da zona inspecionada
+    "borda_eixo_graus": 3.0,  # (± isto) é a selagem ou a aresta de um painel impresso, não uma ruga
+    "destaque_mm": 14.0,  # traço visível a mais do que as paralelas (as estrias da folha metalizada seguem o vinco)
     "orientacao_graus": 15.0,  # cada reta só conta os pontos de linha com a direção dela (± isto)
     "alinhado_graus": 0.0,  # retas a menos disto dos eixos do saco ficam de fora (0: procuram-se todas)
     "passo_graus": 1.0,
@@ -58,6 +64,7 @@ class Preparado:
     pequena: np.ndarray  # para alinhar: brilho normalizado, 1/4
     ppm: float
     orientacao: np.ndarray | None = None  # graus 0–180: a direção da linha em cada ponto de linha
+    fios: np.ndarray | None = None  # bool: traços escuros compridos e finos, tirados da tinta (vinco ou linha impressa)
 
 
 @dataclass
@@ -127,6 +134,21 @@ def _tinta(cinza: np.ndarray, visivel: np.ndarray, ppm: float, p: dict) -> np.nd
     k = int(p["tinta_largura_mm"] * ppm) | 1
     bh = cv2.morphologyEx(cinza, cv2.MORPH_BLACKHAT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
     return (bh / (cv2.GaussianBlur(cinza, (0, 0), 10) + 20) > p["tinta_limiar"]) & visivel
+
+
+def _fios(tinta: np.ndarray, ppm: float, p: dict) -> np.ndarray:
+    """Os traços de tinta compridos e finos (>= tinta_fio_mm, largura média <= tinta_fio_largura_mm): um
+    vinco forte na folha metalizada é escuro e fino como a tinta, mas o texto nunca faz um traço tão comprido.
+    As linhas impressas compridas também saem daqui: descontam-se com a referência dos sacos OK."""
+    n, rotulos, caixas, _ = cv2.connectedComponentsWithStats(tinta.astype(np.uint8), connectivity=8)
+    comprido = p["tinta_fio_mm"] * ppm
+    fio = np.zeros(n, bool)
+    for i in np.nonzero(np.hypot(caixas[1:, 2], caixas[1:, 3]) >= comprido)[0] + 1:
+        x, y, w, h, area = caixas[i]
+        ys, xs = np.nonzero(rotulos[y:y + h, x:x + w] == i)
+        _, lados, _ = cv2.minAreaRect(np.column_stack([xs, ys]).astype(np.float32))
+        fio[i] = max(lados) >= comprido and area / max(lados) <= p["tinta_fio_largura_mm"] * ppm
+    return fio[rotulos] if fio.any() else np.zeros_like(tinta)
 
 
 def _rapido(ref: np.ndarray, alvo: np.ndarray) -> tuple[float, bool, np.ndarray]:
@@ -273,14 +295,14 @@ def retas(pontos: np.ndarray, queimado: np.ndarray, ppm: float, p: dict,
             continue
         col, y0, y1, prova = col[bons], y0[bons], y1[bons], prova[bons]
         # Uma ruga destaca-se da vizinhança: as retas paralelas a ±vizinhas_mm, nas mesmas linhas, têm de
-        # ter pelo menos prova_min a menos. Numa textura (reflexos, texto, folha metalizada) qualquer reta
+        # ter pelo menos destaque_mm a menos. Numa textura (reflexos, texto, folha metalizada) qualquer reta
         # junta pontos ao acaso, e as do lado juntam outros tantos.
         provado_todas = np.vstack([np.zeros((1, D), np.int32), np.cumsum(
             r_todas & ~q_todas if ha_queimado else r_todas, axis=0, dtype=np.int32)])
         k = max(1, int(round(p["vizinhas_mm"] * ppm)))
         vizinhas = np.clip(cand[col][:, None] + np.array([-k, k]), 0, D - 1)
         fundo = (provado_todas[y1[:, None], vizinhas] - provado_todas[y0[:, None], vizinhas]).max(axis=1)
-        destaca = prova - fundo >= prova_min
+        destaca = prova - fundo >= p["destaque_mm"] * ppm
         if not destaca.any():
             continue
         col, y0, y1, prova = col[destaca], y0[destaca], y1[destaca], prova[destaca]
@@ -326,11 +348,13 @@ def preparar(cinza: np.ndarray, util: np.ndarray, ppm: float, p: dict, com_linha
     else:
         resposta, linhas, orientacao = np.zeros((1, 1), np.float32), np.zeros((1, 1), bool), None
     tinta = _tinta(cinza, visivel, ppm, p)
-    return Preparado(cinza, util, visivel, queimado, resposta, linhas, tinta, _pequena(cinza), ppm, orientacao)
+    fios = _fios(tinta, ppm, p)
+    return Preparado(cinza, util, visivel, queimado, resposta, linhas, tinta & ~fios, _pequena(cinza), ppm,
+                     orientacao, fios)
 
 
 def referencia(outros: list[Preparado], p: dict) -> Referencia:
-    """A impressão: a tinta e as linhas que se repetem nos sacos OK (p.ex. traços claros impressos), no
+    """A impressão: a tinta, os fios e as linhas que se repetem nos sacos OK (p.ex. traços impressos), no
     referencial do 1.º. Os que não alinham com ele (outro produto, outra face) ficam de fora. Cada ruga
     ou reflexo cai num sítio diferente em cada saco; a impressão cai sempre no mesmo."""
     if not outros:
@@ -346,7 +370,9 @@ def referencia(outros: list[Preparado], p: dict) -> Referencia:
         r180, m, ncc = _alinhar(base.pequena, o.pequena)
         if o is not base and ncc < ALINHAMENTO_MIN:
             continue
-        marcas = o.tinta | o.linhas if o.linhas.shape == o.tinta.shape else o.tinta
+        marcas = o.tinta | o.linhas if o.linhas.shape == o.tinta.shape else o.tinta.copy()
+        if o.fios is not None:  # uma linha impressa comprida que se repete é impressão, não vinco
+            marcas |= o.fios
         votos += _levar(cv2.dilate(marcas.astype(np.uint8), folga) > 0, r180, m, forma, inversa=True)
         vistos += _levar(o.visivel, r180, m, forma, inversa=True)
         n += 1
@@ -375,6 +401,22 @@ class Deteccao:
         return max((a.prova_mm for a in self.achados), default=0.0)
 
 
+def _na_borda(a: Achado, util: np.ndarray, ppm: float, p: dict) -> bool:
+    """A selagem e as arestas dos painéis: retas paralelas a um eixo do saco (o recorte está alinhado com
+    ele), encostadas à borda da zona inspecionada em todo o comprimento."""
+    dx, dy = np.asarray(a.p2, float)[:2] - np.asarray(a.p1, float)[:2]
+    angulo = math.degrees(math.atan2(dy, dx)) % 90
+    if min(angulo, 90 - angulo) > p["borda_eixo_graus"]:
+        return False
+    dentro = np.pad(util, 1).astype(np.uint8)  # fora da imagem também é borda
+    distancia = cv2.distanceTransform(dentro, cv2.DIST_L2, 3)[1:-1, 1:-1] / ppm
+    t = np.linspace(0.0, 1.0, 64)[:, None]
+    pontos = np.asarray(a.p1, float)[:2] + t * np.array([dx, dy])
+    x = np.clip(np.round(pontos[:, 0]).astype(int), 0, util.shape[1] - 1)
+    y = np.clip(np.round(pontos[:, 1]).astype(int), 0, util.shape[0] - 1)
+    return bool(distancia[y, x].max() <= p["borda_mm"])
+
+
 def detetar(prep: Preparado, ref: Referencia | None, p: dict, imagens: bool = False) -> Deteccao:
     ppm = prep.ppm
     impressao, ncc = np.zeros_like(prep.linhas), float("nan")
@@ -395,6 +437,7 @@ def detetar(prep: Preparado, ref: Referencia | None, p: dict, imagens: bool = Fa
     # vê aí, por isso atravessa-se sem contar como prova
     escondido = prep.queimado | (prep.util & (impressao | tinta | (prep.cinza < p["escuro"])))
     achados = [Achado(c, pr, ang, p1, p2) for c, pr, ang, p1, p2 in retas(soltos, escondido, ppm, p, prep.orientacao)]
+    achados = [a for a in achados if not _na_borda(a, prep.util, ppm, p)]
     ver = {}
     if imagens:
         cand_img = np.zeros((*cand.shape, 3), np.uint8)

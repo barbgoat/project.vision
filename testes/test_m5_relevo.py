@@ -21,20 +21,22 @@ C_MM, L_MM = 150.0, 90.0  # o saco destes testes (abaixo dos 100 mm de LOCALIZAC
 
 def cena(rng: np.random.Generator, angulo: float = 12.0, desvio: tuple[float, float] = (0.0, 0.0),
          impressao: bool = False, vincos=(), cor: float = 200.0, comprimento: float = C_MM,
-         largura: float = L_MM, queimar: float = 0.0, traco_escuro: bool = False) -> np.ndarray:
+         largura: float = L_MM, queimar: float = 0.0, traco_escuro: bool = False, texto: bool = False) -> np.ndarray:
     """Um saco cinzento numa imagem da montagem, com "impressão" e vincos desenhados no referencial do
     saco. vincos: (x0, y0, x1, y1, contraste), em mm a partir do canto do saco (x ao longo do comprimento).
 
     A impressão: um bloco de texto (traços curtos e muito escuros: tinta) e um traço claro impresso,
     comprido, em diagonal: não é tinta e, sem a referência, passa por ruga. traco_escuro: o mesmo traço,
-    mas escuro (tinta, que o M5 desconta sozinho). queimar: a fração do comprimento e da largura, ao
+    mas escuro (comprido e fino como um vinco forte: também só sai com a referência). texto: só o bloco de
+    texto. queimar: a fração do comprimento e da largura, ao
     centro, saturada (um reflexo forte; nas bordas, o M2 recusava o saco)."""
     w, h = int(comprimento * PPM), int(largura * PPM)
     lona = np.full((h, w), cor, np.float32)
-    if impressao:
+    if impressao or texto:
         for y in range(60, 300, 12):
             for x in range(80, 330, 20):
                 cv2.line(lona, (x, y), (x + 12, y), cor * 0.35, 2)
+    if impressao:
         cv2.line(lona, (420, 80), (690, 420), min(cor * 1.2, 245.0), 2)
     if traco_escuro:
         cv2.line(lona, (420, 80), (690, 420), cor * 0.5, 2)
@@ -135,9 +137,28 @@ def test_impressao_sem_referencia_passa_por_ruga_e_com_referencia_nao(tmp_path):
     assert mesmo_angulo(vincado.defeitos[0].angulo_graus, math.degrees(math.atan2(-60, 135)))
 
 
-def test_tinta_do_proprio_saco_nao_e_ruga_mesmo_sem_referencia():
-    """Um traço escuro impresso, comprido e em diagonal (tinta): o M5 desconta a tinta do próprio saco."""
-    assert m5(cena(np.random.default_rng(12), traco_escuro=True)).estado is Estado.OK
+def test_texto_do_proprio_saco_nao_e_ruga_mesmo_sem_referencia():
+    """Traços escuros curtos (texto): o M5 desconta a tinta do próprio saco."""
+    assert m5(cena(np.random.default_rng(12), texto=True)).estado is Estado.OK
+
+
+def test_vinco_forte_escuro_como_tinta_e_ruga():
+    """Um vinco forte na folha metalizada é escuro e fino como a tinta; o texto nunca é tão comprido."""
+    r = m5(cena(np.random.default_rng(14), texto=True, vincos=[(20, 10, 130, 80, 0.5)]))
+    assert r.estado is Estado.NOK and len(r.defeitos) == 1, r.resumo
+    assert mesmo_angulo(r.defeitos[0].angulo_graus, math.degrees(math.atan2(70, 110))), r.resumo
+
+
+def test_traco_escuro_impresso_comprido_so_sai_com_referencia(tmp_path):
+    """Uma linha impressa escura, comprida e fina parece um vinco forte: sem referência passa por ruga;
+    com os sacos OK ensinados, repete-se neles e é impressão."""
+    rng = np.random.default_rng(15)
+    saco = cena(rng, traco_escuro=True)
+    assert m5(saco).estado is Estado.NOK
+    pasta = tmp_path / "ref"
+    ensinar(pasta, cena(rng, angulo=-8.0, desvio=(30, -20), traco_escuro=True), "ok_1")
+    com = m5(saco, referencia_pasta=str(pasta))
+    assert com.estado is Estado.OK, com.resumo
 
 
 def test_vinco_de_lado_a_lado_sem_referencia():
@@ -226,3 +247,12 @@ def test_tempo_do_m5_num_saco():
     inicio = time.perf_counter()
     m5(img)
     assert time.perf_counter() - inicio < 5.0, "o Verificar rugas tem de responder em segundos"
+
+
+def test_selagem_junto_a_borda_nao_e_ruga_mas_o_mesmo_vinco_longe_dela_e():
+    """Uma linha paralela ao comprimento, encostada à borda da zona inspecionada (a selagem, a aresta de um
+    painel impresso), não é ruga; a mesma linha a meio do saco é."""
+    rng = np.random.default_rng(16)
+    assert m5(cena(rng, vincos=[(10, 7.5, 140, 7.5, 0.3)])).estado is Estado.OK
+    r = m5(cena(rng, vincos=[(10, 30, 140, 30, 0.3)]))
+    assert r.estado is Estado.NOK and mesmo_angulo(r.defeitos[0].angulo_graus, 0), r.resumo
