@@ -1,0 +1,18 @@
+saco;grupo;sessao;passagens;rotulo;nota
+r01;G01;20261117_084444;1-3;rugas;rajada de 3 iguais
+r02;G02;20261117_084444;4-6;rugas;rajada de 3 iguais
+r03;G03;20261117_084444;7;rugas;7 e 8 parecem o mesmo saco
+r03;G03;20261117_084444;8;rugas;
+r04;G03;20261117_084444;9-11;rugas;rajada; grupo junto com r03 por cautela (saco por confirmar)
+r05;G05;20261117_084444;12;rugas;12, 13, 14 parecem o mesmo saco
+r05;G05;20261117_084444;13;rugas;
+r05;G05;20261117_084444;14;rugas;
+r06;G06;20261117_084444;15-17;rugas;rajada de 3 iguais
+r07;G07;20261117_084444;18;rugas;18, 19, 20-22: mesmo saco (diferenças 13-20)
+r07;G07;20261117_084444;19;rugas;
+r07;G07;20261117_084444;20-22;rugas;
+r08;G08;20261117_084444;23-25;rugas;rajada de 3 iguais
+r09;G09;20261117_084444;26-28;rugas;rajada de 3 iguais
+t01;T083655;20261117_083655;1;rugas;vinco a atravessar o texto; luz nova (1.ª sessão)
+t02;T083655;20261117_083655;2-4;rugas;vários vincos no painel da esquerda
+ok01;OK01;20261117_085359;1-15;ok;1 saco parado, 15 disparos iguais (fundo.png novo às 08:53)

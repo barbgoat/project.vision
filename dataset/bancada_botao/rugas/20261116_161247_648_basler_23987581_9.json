@@ -1,0 +1,42 @@
+{
+ "version": "5.0.1",
+ "flags": {},
+ "shapes": [
+  {
+   "label": "rugas",
+   "points": [
+    [
+     282,
+     60
+    ],
+    [
+     510,
+     675
+    ]
+   ],
+   "group_id": null,
+   "shape_type": "rectangle",
+   "flags": {}
+  },
+  {
+   "label": "rugas",
+   "points": [
+    [
+     328,
+     239
+    ],
+    [
+     513,
+     715
+    ]
+   ],
+   "group_id": null,
+   "shape_type": "rectangle",
+   "flags": {}
+  }
+ ],
+ "imagePath": "20261116_161247_648_basler_23987581_9.png",
+ "imageData": null,
+ "imageHeight": 955,
+ "imageWidth": 1277
+}
