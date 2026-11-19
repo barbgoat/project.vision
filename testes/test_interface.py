@@ -878,6 +878,21 @@ def test_verificar_rugas_sem_o_m2_do_perfil(tmp_path):
     assert veredito(r)[1] == "RUGA DETETADA" and [d.modulo for d in r.defeitos] == ["relevo"]
 
 
+def test_verificar_rugas_saco_maior_do_que_o_campo(tmp_path):
+    """O saco sai da imagem por um lado (maior do que o campo): o contorno que o M2 tolerante desse seria um
+    palpite que corta o saco; o M5 vê a imagem toda."""
+    from interface.janela_rugas import cortado_pela_borda, saco_localizado, verificar, veredito
+    from modulos.m2_localizacao import Localizador
+    from testes.test_m5_relevo import cena
+    img = cena(np.random.default_rng(25), angulo=0.0, vincos=[(40, 10, 110, 80, 0.15)])[200:800, 400:1000]
+    r, nota = verificar(config_teste(), Captura(img, "camara#3", 0.0))
+    assert not saco_localizado(r) and "imagem toda" in nota, nota
+    assert veredito(r)[1] == "RUGA DETETADA", r.relatorios[-1].resumo
+    inteiro = cena(np.random.default_rng(25), angulo=0.0)
+    saco = Localizador(config_teste()).localizar(inteiro)
+    assert not cortado_pela_borda(saco, inteiro.shape)
+
+
 @pytest.mark.parametrize("angulo", [0, 30, 90, -60])
 def test_etapas_com_o_saco_ao_alto(angulo):
     """Venha o saco como vier, nas etapas dos módulos fica na vertical; a original e a anotada não mudam."""

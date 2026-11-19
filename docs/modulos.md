@@ -112,8 +112,9 @@ Um Defeito `rugas` por ruga, com uma faixa ao longo dela. ERRO (`SemConfianca`) 
 **Desligado na inspeção por omissão** (`RELEVO_ATIVO = False`) até estar validado. Corre a pedido
 no **Verificar rugas** da BIapp (F6): só o M2 e o M5 no saco à frente da câmara. Para ver rugas não
 é preciso medir o saco: se o M2 não o localizar com o perfil (foto do fundo desatualizada, saco a
-tocar na borda, controlos da medição), tenta sem a foto do fundo e sem os controlos; se nem assim, o
-M5 vê a imagem toda, menos as bordas. Cada imagem da câmara fica em
+tocar na borda, controlos da medição), tenta sem a foto do fundo e sem os controlos; se nem assim, ou se
+o saco assim localizado sair pela borda da imagem (mais de 5 % do contorno: saco maior do que o campo, e
+o contorno é um palpite que o corta a meio), o M5 vê a imagem toda, menos as bordas. Cada imagem da câmara fica em
 `resultados/verificar_rugas/<dia>/`, com o veredito no nome. O administrador ensina: "É OK:
 ensinar" põe o recorte na referência (sem `referencia_pasta`, usa `<dataset>/relevo_referencia`, a
 guardar no perfil) e "Tem rugas: guardar" põe a imagem em `<dataset>/rugas/`. Ensinar 3 a 5 sacos

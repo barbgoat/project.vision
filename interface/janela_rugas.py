@@ -56,6 +56,8 @@ PASTA_REFERENCIA = "relevo_referencia"  # no dataset do perfil, enquanto relevo.
 CINZENTO = "#546e7a"
 ESPERA_CAMARA_S = 5.0  # tempo máximo à espera de uma imagem da câmara
 MARGEM_IMAGEM_MM = 5.0  # na imagem toda (sem saco localizado): a faixa junto às bordas que não se inspeciona
+BORDA_PX = 2  # um ponto do contorno a menos disto da borda da imagem está na borda
+BORDA_MAX_FRACAO = 0.05  # o M2 tolerante com mais disto do contorno na borda: o saco não cabe, ver a imagem toda
 NOMES_VEREDITO = {Estado.OK: "sem_rugas", Estado.NOK: "ruga", Estado.SEM_SACO: "sem_saco", Estado.ERRO: "nao_verificado"}
 
 
@@ -79,6 +81,17 @@ def saco_imagem_inteira(img: np.ndarray, ppm: float, margem_mm: float = MARGEM_I
     contorno = np.array([[[0, 0]], [[largura - 1, 0]], [[largura - 1, altura - 1]], [[0, altura - 1]]], np.int32)
     return Saco(contorno, ((largura - 1) / 2, (altura - 1) / 2), 0.0, largura / ppm, altura / ppm,
                 np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]), img, mascara, util)
+
+
+def cortado_pela_borda(saco: Saco, forma: tuple[int, ...]) -> bool:
+    """O contorno do saco segue a borda da imagem em mais de BORDA_MAX_FRACAO dos pontos: o saco é maior do que
+    o campo (ou está cortado) e o contorno do M2 tolerante, por dentro, é um palpite (corta o saco a meio,
+    por uma sombra ou um reflexo). Aí o M5 vê melhor a imagem toda."""
+    altura, largura = forma[:2]
+    c = saco.contorno.reshape(-1, 2)
+    m = BORDA_PX
+    na_borda = (c[:, 0] <= m) | (c[:, 0] >= largura - 1 - m) | (c[:, 1] <= m) | (c[:, 1] >= altura - 1 - m)
+    return bool(len(c)) and float(na_borda.mean()) > BORDA_MAX_FRACAO
 
 
 def imagem_inteira(cfg: Config, captura: Captura, motivo: str) -> Resultado:
@@ -112,10 +125,12 @@ def verificar(cfg: Config, captura: Captura, of: str = "", produto: str = "") ->
         return resultado, ""
     motivo = resultado.mensagem or str(resultado.estado)
     tolerante = com(localizacao_tolerante(cfg))
-    if tolerante.saco is not None:
+    if tolerante.saco is not None and not cortado_pela_borda(tolerante.saco, tolerante.imagem.shape):
         return tolerante, (f"o M2 não localizou o saco com o perfil ({motivo}); foi localizado sem a foto do fundo "
                            "e sem os controlos da medição. Se for a foto do fundo, refazer o Fundo vazio "
                            "(Afinar câmara).")
+    if tolerante.saco is not None:
+        motivo += "; sem o perfil, o saco sai pela borda da imagem (maior do que o campo?)"
     r = imagem_inteira(cfg, captura, motivo)
     r.of, r.produto = of, produto
     return r, f"o M2 não localizou o saco ({motivo}): o M5 viu a imagem toda, menos as bordas."
