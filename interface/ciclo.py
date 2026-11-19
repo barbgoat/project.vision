@@ -40,7 +40,7 @@ from modulos.m2_localizacao import Diagnostico, Localizador
 from modulos.m2_localizacao.medicao import retangulo_arredondado
 from modulos.m2_localizacao.qualidade import MedicaoNaoFiavel
 from nucleo.config import RAIZ, Config, ConfigAquisicao, ModoDisparo
-from nucleo.contrato import Captura, Estado, Resultado
+from nucleo.contrato import LOCALIZACAO, Captura, Estado, Resultado
 from nucleo.imagens import limites_roi, recortar
 from nucleo.especificacoes import ErroRepositorio, Repositorio
 
@@ -87,10 +87,51 @@ def preparar(visto: Visto) -> Visto:
     anotada = next((img for nome, img in etapas if nome == "anotada"), None)
     if anotada is None and r.imagem is not None:  # o desenho falhou (já está no log)
         anotada = r.imagem.copy()
-    visto.anotada, visto.etapas = anotada, etapas
+    ponta = ponta_do_easy_open(r)
+    visto.anotada, visto.etapas = anotada, [(nome, ao_alto(nome, img, r, ponta)) for nome, img in etapas]
     visto.miniaturas = [_miniatura(img) for _, img in etapas]
     visto.preparado = True
     return visto
+
+
+ETAPAS_DA_CAMARA = ("original", "anotada")  # ficam como a câmara as vê (a anotada é a imagem grande)
+
+
+def ponta_do_easy_open(r: Resultado) -> int | None:
+    """Em que ponta do recorte estão os entalhes do easy open que o M3 achou: -1 a esquerda, +1 a direita
+    (x < 0 ou > 0 no referencial do saco), a que tiver mais (um entalhe falso na outra ponta não a muda);
+    None sem easy open, sem entalhes ou com tantos numa ponta como na outra."""
+    m3 = r.relatorio("dimensoes")
+    if m3 is None:
+        return None
+    if "easy_open_ponta" in m3.medidas:  # o topo que o M3 escolheu
+        return int(m3.medidas["easy_open_ponta"])
+    xs = [v for k, v in m3.medidas.items() if k.startswith("easy_open_") and k.endswith("_x_mm")]
+    votos = sum(1 if x > 0 else -1 for x in xs if x != 0)
+    return None if votos == 0 else (1 if votos > 0 else -1)
+
+
+def ao_alto(nome: str, imagem: np.ndarray, r: Resultado, ponta: int | None = None) -> np.ndarray:
+    """A etapa com o saco na vertical, venha ele como vier: uma imagem do enquadramento da câmara passa ao
+    recorte normalizado do saco (eixo maior na horizontal) e as etapas deitadas rodam 90° (eixo maior na
+    vertical). ponta (de ponta_do_easy_open): a ponta do easy open fica em cima, e assim o saco fica sempre
+    direito (sem ela, a ponta esquerda do recorte fica em cima: o sentido do saco não se sabe).
+    Sem saco localizado pelo M2 (ou numa candidata de outro disparo, ou na original e na anotada) fica igual."""
+    saco = r.saco
+    localizado = bool(r.relatorios) and r.relatorios[0].modulo == LOCALIZACAO and r.relatorios[0].estado is Estado.OK
+    if saco is None or not localizado or r.imagem is None or nome in ETAPAS_DA_CAMARA or nome.startswith("disparo_"):
+        return imagem
+    altura, largura = r.imagem.shape[:2]
+    h, w = imagem.shape[:2]
+    if (h, w) != saco.mascara.shape[:2] and abs(w / h - largura / altura) < 0.01:
+        # do enquadramento da câmara (talvez reduzida, como os mapas do M2): para o recorte do saco
+        if (h, w) != (altura, largura):
+            imagem = cv2.resize(imagem, (largura, altura), interpolation=cv2.INTER_NEAREST)
+        imagem = saco.recortar(imagem)
+    # As etapas dos módulos estão no referencial do saco (eixo maior na horizontal): deitado → ao alto
+    if imagem.shape[1] > imagem.shape[0]:  # a ponta esquerda vai para cima, ou a direita se for a do easy open
+        imagem = cv2.rotate(imagem, cv2.ROTATE_90_COUNTERCLOCKWISE if ponta == 1 else cv2.ROTATE_90_CLOCKWISE)
+    return imagem
 
 
 def _miniatura(imagem: np.ndarray) -> np.ndarray:

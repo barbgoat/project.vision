@@ -13,6 +13,9 @@
     │ Etapas | Log                             │
     └──────────────────────────────────────────┘
 
+    Etapas: só a segmentação (M2) e o nominal (M3), com o saco na vertical (direito: com easy open, a
+    ponta dos entalhes em cima); as outras no menu
+    "+Etapas", ao lado do "Guardar no dataset" (escolher uma mostra-a em grande).
     O menu ⚙ tem o resto: definições, câmara, histórico, dashboard, a vista e a conta.
     Janelas à parte:  Revisão     um saco não OK: descartar ou NOK (a produção espera)
                       OF          a ordem de fabrico e o produto em uso (interface/ordens.py)
@@ -60,11 +63,15 @@ from interface.paineis import (
     Contadores, Etapas, Faixa, PainelLog, RegistoQt, TabelaDefeitos, TabelaModulos, VistaImagem,
 )
 from interface.registos import guardar_correcao, registar_revisao
+
 from modulos.m2_localizacao.medicao import LADOS
 from nucleo.config import CAMINHO_POR_OMISSAO, RAIZ, Config
 from nucleo.contrato import CLASSES_DATASET, Estado
 from nucleo.especificacoes import ErroRepositorio, Escolha, Repositorio
 from nucleo.imagens import guardar_imagem
+
+# As etapas com miniatura na vista de Engenharia; as outras ficam no botão "+Etapas"
+ETAPAS_PRINCIPAIS = ("localizacao_segmentacao", "dimensoes_nominal")
 
 
 log = logging.getLogger("interface")
@@ -347,6 +354,12 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self.modulos = TabelaModulos()
         self.defeitos = TabelaDefeitos()
         self.btn_corrigir_eng = self._botao_corrigir("Guardar no dataset ▾")
+        self.btn_mais_etapas = QToolButton()
+        self.btn_mais_etapas.setText("+Etapas")
+        self.btn_mais_etapas.setToolTip("As outras etapas deste saco: escolher uma mostra-a em grande")
+        self.btn_mais_etapas.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.btn_mais_etapas.setMenu(QMenu(self.btn_mais_etapas))
+        self.btn_mais_etapas.setEnabled(False)
         self.btn_zonas_fim = QPushButton("Concluir zonas")
         self.btn_zonas_fim.setToolTip("Termina a marcação das zonas do defeito neste saco")
         self.btn_zonas_fim.clicked.connect(self._terminar_zonas)
@@ -365,16 +378,21 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         lateral = QWidget()
         coluna = QVBoxLayout(lateral)
         coluna.setContentsMargins(0, 0, 0, 0)
-        for w, esticar in ((self.faixa_eng, 0), (self.info, 0), (tabelas, 1), (self.btn_corrigir_eng, 0),
-                           (self.btn_zonas_fim, 0)):
+        botoes = QHBoxLayout()
+        botoes.addWidget(self.btn_corrigir_eng)
+        botoes.addWidget(self.btn_mais_etapas)
+        botoes.addStretch()
+        for w, esticar in ((self.faixa_eng, 0), (self.info, 0), (tabelas, 1)):
             coluna.addWidget(w, esticar)
+        coluna.addLayout(botoes)
+        coluna.addWidget(self.btn_zonas_fim)
 
         topo = QSplitter(Qt.Orientation.Horizontal)
         topo.addWidget(imagem)
         topo.addWidget(lateral)
         topo.setSizes([650, 350])  # proporções iniciais
 
-        self.etapas = Etapas()
+        self.etapas = Etapas(ETAPAS_PRINCIPAIS)
         self.etapas.escolhida.connect(self._mostrar_etapa)
         self.log = PainelLog()
         self.separadores = QTabWidget()
@@ -760,6 +778,11 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self.modulos.mostrar(r)
         self.defeitos.mostrar(r)
         self.etapas.mostrar(visto)
+        menu = self.btn_mais_etapas.menu()
+        menu.clear()
+        for nome, imagem in self.etapas.outras(visto):
+            menu.addAction(nome, lambda n=nome, i=imagem: self._mostrar_etapa(n, i))
+        self.btn_mais_etapas.setEnabled(not menu.isEmpty())
 
     def _mostrar_etapa(self, nome: str, imagem) -> None:
         self.imagem_eng.mostrar(imagem)

@@ -357,8 +357,10 @@ class Etapas(QListWidget):
 
     escolhida = Signal(str, object)  # nome da etapa, imagem BGR
 
-    def __init__(self) -> None:
+    def __init__(self, principais: tuple[str, ...] | None = None) -> None:
+        """principais: só estas etapas (pela ordem do pipeline); as outras ficam em outras(). None = todas."""
         super().__init__()
+        self.principais = principais
         self.setViewMode(QListView.ViewMode.IconMode)
         self.setFlow(QListView.Flow.LeftToRight)
         self.setWrapping(True)
@@ -371,9 +373,15 @@ class Etapas(QListWidget):
 
     def mostrar(self, visto: Visto) -> None:
         self.clear()
-        self._etapas = visto.etapas
-        for (nome, _), miniatura in zip(visto.etapas, visto.miniaturas):
+        pares = [(etapa, miniatura) for etapa, miniatura in zip(visto.etapas, visto.miniaturas)
+                 if self.principais is None or etapa[0] in self.principais]
+        self._etapas = [etapa for etapa, _ in pares]
+        for (nome, _), miniatura in pares:
             self.addItem(QListWidgetItem(QIcon(QPixmap.fromImage(qimagem(miniatura))), nome))
+
+    def outras(self, visto: Visto) -> list[tuple[str, np.ndarray]]:
+        """As etapas que não estão nas miniaturas (para o "+Etapas")."""
+        return [] if self.principais is None else [e for e in visto.etapas if e[0] not in self.principais]
 
 
 class Historico(QTableWidget):

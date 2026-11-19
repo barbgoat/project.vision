@@ -338,7 +338,13 @@ def test_producao_para_em_cada_saco_nao_ok_ate_decidir(app, janela, tmp_path):
     assert len(ler_csv(pasta / "registo.csv")) == 3, "regista como o main.py"
     assert [linha["decisao"] for linha in ler_csv(pasta / "revisoes.csv")] == ["descartado", "NOK"]
     assert janela.faixa_eng.text().startswith("NOK") and janela.defeitos.rowCount() >= 1
-    assert janela.etapas.count() >= 2 and janela.modulos.rowCount() == 2, "o M2 e o M3 (o M5 vem desligado)"
+    assert janela.modulos.rowCount() == 2, "o M2 e o M3 (o M5 vem desligado)"
+    nomes = [janela.etapas.item(i).text() for i in range(janela.etapas.count())]
+    assert nomes == ["localizacao_segmentacao", "dimensoes_nominal"], "só as principais têm miniatura"
+    menu = janela.btn_mais_etapas.menu()
+    assert janela.btn_mais_etapas.isEnabled() and "original" in [a.text() for a in menu.actions()]
+    next(a for a in menu.actions() if a.text() == "dimensoes_forma").trigger()
+    assert "dimensoes_forma" in janela.titulo_imagem.text(), "+Etapas mostra-a em grande"
 
     janela._corrigir("dimensao")  # Engenharia: guardar no dataset
     assert len(list((tmp_path / "dataset" / "linha" / "dimensao").glob("*comprido_158.png"))) == 1
@@ -870,3 +876,39 @@ def test_verificar_rugas_sem_o_m2_do_perfil(tmp_path):
     r, nota = verificar(config_teste(), Captura(por_dentro, "camara#2", 0.0))
     assert not saco_localizado(r) and "imagem toda" in nota
     assert veredito(r)[1] == "RUGA DETETADA" and [d.modulo for d in r.defeitos] == ["relevo"]
+
+
+@pytest.mark.parametrize("angulo", [0, 30, 90, -60])
+def test_etapas_com_o_saco_ao_alto(angulo):
+    """Venha o saco como vier, nas etapas dos módulos fica na vertical; a original e a anotada não mudam."""
+    from interface.ciclo import Visto, preparar
+    from mestre import Mestre
+    cfg = config_teste()
+    img = cena_forma(np.random.default_rng(50), FORMAS["certo"], angulo=angulo)
+    r = Mestre(cfg, apenas=["dimensoes"]).inspecionar(img, guardar_intermedios=True)
+    etapas = dict(preparar(Visto(1, r, cfg)).etapas)
+    assert etapas["original"].shape == img.shape and etapas["anotada"].shape[:2] == img.shape[:2]
+    for nome in ("localizacao_segmentacao", "dimensoes_nominal", "dimensoes_forma"):
+        altura, largura = etapas[nome].shape[:2]
+        assert altura > largura, (nome, etapas[nome].shape)
+    mascara = etapas["localizacao_segmentacao"]
+    mascara = mascara if mascara.ndim == 2 else mascara[..., 0]
+    ys, xs = np.nonzero(mascara > 127)
+    assert (ys.max() - ys.min()) / (xs.max() - xs.min()) == pytest.approx(COMPRIMENTO / LARGURA, rel=0.1),         "a silhueta já no referencial do saco, com o comprimento na vertical"
+
+
+@pytest.mark.parametrize("angulo", [10, 190, -80, 100])
+@pytest.mark.parametrize("distancia", [20.0, COMPRIMENTO - 20.0])
+def test_etapas_com_o_saco_direito_pelo_easy_open(angulo, distancia):
+    """Com easy open, a ponta dos entalhes fica sempre em cima nas etapas, venha o saco como vier."""
+    from interface.ciclo import Visto, ponta_do_easy_open, preparar
+    from mestre import Mestre
+    from modulos.m3_dimensoes.easy_open import COR_ENTALHE
+    from testes.test_m3_dimensoes import _com_entalhes
+    cfg = config_teste(dimensoes={"easy_open": True})
+    img = cena_forma(np.random.default_rng(51), _com_entalhes(distancia), angulo=angulo, cor=(30, 30, 30))  # selado escuro
+    r = Mestre(cfg, apenas=["dimensoes"]).inspecionar(img, guardar_intermedios=True)
+    assert r.relatorio("dimensoes").medidas["easy_open_entalhes"] == 2 and ponta_do_easy_open(r) is not None
+    forma = dict(preparar(Visto(1, r, cfg)).etapas)["dimensoes_forma"]
+    ys, _ = np.nonzero(np.all(forma == COR_ENTALHE, axis=2))
+    assert len(ys) and ys.mean() < forma.shape[0] * 0.3, "os entalhes em cima"
