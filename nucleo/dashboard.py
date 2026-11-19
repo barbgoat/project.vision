@@ -31,7 +31,9 @@ DIAS_MAX = 31  # dias mostrados no separador "Por dia"
 # A data (da última alteração) vem sempre primeiro.
 COLUNAS_OF = ["Data", "OF", "Produto", "Sacos", "OK", "NOK", "Taxa NOK", "Por"]
 COLUNAS_MEDIDAS = ["Medida", "Pedido (BD)", "Medido (média ± dp)", "Mín a máx", "Fora"]
-COLUNAS_PRODUTOS = ["Data", "Produto", "Comprimento × largura (mm)", "Tolerâncias (mm)", "Cor", "Verniz", "Por"]
+COLUNAS_PRODUTOS = ["Data", "Produto", "Comprimento × largura (mm)", "Tolerâncias (mm)", "Cor", "Verniz", "Easy open", "Por"]
+# Os lados do easy open, em texto (Especificacao.easy_open_lados)
+TEXTO_LADOS_EO = {"compridos": "lados compridos", "pontas": "pontas", "todos": "todos os lados"}
 COLUNAS_DIAS = ["Dia", "Sacos", "OK", "NOK", "Descartados", "Taxa NOK"]
 COLUNAS_TIPOS = ["Defeito", "Sacos NOK com ele"]
 
@@ -125,7 +127,7 @@ def colunas_produto(p: Especificacao) -> list:
     """Um produto em texto, pela ordem de COLUNAS_PRODUTOS."""
     return [hora(p.data_hora), p.produto, f"{p.comprimento_nominal_mm:g} × {p.largura_nominal_mm:g}",
             f"± {p.tolerancia_comprimento_mm:g} / ± {p.tolerancia_largura_mm:g}", p.cor,
-            "sim" if p.verniz else "não", p.autor]
+            "sim" if p.verniz else "não", (f"sim ({TEXTO_LADOS_EO.get(p.easy_open_lados, p.easy_open_lados)})" if p.easy_open else "não"), p.autor]
 
 
 def descrever_ajustes(of: OrdemFabrico) -> str:

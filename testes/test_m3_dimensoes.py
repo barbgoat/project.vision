@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
@@ -200,3 +202,98 @@ def test_desvios_de_forma_podem_ser_relevo_e_os_de_tamanho_nao(mestre, resultado
     assert torto.defeitos and all(d.pode_ser_relevo and "pode ser ruga/relevo" in d.descricao for d in torto.defeitos)
     comprido = resultados["comprido_158"].relatorio("dimensoes").defeitos
     assert comprido and not any(d.pode_ser_relevo for d in comprido if d.descricao.startswith("comprimento"))
+
+
+# --- Easy open: os entalhes de abertura na borda, e onde estão ------------------------------------
+
+CFG_EO = config_teste(dimensoes={"easy_open": True})
+
+
+def _com_entalhes(distancia: float, fundo: float = 1.8, boca: float = 1.8, lados=("cima", "baixo"),
+                  outra: float | None = None):
+    """O saco certo com um entalhe em V em cada lado comprido pedido, a `distancia` mm da ponta esquerda
+    (o de baixo a `outra`, se dada: um easy open assimétrico)."""
+    c, l, b = _c4(), _l4(), boca / 2
+    x0, x1 = -c + distancia, -c + (distancia if outra is None else outra)
+    cima = [(x0 - b, -l), (x0, -l + fundo), (x0 + b, -l)] if "cima" in lados else []
+    baixo = [(x1 + b, l), (x1, l - fundo), (x1 - b, l)] if "baixo" in lados else []
+    return [(-c, -l), *cima, (c, -l), (c, l), *baixo, (-c, l)]
+
+
+@pytest.mark.parametrize("angulo", [0, 25, -40])
+def test_easy_open_acha_os_entalhes_e_mede_a_posicao(angulo):
+    img = cena_forma(np.random.default_rng(40), _com_entalhes(20.0), angulo=angulo)
+    r = m.Mestre(CFG_EO, apenas=["dimensoes"]).inspecionar(img, guardar_intermedios=True).relatorio("dimensoes")
+    assert r.estado is Estado.OK, [d.descricao for d in r.defeitos]
+    assert r.medidas["easy_open_entalhes"] == 2, r.mensagem
+    assert abs(r.medidas["easy_open_distancia_ponta_mm"] - 20.0) < 1.0, r.mensagem
+    assert 1.2 < r.medidas["easy_open_profundidade_mm"] < 2.4, r.mensagem
+    assert {r.medidas["easy_open_1_y_mm"] > 0, r.medidas["easy_open_2_y_mm"] > 0} == {True, False}, "um em cada lado"
+    assert all(abs(abs(r.medidas[f"easy_open_{i}_x_mm"]) - (_c4() - 20.0)) < 1.0 for i in (1, 2))
+    assert "easy open: entalhe no lado" in r.mensagem and "forma" in r.intermedios
+
+
+def test_easy_open_em_falta_e_nok():
+    img = cena_forma(np.random.default_rng(41), FORMAS["certo"], angulo=15)
+    r = m.Mestre(CFG_EO, apenas=["dimensoes"]).inspecionar(img).relatorio("dimensoes")
+    assert r.estado is Estado.NOK and r.medidas["easy_open_entalhes"] == 0
+    descricoes = [d.descricao for d in r.defeitos]
+    assert len(descricoes) == 1 and descricoes[0].startswith("easy open em falta: nenhum entalhe"), descricoes
+
+
+def test_sem_easy_open_nao_se_procura_e_os_entalhes_nao_sao_defeito(mestre):
+    img = cena_forma(np.random.default_rng(42), _com_entalhes(20.0), angulo=15)
+    r = mestre.inspecionar(img).relatorio("dimensoes")
+    assert r.estado is Estado.OK and "easy_open_entalhes" not in r.medidas, [d.descricao for d in r.defeitos]
+
+
+def test_easy_open_um_so_entalhe_conta():
+    img = cena_forma(np.random.default_rng(43), _com_entalhes(30.0, lados=("baixo",)), angulo=10)
+    r = m.Mestre(CFG_EO, apenas=["dimensoes"]).inspecionar(img).relatorio("dimensoes")
+    assert r.estado is Estado.OK and r.medidas["easy_open_entalhes"] == 1, r.mensagem
+    assert abs(r.medidas["easy_open_distancia_ponta_mm"] - 30.0) < 1.0
+
+
+def test_easy_open_so_nos_lados_do_produto():
+    """Um entalhe numa ponta não conta com os entalhes nos lados compridos (o normal); com "pontas", só ele."""
+    c, l = _c4(), _l4()
+    poligono = _com_entalhes(20.0)
+    i = poligono.index((c, l))  # um entalhe a meio da ponta direita (de (c, -l) para (c, l))
+    poligono[i:i] = [(c, -1.0), (c - 1.8, 0.0), (c, 1.0)]
+    img = cena_forma(np.random.default_rng(44), poligono, angulo=12, cor=(30, 30, 30))
+    compridos = m.Mestre(CFG_EO, apenas=["dimensoes"]).inspecionar(img).relatorio("dimensoes")
+    assert compridos.medidas["easy_open_entalhes"] == 2 and "lado direita" not in compridos.mensagem
+    cfg = config_teste(dimensoes={"easy_open": True, "easy_open_lados": "pontas"})
+    pontas = m.Mestre(cfg, apenas=["dimensoes"]).inspecionar(img).relatorio("dimensoes")
+    assert pontas.medidas["easy_open_entalhes"] == 1 and "lado direita" in pontas.mensagem, pontas.mensagem
+
+
+@pytest.mark.parametrize("angulo", [8, 188])
+@pytest.mark.parametrize("cima_mm, baixo_mm", [(20.0, 20.0), (20.0, 23.0)])
+def test_easy_open_distancias_ao_topo_e_assimetria(angulo, cima_mm, baixo_mm):
+    """O topo (0,00 mm) é a ponta dos entalhes; com o saco direito, o esquerdo é o do lado de baixo do
+    recorte (topo à esquerda). A 188 graus o saco vem virado: o mesmo resultado."""
+    img = cena_forma(np.random.default_rng(45), _com_entalhes(cima_mm, outra=baixo_mm), angulo=angulo,
+                     cor=(30, 30, 30))
+    r = m.Mestre(CFG_EO, apenas=["dimensoes"]).inspecionar(img).relatorio("dimensoes")
+    med = r.medidas
+    assert med["easy_open_entalhes"] == 2, r.mensagem
+    assert med["easy_open_esquerdo_mm"] == pytest.approx(baixo_mm, abs=0.6), r.mensagem
+    assert med["easy_open_direito_mm"] == pytest.approx(cima_mm, abs=0.6), r.mensagem
+    assert med["easy_open_assimetria_mm"] == pytest.approx(baixo_mm - cima_mm, abs=0.6)
+    esperado = math.degrees(math.atan2(baixo_mm - cima_mm, 2 * _l4()))
+    assert med["easy_open_esquadria_graus"] == pytest.approx(esperado, abs=0.8)
+    assert "do topo (0,00)" in r.mensagem
+
+
+def test_easy_open_mede_a_partir_do_topo_real_mesmo_torto():
+    """Um topo cortado torto: cada entalhe mede-se até à aresta do topo à altura dele (a assimetria é do EO,
+    não do corte)."""
+    c, l = _c4(), _l4()
+    poligono = _com_entalhes(20.0)
+    poligono[0] = (-c - 1.5, -l)  # o canto de cima da ponta esquerda 1,5 mm para fora: ponta de viés
+    img = cena_forma(np.random.default_rng(46), poligono, angulo=5, cor=(30, 30, 30))
+    med = m.Mestre(CFG_EO, apenas=["dimensoes"]).inspecionar(img).relatorio("dimensoes").medidas
+    # A aresta do topo vai de (-c - 1,5, -l) a (-c, l): à altura do fundo de cada entalhe (1,8 mm para
+    # dentro) fica 1,45 mm mais longe do de cima (o direito, saco direito) e 0,05 mm do de baixo
+    assert med["easy_open_direito_mm"] - med["easy_open_esquerdo_mm"] == pytest.approx(1.4, abs=0.4), med

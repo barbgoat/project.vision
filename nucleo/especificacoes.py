@@ -3,7 +3,7 @@
     Produto (Especificacao)  comprimento e largura nominais e as tolerâncias, a cor
                              predominante (escrita), se tem verniz e, opcionais, a
                              resolução da localização (px/mm do mapa do M2) e o raio
-                             dos cantos (a forma ideal do M3)
+                             dos cantos (a forma ideal do M3), e se tem easy open (EO)
     Ordem de fabrico (OF)    um número, o produto e o que esta OF muda nele
 
 A configuração de cada saco faz-se por camadas e é sempre validada pela Config:
@@ -17,7 +17,8 @@ mais rápido, para os mate) e nos cantos da forma ideal (dimensoes.forma_raio_ca
 redondos com defeito); o resto (esquadria, câmara, px/mm...) é do perfil da montagem. A
 resolução e os cantos são do produto, não da OF: a resolução mudada na janela de uma OF
 grava uma versão nova do produto (fica para todas as OFs dele). A cor e o verniz ficam
-guardados, mas por agora nenhum módulo os verifica.
+guardados, mas por agora nenhum módulo os verifica. O easy open (EO sim/não, também mudável numa OF) liga
+dimensoes.easy_open: o M3 procura os entalhes de abertura e mede onde estão.
 
 Correspondência BD ↔ OpenCV (CORRESPONDENCIA): o comprimento e a largura que o M2
 mede (arestas subpíxel, mediana de cada lado, em mm) são comparados pelo M3 com
@@ -49,7 +50,7 @@ from nucleo.contrato import Estado, Resultado
 
 # O que define um produto (e o que uma OF pode mudar). As MEDIDAS entram na secção dimensoes.
 MEDIDAS = ("comprimento_nominal_mm", "largura_nominal_mm", "tolerancia_comprimento_mm", "tolerancia_largura_mm")
-CAMPOS = (*MEDIDAS, "cor", "verniz")
+CAMPOS = (*MEDIDAS, "cor", "verniz", "easy_open", "easy_open_lados")
 # Medida do OpenCV (Saco do M2, comparada pelo M3) → (nominal, tolerância) do produto.
 CORRESPONDENCIA = {
     "comprimento_mm": ("comprimento_nominal_mm", "tolerancia_comprimento_mm"),
@@ -75,6 +76,8 @@ class Especificacao:
     tolerancia_largura_mm: float = 0.0
     cor: str = ""  # cor predominante, escrita (p.ex. "branco"); guardada, ainda não verificada
     verniz: bool = False  # guardado; ainda não há módulo que o verifique
+    easy_open: bool = False  # EO: tem entalhes de abertura fácil (dimensoes.easy_open: o M3 procura-os e mede-os)
+    easy_open_lados: str = "compridos"  # onde estão: "compridos" (na largura), "pontas" ou "todos"
     # px/mm do mapa de segmentação do M2 para este produto (localizacao.resolucao_px_por_mm); None = a do
     # perfil da montagem. Valores ≥ px/mm da câmara (geral.px_por_mm) equivalem a sem redução.
     resolucao_localizacao_px_por_mm: float | None = None
@@ -206,7 +209,8 @@ def compor(montagem: Config, produto: Especificacao | None = None, of: OrdemFabr
     p = efetiva(produto, of)
     try:
         medidas = {c: float(getattr(p, c)) for c in MEDIDAS}
-        cfg = replace(montagem, dimensoes=replace(montagem.dimensoes, **medidas))
+        cfg = replace(montagem, dimensoes=replace(montagem.dimensoes, **medidas, easy_open=bool(p.easy_open),
+                                                              easy_open_lados=str(p.easy_open_lados)))
         resolucao = p.resolucao_localizacao_px_por_mm
         if resolucao is not None:
             if not float(resolucao) > 0:
@@ -232,7 +236,9 @@ def repor_medidas(cfg: Config, perfil: Config, produto: Especificacao | None = N
     (o que estava em uso, já com a OF por cima: efetiva) tinha a sua resolução da localização ou os
     seus cantos, também os do perfil.
     Sem eles, os de `cfg` ficam (podem ter sido mudados no editor de parâmetros)."""
-    cfg = replace(cfg, dimensoes=replace(cfg.dimensoes, **{c: getattr(perfil.dimensoes, c) for c in MEDIDAS}))
+    cfg = replace(cfg, dimensoes=replace(cfg.dimensoes, **{c: getattr(perfil.dimensoes, c) for c in MEDIDAS},
+                                         easy_open=perfil.dimensoes.easy_open,
+                                         easy_open_lados=perfil.dimensoes.easy_open_lados))
     if produto is not None and produto.resolucao_localizacao_px_por_mm is not None:
         cfg = replace(cfg, localizacao=replace(cfg.localizacao,
                                                resolucao_px_por_mm=perfil.localizacao.resolucao_px_por_mm))

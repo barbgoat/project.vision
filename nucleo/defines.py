@@ -289,6 +289,12 @@ DIMENSOES_FORMA_PROFUNDIDADE_MIN_MM: Final = 2.5  # ...ou profundidade mínima (
 # Geometria: uma reta a cada lado. Ângulos não dependem da escala: apanham cortes tortos pequenos.
 DIMENSOES_ESQUADRIA_MAX_GRAUS: Final = 2.0  # [MEDIR] desvio máximo de cada ponta à perpendicular do eixo
 DIMENSOES_PARALELISMO_MAX_GRAUS: Final = 2.0  # [MEDIR] ângulo máximo entre os lados compridos
+# Easy open: os entalhes de abertura fácil na borda (cortes em V de ~1–2 mm). Vem do produto ou da OF
+# (EO sim/não): com ele, o M3 procura-os, mede a posição de cada um e um saco sem nenhum é NOK.
+DIMENSOES_EASY_OPEN: Final = False
+# Onde estão os entalhes: "compridos" (nos lados compridos, frente a frente na largura do saco: o normal),
+# "pontas" (nos lados curtos) ou "todos". Só se procuram aí (um falso noutro lado não conta).
+DIMENSOES_EASY_OPEN_LADOS: Final = "compridos"
 
 # --- M3: afinação interna ----------------------------------------------------------
 M3_GEOMETRIA_PARTE_CENTRAL: Final = 0.5  # fração central de cada lado usada na reta (sem os cantos arredondados)

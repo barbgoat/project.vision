@@ -372,3 +372,27 @@ def test_dashboard_lista_as_ofs_com_as_contagens(repo):
     colunas = dashboard.colunas_produto(repo.procurar_produto("PreVital"))
     assert len(colunas) == len(dashboard.COLUNAS_PRODUTOS)
     assert colunas[1:6] == ["PreVital", "150 × 55", "± 3 / ± 3", "branco", "sim"]
+
+
+def test_easy_open_vem_do_produto_e_a_of_pode_muda_lo():
+    assert not compor(CFG, _produto()).dimensoes.easy_open
+    com_eo = _produto(easy_open=True)
+    assert compor(CFG, com_eo).dimensoes.easy_open
+    of = OrdemFabrico("OF-EO", "PreVital", {"easy_open": False})
+    assert not compor(CFG, com_eo, of).dimensoes.easy_open
+    assert ajustes_entre(com_eo, efetiva(com_eo, of)) == {"easy_open": False}
+    assert not repor_medidas(compor(CFG, com_eo), CFG, com_eo).dimensoes.easy_open, "volta ao do perfil"
+
+
+def test_easy_open_guardado_e_lido_e_produtos_antigos_sem_ele(repo):
+    repo.guardar(_produto(easy_open=True))
+    assert repo.procurar_produto("PreVital").easy_open
+    assert dashboard.colunas_produto(repo.procurar_produto("PreVital"))[-2] == "sim (lados compridos)"
+    assert repo.procurar_produto("PreVital").easy_open_lados == "compridos", "por omissão"
+    assert Especificacao("Antigo").easy_open is False
+
+
+def test_lados_do_easy_open_vem_do_produto_e_sao_validados():
+    assert compor(CFG, _produto(easy_open=True, easy_open_lados="pontas")).dimensoes.easy_open_lados == "pontas"
+    with pytest.raises(ValueError, match="easy_open_lados"):
+        compor(CFG, _produto(easy_open=True, easy_open_lados="no meio"))

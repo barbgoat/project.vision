@@ -163,8 +163,8 @@ class DialogoOrdem(QDialog):
 # --- O formulário do produto (ou da OF) ----------------------------------------------------
 
 class DialogoEspecificacao(QDialog):
-    """O formulário de um produto, ou de uma OF: comprimento e largura com as tolerâncias, cor e verniz
-    e a resolução da localização (0 = a do perfil) e, só no produto, o raio dos cantos (−1 = os do
+    """O formulário de um produto, ou de uma OF: comprimento e largura com as tolerâncias, cor, verniz,
+    easy open (EO) e a resolução da localização (0 = a do perfil) e, só no produto, o raio dos cantos (−1 = os do
     perfil). A resolução é sempre do produto: mudada na janela de uma OF, grava uma versão nova do
     produto (fica a última que se definiu, para todas as OFs dele).
 
@@ -205,6 +205,20 @@ class DialogoEspecificacao(QDialog):
         self.verniz.setChecked(inicial.verniz)
         for w in (self.ed_cor, self.verniz):
             w.setToolTip("Fica guardado, mas por agora não é verificado.")
+        self.easy_open = QCheckBox("tem easy open (EO)")
+        self.easy_open.setChecked(inicial.easy_open)
+        self.easy_open.setToolTip("Os entalhes de abertura fácil na borda do saco. Com EO, o M3 procura-os e mede "
+                                  "a distância de cada um ao topo do saco (a ponta do EO, 0,00 mm), a assimetria "
+                                  "entre os dois e a esquadria; um saco sem nenhum é NOK.")
+        self.easy_open_lados = QComboBox()
+        for valor, texto in (("compridos", "nos lados compridos (frente a frente, na largura)"),
+                             ("pontas", "nas pontas (lados curtos)"), ("todos", "em qualquer lado")):
+            self.easy_open_lados.addItem(texto, valor)
+        self.easy_open_lados.setCurrentIndex(max(0, self.easy_open_lados.findData(inicial.easy_open_lados)))
+        self.easy_open_lados.setToolTip("Onde estão os entalhes do easy open: só se procuram aí (um falso "
+                                        "noutro lado não conta).")
+        self.easy_open.toggled.connect(self.easy_open_lados.setEnabled)
+        self.easy_open_lados.setEnabled(inicial.easy_open)
         self._inicial = inicial
         perfil = janela._cfg_perfil
         self.resolucao = QDoubleSpinBox()
@@ -239,7 +253,8 @@ class DialogoEspecificacao(QDialog):
         grelha = QGridLayout()
         linhas = [("Produto", self.ed_produto)] + ([("Ordem de fabrico", self.ed_of)] if modo != "produto" else [])
         linhas += [("Comprimento (mm)", "comprimento"), ("Largura (mm)", "largura"),
-                   ("Cor predominante", self.ed_cor), ("Verniz", self.verniz)]
+                   ("Cor predominante", self.ed_cor), ("Verniz", self.verniz),
+                   ("Easy open", self.easy_open), ("Entalhes do easy open", self.easy_open_lados)]
         linhas.append(("Resolução da localização (px/mm)" + (", do produto" if modo == "of" else ""), self.resolucao))
         if modo != "of":  # são do produto: a OF não os muda
             linhas += [("Raio dos cantos (mm)", self.raio_canto), ("Raio na outra ponta (mm)", self.raio_outra_ponta)]
@@ -282,7 +297,8 @@ class DialogoEspecificacao(QDialog):
         else:
             raio, outra = self._inicial.raio_canto_mm, self._inicial.raio_canto_outra_ponta_mm
         return Especificacao(self.ed_produto.text(), **{c: campo.value() for c, campo in self.medidas.items()},
-                             cor=self.ed_cor.text(), verniz=self.verniz.isChecked(),
+                             cor=self.ed_cor.text(), verniz=self.verniz.isChecked(), easy_open=self.easy_open.isChecked(),
+                             easy_open_lados=self.easy_open_lados.currentData(),
                              resolucao_localizacao_px_por_mm=resolucao, raio_canto_mm=raio,
                              raio_canto_outra_ponta_mm=outra, autor=self.autor)
 

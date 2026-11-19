@@ -46,6 +46,32 @@ Usa as medidas do M2:
    cada ponta e **paralelismo** dos lados compridos, em graus (não dependem da escala). Uma
    ponta acima de `DIMENSOES_ESQUADRIA_MAX_GRAUS` = corte torto (substitui o par falta/sobra
    da forma nessa ponta); lados acima de `DIMENSOES_PARALELISMO_MAX_GRAUS` = trapézio.
+4. **Easy open** (`easy_open.py`), só com `dimensoes.easy_open` (vem do produto ou da OF: "Easy
+   open" no formulário, EO sim/não): os entalhes de abertura fácil, cortes em V de ~1–2 mm na
+   borda. A silhueta do M2 não os guarda (o fecho tapa-os): procuram-se na imagem. Ao longo de cada
+   lado (sem os cantos), a borda verdadeira de fora para dentro (o primeiro ponto com 0,5 mm de
+   saco seguido, com os níveis do fundo e do saco de cada coluna); um entalhe é um vale estreito
+   nessa borda: 1–3,5 mm de fundo, 1–3 mm de boca. As colunas sem saco à vista (uma janela
+   transparente, um reflexo) ficam com a borda das vizinhas. Mede-se o lado, a posição no
+   referencial do saco e a distância à ponta mais próxima (não depende do sentido do saco):
+   `easy_open_entalhes`, `easy_open_distancia_ponta_mm`, `easy_open_profundidade_mm` e, por
+   entalhe, `easy_open_<n>_x_mm`, `_y_mm`, `_distancia_ponta_mm`; a mensagem do relatório
+   descreve cada um e a imagem "forma" marca-os a laranja (e a linha entre o par do topo). Só se
+   procura nos lados do produto (`dimensoes.easy_open_lados`, "Entalhes do easy open" no formulário:
+   `compridos`, frente a frente na largura, o normal; `pontas`; `todos`): um falso noutro lado não
+   conta. **O topo do saco** é a ponta com mais entalhes (`easy_open_ponta`, −1/+1) e é a referência
+   (0,00 mm): com o saco direito (EO em cima, como nas Etapas), `easy_open_esquerdo_mm` e
+   `easy_open_direito_mm` são a distância de cada entalhe à aresta real do topo (a reta da geometria, à
+   altura do entalhe: um topo cortado torto não entra), `easy_open_assimetria_mm` = esquerdo − direito e
+   `easy_open_esquadria_graus` o ângulo da linha entre os dois face ao topo. Ainda só medidas (sem
+   tolerância). Com EO e nenhum entalhe: NOK ("easy
+   open em falta", e diz os lados em que a borda não se via). Sem EO não se procuram. Fotos reais
+   (8 PreVital, 19/11): os dois entalhes em todas, a 17,6–19,2 mm (em cima) e 19,3–21,1 mm (em
+   baixo) da ponta, 1,3–2,2 mm de fundo, sem falsos; ~60 ms por saco a 6,9 px/mm. A partir do topo (11 sacos, 19/11): o mesmo saco
+   fotografado várias vezes repete a ±0,02 mm; esquerdo 18,0–20,7 mm, direito 18,2–20,9 mm; assimetria
+   −0,06 a −0,26 mm na maioria e −1,56 mm numa sessão (esse saco tinha o topo a 1,8°). Ainda sem tolerância de posição
+   (só medida) e sem sacos sem EO reais para confirmar os falsos alarmes.
+
 
 Em sacos sintéticos: sacos certos a ±0,06°; corte torto de 4 mm (4,2°, invisível pela
 área) apanhado; entalhe de 5 × 3 mm (7 mm²) apanhado pela profundidade; canto dobrado,

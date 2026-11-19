@@ -757,18 +757,21 @@ def test_criar_produto_e_of_no_formulario_e_no_dialogo(app, janela):
     form.medidas["tolerancia_comprimento_mm"].setValue(9.0)
     form.ed_cor.setText("azul")
     form.verniz.setChecked(True)
+    form.easy_open.setChecked(True)
     form._guardar()
     assert form.result() == QDialog.DialogCode.Accepted, form.erro.text()
     produto = repo.procurar_produto("novo")
-    assert (produto.tolerancia_comprimento_mm, produto.cor, produto.verniz) == (9.0, "azul", True)
+    assert (produto.tolerancia_comprimento_mm, produto.cor, produto.verniz, produto.easy_open) == (9.0, "azul", True, True)
     assert repo.procurar_of("OF9").produto == "Novo"
 
     form = DialogoEspecificacao(janela, janela, "of", "Ana (nº 7)", produto=produto, of=repo.procurar_of("OF9"))
     assert form.ed_cor.text() == "azul"
     form.medidas["tolerancia_largura_mm"].setValue(4.0)
+    assert form.easy_open.isChecked(), "a OF parte do produto"
+    form.easy_open.setChecked(False)  # EO não, só nesta OF
     form._guardar()
     of = repo.procurar_of("OF9")
-    assert of.ajustes == {"tolerancia_largura_mm": 4.0} and of.autor == "Ana (nº 7)"
+    assert of.ajustes == {"tolerancia_largura_mm": 4.0, "easy_open": False} and of.autor == "Ana (nº 7)"
 
     form = DialogoEspecificacao(janela, janela, "novo", "admin", nome="Enorme")
     form.medidas["comprimento_nominal_mm"].setValue(900.0)

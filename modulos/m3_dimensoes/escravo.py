@@ -3,13 +3,15 @@
     1 e 2. comprimento e largura face ao nominal ± tolerância (aqui)
     3.     forma: silhueta vs retângulo ideal (forma.py)
     4.     geometria: esquadria das pontas e paralelismo dos lados (geometria.py)
+    5.     easy open (só com dimensoes.easy_open, do produto ou da OF): os entalhes de abertura na borda e
+           onde estão (easy_open.py); sem nenhum, NOK
 """
 
 from __future__ import annotations
 
 import cv2
 
-from modulos.m3_dimensoes import forma, geometria
+from modulos.m3_dimensoes import easy_open, forma, geometria
 from nucleo.config import Config
 from nucleo.contrato import NOTA_PODE_SER_RELEVO, Captura, Defeito, Escravo, Relatorio, Saco, TipoDefeito
 
@@ -26,7 +28,8 @@ class Dimensoes(Escravo):
         Recebe:
             saco: o Saco do M2 (só de leitura), com comprimento_mm, largura_mm e
                 a silhueta (mascara) no recorte normalizado.
-            captura: não usada (o M3 só precisa da silhueta).
+            captura: só com easy_open: a imagem onde se procuram os entalhes (a silhueta do M2 não os
+                guarda).
             cfg: usa dimensoes e geral.px_por_mm.
             guardar_intermedios: se True, devolve a imagem "nominal" (o medido, verde, face ao
                 nominal do produto, azul, e à banda da tolerância) e a imagem "forma": o recorte
@@ -44,6 +47,12 @@ class Dimensoes(Escravo):
             desvio_largura_mm, area_mm2, retangularidade, falta_mm2, sobra_mm2,
             forma_profundidade_max_mm, proporcao e, se houver as 4 retas, esquadria_esquerda_graus,
             esquadria_direita_graus, paralelismo_graus, canto_desvio_max_graus.
+            Com easy_open (só nos lados de easy_open_lados): easy_open_entalhes e, se houver, easy_open_distancia_ponta_mm (do entalhe mais
+            perto de uma ponta), easy_open_profundidade_mm (o mais fundo) e, por entalhe (1, 2...),
+            easy_open_<n>_x_mm, _y_mm e _distancia_ponta_mm; o topo (easy_open_ponta: -1/+1, a ponta com
+            mais entalhes) e, a partir da aresta do topo (0,00 mm), com o saco direito: easy_open_esquerdo_mm,
+            easy_open_direito_mm, easy_open_assimetria_mm (esquerdo − direito) e easy_open_esquadria_graus. Um saco com EO e sem entalhes: um Defeito
+            DIMENSAO (o mesmo se a borda não se via, sem contraste com o fundo: não se pode aprovar).
         """
         p = cfg.dimensoes
         ppm = cfg.geral.px_por_mm
@@ -123,6 +132,36 @@ class Dimensoes(Escravo):
                 paralelismo_graus=geo.paralelismo_graus,
                 canto_desvio_max_graus=max(abs(c - 90) for c in geo.cantos_graus()),
             )
+        # 5. Easy open
+        entalhes: list[easy_open.Entalhe] = []
+        mensagem = ""
+        if p.easy_open:
+            entalhes, sem_contraste = easy_open.procurar(saco, captura.imagem, ppm, raios, p.easy_open_lados)
+            medidas["easy_open_entalhes"] = float(len(entalhes))
+            if entalhes:
+                medidas["easy_open_distancia_ponta_mm"] = min(e.distancia_ponta_mm for e in entalhes)
+                medidas["easy_open_profundidade_mm"] = max(e.profundidade_mm for e in entalhes)
+                for i, e in enumerate(sorted(entalhes, key=lambda e: (e.lado, e.x_mm, e.y_mm)), start=1):
+                    medidas.update({f"easy_open_{i}_x_mm": e.x_mm, f"easy_open_{i}_y_mm": e.y_mm,
+                                    f"easy_open_{i}_distancia_ponta_mm": e.distancia_ponta_mm})
+                mensagem = "easy open: " + "; ".join(e.descricao for e in entalhes)
+                topo = easy_open.ponta(entalhes)
+                if topo is not None:
+                    medidas["easy_open_ponta"] = float(topo)
+                    reta = None if geo is None else (geo.esquerda if topo < 0 else geo.direita)
+                    par = easy_open.ao_topo(entalhes, topo, saco, ppm, reta)
+                    if par is not None:
+                        for nome, valor in (("esquerdo_mm", par.esquerdo_mm), ("direito_mm", par.direito_mm),
+                                            ("assimetria_mm", par.assimetria_mm),
+                                            ("esquadria_graus", par.esquadria_graus)):
+                            if valor is not None:
+                                medidas[f"easy_open_{nome}"] = valor
+                        mensagem = f"easy open {par.descricao} | {mensagem}"
+            else:
+                nao_vistos = f" (a borda não se viu em: {', '.join(sem_contraste)})" if sem_contraste else ""
+                defeitos.append(Defeito(
+                    TipoDefeito.DIMENSAO, intensidade=0.0, severidade=1.0,
+                    descricao=f"easy open em falta: nenhum entalhe de abertura na borda{nao_vistos}"))
         intermedios = {}
         if guardar_intermedios:
             intermedios["nominal"] = forma.desenhar_nominal(
@@ -131,4 +170,5 @@ class Dimensoes(Escravo):
             intermedios["forma"] = forma.desenhar_forma(saco, ppm, falta, sobra, raios)
             if geo is not None:
                 geometria.desenhar(intermedios["forma"], geo, saco, ppm)
-        return Relatorio.concluir(self.nome, defeitos, medidas, intermedios)
+            easy_open.desenhar(intermedios["forma"], entalhes, saco, ppm)
+        return Relatorio.concluir(self.nome, defeitos, medidas, intermedios, mensagem)

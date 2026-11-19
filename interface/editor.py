@@ -51,6 +51,7 @@ ESSENCIAIS: dict[tuple[str, str], str] = {
     ("dimensoes", "forma_raio_canto_mm"): "Raio dos cantos (mm)",
     ("dimensoes", "esquadria_max_graus"): "Pontas: desvio máximo do esquadro (°)",
     ("dimensoes", "paralelismo_max_graus"): "Lados: desvio máximo do paralelo (°)",
+    ("dimensoes", "easy_open"): "Easy open: procurar e medir os entalhes",
     ("relevo", "ativo"): "Verificar o relevo",
     ("saida", "guardar_imagens"): "Guardar as imagens anotadas",
     ("saida", "guardar_originais"): "Guardar os originais da câmara",

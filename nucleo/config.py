@@ -43,6 +43,7 @@ GuardarImagens = Literal["nenhuma", "nok", "todas"]
 FormatoImagem = Literal[".jpg", ".png"]
 SeparadorDecimal = Literal[",", "."]
 ModoDisparo = Literal["ao_vivo", "trigger"]
+LadosEasyOpen = Literal["compridos", "pontas", "todos"]
 AtivacaoTrigger = Literal["RisingEdge", "FallingEdge"]
 Direcao = Literal["horizontal", "vertical"]
 FormatoPixel = Literal["BGR8", "Mono8", "BayerRG8", "BayerBG8", "BayerGB8", "BayerGR8"]
@@ -287,6 +288,8 @@ class ConfigDimensoes:
     forma_profundidade_min_mm: float = D.DIMENSOES_FORMA_PROFUNDIDADE_MIN_MM
     esquadria_max_graus: float = D.DIMENSOES_ESQUADRIA_MAX_GRAUS
     paralelismo_max_graus: float = D.DIMENSOES_PARALELISMO_MAX_GRAUS
+    easy_open: bool = D.DIMENSOES_EASY_OPEN
+    easy_open_lados: str = D.DIMENSOES_EASY_OPEN_LADOS
 
     def erros(self) -> list[str]:
         return _verificar([
@@ -303,6 +306,7 @@ class ConfigDimensoes:
              "forma_profundidade_min_mm tem de ser > forma_folga_mm"),
             (self.esquadria_max_graus > 0, "esquadria_max_graus tem de ser > 0"),
             (self.paralelismo_max_graus > 0, "paralelismo_max_graus tem de ser > 0"),
+            _opcao(self, "easy_open_lados", LadosEasyOpen),
         ])
 
 
