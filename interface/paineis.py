@@ -24,7 +24,7 @@ from PySide6.QtCore import QObject, QPointF, QRectF, QSize, QSizeF, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QAbstractItemView, QHBoxLayout, QHeaderView, QLabel, QListView, QListWidget, QListWidgetItem, QPlainTextEdit,
-    QSizePolicy, QTableWidget, QTableWidgetItem, QWidget,
+    QSizePolicy, QTableWidget, QTableWidgetItem, QToolButton, QWidget,
 )
 
 from interface.ciclo import MINIATURA_PX, Visto
@@ -34,6 +34,7 @@ from nucleo.contrato import Estado, Resultado
 
 HISTORICO_LINHAS = 500  # sacos na tabela do histórico
 HISTORICO_IMAGENS = 10  # sacos que guardam as imagens para se voltar a ver (com a câmara, 50–100 MB cada)
+ULTIMOS_SACOS = 20  # quadrados na faixa dos últimos sacos da vista Operador
 
 
 def qimagem(imagem: np.ndarray) -> QImage:
@@ -431,6 +432,62 @@ class Historico(QTableWidget):
 
     def _numero(self, linha: int) -> int:
         return self.item(linha, 0).data(Qt.ItemDataRole.UserRole)
+
+    def visto(self, numero: int) -> Visto | None:
+        """O saco com este número, se as imagens ainda estiverem em memória (os últimos HISTORICO_IMAGENS)."""
+        return self._vistos.get(numero)
+
+
+class UltimosSacos(QWidget):
+    """Os últimos sacos lado a lado, um quadrado por saco com a cor da decisão e o número (o mais recente
+    à direita); a dica diz o motivo. Clicar num pede para o ver (escolhido). Não desenha imagens."""
+
+    escolhido = Signal(int)
+    CORES = {"OK": CORES_ESTADO[Estado.OK], "NOK": CORES_ESTADO[Estado.NOK], "descartado": "#616161",
+             "falso NOK": "#616161", "em revisão": CORES_ESTADO[Estado.ERRO]}
+
+    def __init__(self, quantos: int = ULTIMOS_SACOS) -> None:
+        super().__init__()
+        self.quantos = quantos
+        self._botoes: dict[int, QToolButton] = {}
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(3)
+        self._layout.addStretch()  # os quadrados encostam à direita
+
+    def limpar(self) -> None:
+        for botao in self._botoes.values():
+            botao.deleteLater()
+        self._botoes.clear()
+
+    def acrescentar(self, numero: int, decisao: str, dica: str = "") -> None:
+        """Um saco novo: "OK", "NOK", "em revisão"..."""
+        botao = QToolButton()
+        botao.setText(str(numero))
+        botao.setMinimumSize(36, 30)
+        botao.setCursor(Qt.CursorShape.PointingHandCursor)
+        botao.clicked.connect(lambda *_, n=numero: self.escolhido.emit(n))
+        self._layout.addWidget(botao)
+        self._botoes[numero] = botao
+        self.decidir(numero, decisao, dica)
+        while len(self._botoes) > self.quantos:
+            self._botoes.pop(min(self._botoes)).deleteLater()
+
+    def decidir(self, numero: int, decisao: str, dica: str = "") -> None:
+        """A decisão (depois da revisão) muda a cor; a dica, se dada, também muda."""
+        if (botao := self._botoes.get(numero)) is None:
+            return
+        botao.setStyleSheet(f"QToolButton {{ background: {self.CORES.get(decisao, '#9e9e9e')}; color: white; "
+                            "font-weight: bold; border-radius: 4px; }")
+        botao.setProperty("decisao", decisao)
+        if dica:
+            botao.setProperty("dica", dica)
+        dica = botao.property("dica")
+        botao.setToolTip(f"saco {numero}: {decisao}" + (f"\n{dica}" if dica else ""))
+
+    def decisoes(self) -> list[tuple[int, str]]:
+        """(número, decisão) pela ordem em que estão."""
+        return [(n, b.property("decisao")) for n, b in sorted(self._botoes.items())]
 
 
 # --- Log ------------------------------------------------------------------------------------

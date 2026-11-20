@@ -36,6 +36,7 @@ from mestre import Mestre
 from modulos.m1_aquisicao import AquisicaoEmParalelo, criar_disparo, criar_fonte
 from modulos.m1_aquisicao.fontes import FonteImagem
 from modulos.m7_saida import Depuracao, Saida
+from modulos.m7_saida.desenho import desenhar
 from modulos.m2_localizacao import Diagnostico, Localizador
 from modulos.m2_localizacao.medicao import retangulo_arredondado
 from modulos.m2_localizacao.qualidade import MedicaoNaoFiavel
@@ -80,10 +81,13 @@ class Visto:
     miniaturas: list[np.ndarray] = field(default_factory=list)  # uma por etapa
 
 
-def preparar(visto: Visto) -> Visto:
-    """Prepara o Visto para o ecrã: imagem anotada, etapas e miniaturas. Devolve o mesmo Visto."""
+def preparar(visto: Visto, esconder: frozenset[str] = frozenset()) -> Visto:
+    """Prepara o Visto para o ecrã: imagem anotada, etapas e miniaturas. Devolve o mesmo Visto.
+    esconder: módulos cujos defeitos não se desenham na anotada (escolhidos na vista de Engenharia)."""
     r, cfg = visto.resultado, visto.cfg
     etapas = Depuracao(cfg, RAIZ).etapas(r)  # "original", "anotada", candidatas, intermédias
+    if esconder and r.imagem is not None:
+        etapas = [(nome, anotada_sem(visto, esconder) if nome == "anotada" else img) for nome, img in etapas]
     anotada = next((img for nome, img in etapas if nome == "anotada"), None)
     if anotada is None and r.imagem is not None:  # o desenho falhou (já está no log)
         anotada = r.imagem.copy()
@@ -92,6 +96,16 @@ def preparar(visto: Visto) -> Visto:
     visto.miniaturas = [_miniatura(img) for _, img in etapas]
     visto.preparado = True
     return visto
+
+
+def anotada_sem(visto: Visto, esconder: frozenset[str]) -> np.ndarray:
+    """A imagem anotada sem os defeitos destes módulos (os outros mantêm o número); a imagem sem
+    anotações se o desenho falhar."""
+    try:
+        return desenhar(visto.resultado, visto.cfg.geral.px_por_mm, esconder)
+    except Exception:
+        log.exception("O desenho do saco %d falhou.", visto.numero)
+        return visto.resultado.imagem.copy()
 
 
 ETAPAS_DA_CAMARA = ("original", "anotada")  # ficam como a câmara as vê (a anotada é a imagem grande)
@@ -167,6 +181,7 @@ class Ciclo(QThread):
         self.rever = True  # parar em cada saco não OK até a janela decidir (prosseguir())
         self.descartadas = 0  # passagens que a análise não acompanhou
         self.falhas_bd = 0  # sacos que não foram para a base de dados (a janela lê-o de tempos a tempos)
+        self.esconder: frozenset[str] = frozenset()  # módulos cujos defeitos não se desenham no ecrã
         self.pasta_resultados: Path | None = None  # a pasta desta execução
         self._continuar = threading.Event()
         self._trinco = threading.Lock()
@@ -235,7 +250,7 @@ class Ciclo(QThread):
                 visto, self._a_preparar = self._a_preparar, None
             if visto is not None:
                 try:
-                    self.visto.emit(preparar(visto))
+                    self.visto.emit(preparar(visto, self.esconder))
                 except Exception:
                     log.exception("Não foi possível preparar o saco %d para o ecrã.", visto.numero)
             if self._fim.is_set() and self._a_preparar is None:

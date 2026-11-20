@@ -28,6 +28,9 @@
     fazer, disco quase cheio, demasiados NOK nos últimos sacos), o motivo de cada saco não OK na vista
     Operador, a % de NOK nos contadores e, na barra de estado, os semáforos da câmara, do disco e da base
     de dados (o disco lê-se de VERIFICAR_S em VERIFICAR_S segundos; com menos de DISCO_MINIMO_GB não se inicia).
+    Vista Operador: os últimos 20 sacos em quadrados com a cor da decisão (clicar mostra o saco, se ainda
+    estiver em memória). Engenharia: "Defeitos: [x] módulo" esconde os defeitos de um módulo na imagem
+    (redesenha-se na preparação para o ecrã, nunca na inspeção; com todos à vista, nada muda).
 
 Modos (os dois inspecionam e registam cada saco, como o main.py):
     Ao vivo   a câmara capta em contínuo e a barreira virtual separa os sacos
@@ -53,7 +56,7 @@ import numpy as np
 from PySide6.QtCore import QSettings, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDesktopServices, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QSizePolicy,
+    QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QSizePolicy,
     QSplitter, QStackedWidget, QStyle, QTabWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -61,7 +64,7 @@ from interface.avisos import (
     AMARELO, CINZENTO, DISCO_AVISO_GB, DISCO_MINIMO_GB, VERDE, VERIFICAR_S, VERMELHO, AlarmeNOK, Avisos, Semaforo,
     explicar, motivo, taxa_nok,
 )
-from interface.ciclo import Afinacao, Ciclo, MedicaoContorno, Pedido, Previsao, Visto, preparar
+from interface.ciclo import Afinacao, Ciclo, MedicaoContorno, Pedido, Previsao, Visto, anotada_sem, preparar
 from interface.estilo import AZUL, CORES_ESTADO, NOME_APP, icone
 from interface.janela_conta import Conta
 from interface.janela_parametros import Parametros
@@ -69,7 +72,8 @@ from interface.janela_rugas import JanelaRugas, Rugas, VerificacaoRugas
 from interface.janelas import JanelaHistorico, JanelaRevisao
 from interface.ordens import Ordens
 from interface.paineis import (
-    Contadores, Etapas, Faixa, PainelLog, RegistoQt, TabelaDefeitos, TabelaModulos, VistaImagem,
+    HISTORICO_IMAGENS, Contadores, Etapas, Faixa, PainelLog, RegistoQt, TabelaDefeitos, TabelaModulos, UltimosSacos,
+    VistaImagem,
 )
 from interface.registos import guardar_correcao, registar_revisao
 
@@ -137,6 +141,8 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self._erro_camara = ""  # o mesmo, se a culpa foi da câmara (o semáforo fica vermelho)
         self._erro_bd = ""  # a base de dados não abriu ao Iniciar
         self._falhas_bd = 0  # sacos que não foram para a base de dados na última execução
+        self._esconder: set[str] = set()  # módulos cujos defeitos não se desenham (vista de Engenharia)
+        self._caixas: dict[str, QCheckBox] = {}  # uma por módulo com defeitos no saco do ecrã
 
         self.janela_historico = JanelaHistorico(self, self._icone_qt("SP_FileDialogDetailedView"))
         self.historico = self.janela_historico.tabela
@@ -352,11 +358,14 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self.imagem_op = VistaImagem(SEM_IMAGEM)
         self.imagem_op.roi_desenhada.connect(self._roi_desenhada)
         self.contadores_op = Contadores(26)
+        self.ultimos_op = UltimosSacos()  # os últimos sacos, um quadrado cada; clicar mostra-o
+        self.ultimos_op.escolhido.connect(self._rever_saco)
         vista = QWidget()
         layout = QVBoxLayout(vista)
         layout.addWidget(self.faixa_op)
         layout.addWidget(self.motivo_op)
         layout.addWidget(self.imagem_op, 1)
+        layout.addWidget(self.ultimos_op)
         layout.addWidget(self.contadores_op)
         return vista
 
@@ -369,8 +378,11 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self.btn_congelar = self._botao("Congelar", True, self._icone_qt("SP_MediaPause"),
                                         "O ecrã fica neste saco, para afinar nele (a linha continua e é registada).")
         self.btn_congelar.toggled.connect(self._congelar)
+        self.camadas = QHBoxLayout()  # "Defeitos: [x] dimensoes [x] relevo": esconder os de um módulo
+        self.camadas.setSpacing(8)
         cabeca = QHBoxLayout()
         cabeca.addWidget(self.titulo_imagem, 1)
+        cabeca.addLayout(self.camadas)
         cabeca.addWidget(self.btn_congelar)
         imagem = QWidget()
         coluna = QVBoxLayout(imagem)
@@ -535,6 +547,7 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self._erro_ciclo = self._erro_camara = self._erro_bd = ""
         self._falhas_bd = 0
         self.historico.limpar()
+        self.ultimos_op.limpar()
         self._atualizar_contadores()
         self._lembrar()
         repositorio = None
@@ -551,6 +564,7 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self.ciclo.quadro.connect(self._ver_quadro)
         self.ciclo.mensagem.connect(self._mensagem)
         self.ciclo.parou.connect(self._parou)
+        self.ciclo.esconder = frozenset(self._esconder)
         self.ciclo.finished.connect(self._terminou)
         self.ciclo.start()
         log.info("%s com a câmara (perfil %s, %s%s)", modo, self._perfil.name, self.utilizador,
@@ -753,7 +767,9 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         """Cada saco decidido. Um OK conta já; os outros vão à revisão (a inspeção espera)."""
         self._tempos.append(visto.ciclo_ms)
         self.historico.acrescentar(visto)
-        if visto.resultado.estado is Estado.OK:
+        ok = visto.resultado.estado is Estado.OK
+        self.ultimos_op.acrescentar(visto.numero, "OK" if ok else "em revisão", motivo(visto.resultado))
+        if ok:
             self._contagem["OK"] += 1
             self._contar_decisao(False)
             self._atualizar_contadores()
@@ -770,6 +786,7 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self._contagem["NOK" if decisao == "NOK" else "DESCARTADOS"] += 1
         self._contar_decisao(decisao == "NOK")
         self.historico.marcar_decisao(visto.numero, decisao)
+        self.ultimos_op.decidir(visto.numero, decisao)
         if self.ciclo is not None and self.ciclo.pasta_resultados is not None:
             registar_revisao(visto.resultado, visto.numero, decisao, self.ciclo.pasta_resultados)
             if self.ciclo.pedido.repositorio is not None:
@@ -837,6 +854,7 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self.titulo_imagem.setText(
             f"<b style='color:{AZUL}'>PRÉ-VISUALIZAÇÃO (não aplicada)</b>" if visto.previsao else "")
         self.info.setText(_info(visto))
+        self._mostrar_caixas(r)
         self.modulos.mostrar(r)
         self.defeitos.mostrar(r)
         self.etapas.mostrar(visto)
@@ -845,6 +863,47 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         for nome, imagem in self.etapas.outras(visto):
             menu.addAction(nome, lambda n=nome, i=imagem: self._mostrar_etapa(n, i))
         self.btn_mais_etapas.setEnabled(not menu.isEmpty())
+
+    def _mostrar_caixas(self, r) -> None:
+        """Uma caixa por módulo com defeitos neste saco (refeitas só se os módulos mudarem)."""
+        modulos = sorted({d.modulo for d in r.defeitos if d.modulo})
+        if modulos == list(self._caixas):
+            return
+        while self.camadas.count():
+            item = self.camadas.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        self._caixas = {}
+        if not modulos:
+            return
+        self.camadas.addWidget(QLabel("Defeitos:"))
+        for modulo in modulos:
+            caixa = QCheckBox(modulo)
+            caixa.setChecked(modulo not in self._esconder)
+            caixa.setToolTip(f"Mostrar os defeitos de {modulo} na imagem (os números não mudam)")
+            caixa.toggled.connect(lambda ligado, m=modulo: self._mudar_camada(m, ligado))
+            self.camadas.addWidget(caixa)
+            self._caixas[modulo] = caixa
+
+    def _mudar_camada(self, modulo: str, ligado: bool) -> None:
+        """Esconder ou mostrar os defeitos de um módulo: redesenha só o saco do ecrã (na janela, a pedido);
+        os sacos seguintes vêm já assim da preparação para o ecrã, fora da inspeção."""
+        (self._esconder.discard if ligado else self._esconder.add)(modulo)
+        if self.ciclo is not None:
+            self.ciclo.esconder = frozenset(self._esconder)
+        visto = self._base
+        if visto is not None and visto.resultado.imagem is not None:
+            visto.anotada = anotada_sem(visto, frozenset(self._esconder))
+            self._mostrar(visto, original=False)
+
+    def _rever_saco(self, numero: int) -> None:
+        """Clicar num quadrado dos últimos sacos: mostra esse saco (até chegar o seguinte)."""
+        visto = self.historico.visto(numero)
+        if visto is None:
+            self._mensagem(f"As imagens do saco {numero} já saíram da memória (ficam os últimos "
+                           f"{HISTORICO_IMAGENS}): ver a pasta de resultados.")
+            return
+        self._mostrar(visto if visto.preparado else preparar(visto, frozenset(self._esconder)))
 
     def _mostrar_etapa(self, nome: str, imagem) -> None:
         self.imagem_eng.mostrar(imagem)
@@ -857,7 +916,7 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self.acao_engenharia.setChecked(True)  # o detalhe do saco está na Engenharia
         self._mudar_vista()
         self.btn_congelar.setChecked(True)
-        self._mostrar(visto if visto.preparado else preparar(visto))
+        self._mostrar(visto if visto.preparado else preparar(visto, frozenset(self._esconder)))
 
     def _congelar(self, sim: bool) -> None:
         if not sim and self._ultimo is not None:

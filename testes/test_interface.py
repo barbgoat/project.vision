@@ -29,7 +29,7 @@ from interface.janela import Janela  # noqa: E402
 from interface.janelas import classe_proposta  # noqa: E402
 from interface.login import JanelaLogin, assinatura, pode, verificar  # noqa: E402
 from interface.ordens import DialogoEspecificacao, DialogoOrdem  # noqa: E402
-from interface.paineis import VistaImagem  # noqa: E402
+from interface.paineis import UltimosSacos, VistaImagem  # noqa: E402
 from interface import vista_dashboard  # noqa: E402
 from interface.registos import acrescentar_zona, guardar_correcao, pasta_dataset, zonas  # noqa: E402
 from nucleo.config import RAIZ, Config, nome_define  # noqa: E402
@@ -456,6 +456,37 @@ def test_operador_ve_o_motivo_porque_parou_e_os_semaforos(app, janela, monkeypat
     esperar(app, lambda: janela._em_revisao is not None)
     janela.parar()
     esperar(app, lambda: janela.ciclo is None and janela._em_revisao is None)
+
+
+def test_ultimos_sacos_guardam_so_os_ultimos_e_mudam_de_cor_com_a_decisao(app):
+    faixa = UltimosSacos(quantos=3)
+    escolhidos = []
+    faixa.escolhido.connect(escolhidos.append)
+    for numero, decisao in enumerate(("OK", "em revisão", "OK", "em revisão"), start=1):
+        faixa.acrescentar(numero, decisao, "comprimento 158 mm" if decisao != "OK" else "")
+    faixa.decidir(4, "NOK")
+    assert faixa.decisoes() == [(2, "em revisão"), (3, "OK"), (4, "NOK")], "o saco 1 já saiu"
+    botao = faixa._botoes[4]
+    assert botao.toolTip() == "saco 4: NOK\ncomprimento 158 mm", "a decisão muda, o motivo fica"
+    botao.click()
+    assert escolhidos == [4]
+
+
+def test_operador_reve_um_saco_e_engenharia_esconde_um_modulo(app, janela):
+    _producao_ate_ao_fim(app, janela, ("descartado", "NOK"))
+    assert janela.ultimos_op.decisoes() == [(1, "descartado"), (2, "OK"), (3, "NOK")]
+    janela.ultimos_op._botoes[1].click()  # o 1.º saco volta ao ecrã
+    assert janela._base.numero == 1 and janela.faixa_op.text().startswith("NOK")
+    janela.ultimos_op._botoes[3].click()
+    assert list(janela._caixas) == ["dimensoes"], "uma caixa por módulo com defeitos"
+    antes = janela._base.anotada.copy()
+    janela._caixas["dimensoes"].setChecked(False)
+    assert janela._esconder == {"dimensoes"} and not np.array_equal(janela._base.anotada, antes)
+    janela._caixas["dimensoes"].setChecked(True)
+    assert np.array_equal(janela._base.anotada, antes), "volta a ser a mesma imagem"
+    janela.historico._vistos.clear()  # as imagens já saíram da memória
+    janela.ultimos_op._botoes[2].click()
+    assert janela._base.numero == 3, "fica o que estava; a mensagem diz porquê"
 
 
 def test_disco_quase_cheio_avisa_e_nao_deixa_iniciar(app, janela, monkeypatch):
