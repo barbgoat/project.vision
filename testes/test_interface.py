@@ -6,6 +6,7 @@ import ast
 import dataclasses
 import json
 import os
+import re
 import threading
 import time
 
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QMessageBox  # noqa: E402
 import biapp_dashboard  # noqa: E402
 import gui  # noqa: E402
 from interface.avisos import AMARELO, VERDE, VERMELHO, AlarmeNOK, explicar, motivo, taxa_nok  # noqa: E402
+from interface.comparacao import comparar  # noqa: E402
 from interface.editor import SECOES_CAMARA, SECOES_DEFINICOES, EditorParametros, ajudas  # noqa: E402
 from interface.estilo import ICONE, LOGO, icone  # noqa: E402
 from interface.janela import Janela  # noqa: E402
@@ -662,6 +664,57 @@ def test_pre_visualizar_e_guardar_no_perfil(app, janela, tmp_path, monkeypatch):
     perfil = json.loads((tmp_path / "perfil.json").read_text(encoding="utf-8"))
     assert perfil["dimensoes"]["tolerancia_comprimento_mm"] == 9.0
     assert Config.carregar(tmp_path / "perfil.json").dimensoes.tolerancia_comprimento_mm == 9.0
+
+
+def test_comparar_antes_e_depois_diz_o_que_mudou():
+    comprido = Defeito(TipoDefeito.DIMENSAO, descricao="comprimento 158.1 mm (150 +/- 3)")
+    antes = Resultado(IMG, Estado.NOK, None, [Relatorio("dimensoes", Estado.NOK, (comprido,), {
+        "comprimento_mm": 158.1, "folga_mm": 2.0, "tempo_forma_ms": 30.0})], 80.0)
+    depois = Resultado(IMG, Estado.OK, None, [Relatorio("dimensoes", Estado.OK, (), {
+        "comprimento_mm": 158.1, "folga_mm": 1.5, "tempo_forma_ms": 41.0})], 90.0)
+    cfg = Config()
+    outro_modo = "trigger" if cfg.disparo.modo == "ao_vivo" else "ao_vivo"
+    mudada = dataclasses.replace(
+        cfg, dimensoes=dataclasses.replace(cfg.dimensoes, tolerancia_comprimento_mm=9.0),
+        disparo=dataclasses.replace(cfg.disparo, modo=outro_modo))
+    c = comparar(antes, depois, cfg, mudada)
+    texto = re.sub("<[^>]+>", "", c.texto)
+    assert c.decisao_mudou and "Antes → Depois: NOK → OK" in texto
+    assert "dimensoes NOK(1) → OK" in texto and "tempo 80 → 90 ms" in texto
+    assert f"tolerancia_comprimento_mm: {cfg.dimensoes.tolerancia_comprimento_mm!r} → 9.0" in texto
+    assert "disparo" not in texto, "o modo de disparo não muda a análise do saco"
+    assert "1 medida(s) mudaram" in texto and "dimensoes.folga_mm: 2 → 1.50" in c.detalhe
+    assert "dimensoes.comprimento_mm" not in c.detalhe, "só as medidas que mudaram"
+    assert "tempo_forma_ms" not in c.detalhe, "os tempos mudam sempre: não contam como medidas"
+    igual = comparar(antes, antes, cfg, cfg)
+    assert not igual.decisao_mudou and "módulos: iguais" in igual.texto and "medidas iguais" in igual.texto
+    assert "o Depois é o Antes" in igual.texto
+
+
+def test_antes_e_depois_de_mudar_um_parametro(app, janela):
+    _producao_ate_ao_fim(app, janela)  # termina no comprido_158: NOK com a tolerância de 3 mm
+    antes = janela._base
+    assert janela.antes_depois.isHidden(), "sem pré-visualização não há nada a comparar"
+    _campo(janela.editor, "dimensoes", "tolerancia_comprimento_mm").setValue(9.0)
+    esperar(app, lambda: janela._depois is not None)
+    assert janela.btn_depois.isChecked() and janela.faixa_eng.text().startswith("OK")
+    assert not janela.antes_depois.isHidden() and not janela.comparacao.isHidden()
+    texto = janela.comparacao.text()
+    assert "dimensoes NOK(" in texto and "tolerancia_comprimento_mm" in texto
+    janela.btn_antes.click()
+    assert janela._base is antes and janela.faixa_eng.text().startswith("NOK")
+    assert "ANTES" in janela.titulo_imagem.text() and not janela.comparacao.isHidden()
+    janela._caixas["dimensoes"].setChecked(False)  # esconder um módulo não sai do Antes
+    assert janela.btn_antes.isChecked() and janela.faixa_eng.text().startswith("NOK")
+    janela._caixas["dimensoes"].setChecked(True)
+    janela._alternar_antes_depois()  # F7
+    assert janela.btn_depois.isChecked() and janela.faixa_eng.text().startswith("OK")
+    depois = janela._depois
+    janela._mostrar(janela._ultimo)  # descongelar: o saco do ecrã volta a ser o da linha
+    assert janela._depois is None and janela.antes_depois.isHidden() and janela.comparacao.isHidden()
+    janela.ultimos_op._botoes[1].click()  # o 1.º saco no ecrã
+    janela._previsto(depois)  # a pré-visualização do saco 3 a chegar atrasada
+    assert janela._depois is None and janela._base.numero == 1, "não é deste saco: fica de fora"
 
 
 # --- Ordens de fabrico e produtos ------------------------------------------------------------

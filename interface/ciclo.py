@@ -497,9 +497,9 @@ class Previsao(QThread):
     visto = Signal(object)  # Visto preparado, com previsao=True
     mensagem = Signal(str)
 
-    def __init__(self, base: Visto, cfg: Config) -> None:
+    def __init__(self, base: Visto, cfg: Config, esconder: frozenset[str] = frozenset()) -> None:
         super().__init__()
-        self.base, self.cfg = base, cfg
+        self.base, self.cfg, self.esconder = base, cfg, esconder
 
     def run(self) -> None:
         captura = self.base.resultado.captura
@@ -510,4 +510,5 @@ class Previsao(QThread):
             self.mensagem.emit(f"Pré-visualização: {erro}")
             return
         resultado.captura, resultado.passagem = captura, self.base.resultado.passagem
-        self.visto.emit(preparar(Visto(self.base.numero, resultado, self.cfg, _ms_desde(inicio), previsao=True)))
+        visto = Visto(self.base.numero, resultado, self.cfg, _ms_desde(inicio), previsao=True)
+        self.visto.emit(preparar(visto, self.esconder))

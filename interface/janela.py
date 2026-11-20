@@ -23,7 +23,8 @@
                       Histórico   os últimos sacos e os contadores
                       📷 Câmara    exposição, ganho, trigger (disparo), lente
                       ⚙ Definições perfil, fonte, parâmetros de inspeção e saída
-    Atalhos: F5 inicia, Shift+F5 para. O operador só vê a vista Operador e indica a OF a cada início.
+    Atalhos: F5 inicia, Shift+F5 para, F6 verifica rugas, F7 alterna Antes/Depois. O operador só vê a vista
+    Operador e indica a OF a cada início.
     Avisos (interface/avisos.py), sem custo para a inspeção: faixas por cima da imagem (porque parou e o que
     fazer, disco quase cheio, demasiados NOK nos últimos sacos), o motivo de cada saco não OK na vista
     Operador, a % de NOK nos contadores e, na barra de estado, os semáforos da câmara, do disco e da base
@@ -39,6 +40,10 @@ Modos (os dois inspecionam e registam cada saco, como o main.py):
 Parâmetros: cada alteração é pré-visualizada no saco que está no ecrã (que fica
 congelado) e só passa aos sacos seguintes com "Aplicar à produção". "Guardar no
 perfil" escreve-os no perfil escolhido. O perfil fica lembrado (QSettings).
+Antes e depois (Engenharia): com uma pré-visualização, [Antes|Depois] (ou F7) troca entre o saco tal como
+foi analisado e o mesmo saco com os valores mudados; o painel lateral diz o que mudou (a decisão, os
+módulos, o tamanho, o tempo, os parâmetros; as medidas na dica). Não analisa nada a mais: compara os
+dois resultados que já existem (interface/comparacao.py).
 """
 
 from __future__ import annotations
@@ -65,6 +70,7 @@ from interface.avisos import (
     explicar, motivo, taxa_nok,
 )
 from interface.ciclo import Afinacao, Ciclo, MedicaoContorno, Pedido, Previsao, Visto, anotada_sem, preparar
+from interface.comparacao import Comparacao
 from interface.estilo import AZUL, CORES_ESTADO, NOME_APP, icone
 from interface.janela_conta import Conta
 from interface.janela_parametros import Parametros
@@ -143,6 +149,8 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self._falhas_bd = 0  # sacos que não foram para a base de dados na última execução
         self._esconder: set[str] = set()  # módulos cujos defeitos não se desenham (vista de Engenharia)
         self._caixas: dict[str, QCheckBox] = {}  # uma por módulo com defeitos no saco do ecrã
+        self._depois: Visto | None = None  # a pré-visualização do saco do ecrã (o Antes é o _base)
+        self._comparacao: Comparacao | None = None  # o que mudou do Antes para o Depois
 
         self.janela_historico = JanelaHistorico(self, self._icone_qt("SP_FileDialogDetailedView"))
         self.historico = self.janela_historico.tabela
@@ -171,7 +179,8 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self._relogio = QTimer(self)
         self._relogio.timeout.connect(self._verificar)
         self._relogio.start(int(VERIFICAR_S * 1000))
-        for tecla, funcao in (("F5", self.iniciar), ("Shift+F5", self.parar), ("F6", self._verificar_rugas)):
+        for tecla, funcao in (("F5", self.iniciar), ("Shift+F5", self.parar), ("F6", self._verificar_rugas),
+                              ("F7", self._alternar_antes_depois)):
             QShortcut(QKeySequence(tecla), self).activated.connect(funcao)
 
         self._registo = RegistoQt()
@@ -380,8 +389,21 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self.btn_congelar.toggled.connect(self._congelar)
         self.camadas = QHBoxLayout()  # "Defeitos: [x] dimensoes [x] relevo": esconder os de um módulo
         self.camadas.setSpacing(8)
+        # [Antes|Depois]: só com uma pré-visualização (mudar um parâmetro) do saco do ecrã; F7 alterna.
+        self.btn_antes = self._botao("Antes", True, dica="O saco tal como foi analisado, com os valores em "
+                                                         "produção (F7 alterna)")
+        self.btn_depois = self._botao("Depois", True, dica="O mesmo saco com os valores mudados, ainda não "
+                                                           "aplicados (F7 alterna)")
+        self.btn_antes.setObjectName("segmento_esq")
+        self.btn_depois.setObjectName("segmento_dir")
+        self._grupo(self.btn_antes, self.btn_depois).idClicked.connect(lambda i: self._ver_antes_depois(i == 1))
+        self.antes_depois = QWidget()
+        self.antes_depois.setLayout(_par(self.btn_antes, self.btn_depois))
+        self.antes_depois.layout().setContentsMargins(0, 0, 0, 0)
+        self.antes_depois.hide()
         cabeca = QHBoxLayout()
         cabeca.addWidget(self.titulo_imagem, 1)
+        cabeca.addWidget(self.antes_depois)
         cabeca.addLayout(self.camadas)
         cabeca.addWidget(self.btn_congelar)
         imagem = QWidget()
@@ -394,6 +416,10 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self.info = QLabel()
         self.info.setWordWrap(True)
         self.info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.comparacao = QLabel()  # Antes → Depois: o que mudou com os parâmetros (só a comparar)
+        self.comparacao.setWordWrap(True)
+        self.comparacao.setStyleSheet(f"border: 1px solid {AZUL}; border-radius: 4px; padding: 4px;")
+        self.comparacao.hide()
         self.modulos = TabelaModulos()
         self.defeitos = TabelaDefeitos()
         self.btn_corrigir_eng = self._botao_corrigir("Guardar no dataset ▾")
@@ -425,7 +451,7 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         botoes.addWidget(self.btn_corrigir_eng)
         botoes.addWidget(self.btn_mais_etapas)
         botoes.addStretch()
-        for w, esticar in ((self.faixa_eng, 0), (self.info, 0), (tabelas, 1)):
+        for w, esticar in ((self.faixa_eng, 0), (self.info, 0), (self.comparacao, 0), (tabelas, 1)):
             coluna.addWidget(w, esticar)
         coluna.addLayout(botoes)
         coluna.addWidget(self.btn_zonas_fim)
@@ -841,6 +867,7 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         if original:
             self._base = visto
             self._segurar_ate = monotonic() + SEGURAR_SACO_S
+            self._depois = self._comparacao = None  # outro saco no ecrã: a pré-visualização era do anterior
         r = visto.resultado
         for faixa in (self.faixa_op, self.faixa_eng):
             faixa.mostrar(r.estado, f"saco {visto.numero}{_ressalva(r)}")
@@ -851,9 +878,8 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self.motivo_op.setVisible(bool(porque))
         self.imagem_op.mostrar(visto.anotada)
         self.imagem_eng.mostrar(visto.anotada)
-        self.titulo_imagem.setText(
-            f"<b style='color:{AZUL}'>PRÉ-VISUALIZAÇÃO (não aplicada)</b>" if visto.previsao else "")
         self.info.setText(_info(visto))
+        self._mostrar_comparacao(visto)
         self._mostrar_caixas(r)
         self.modulos.mostrar(r)
         self.defeitos.mostrar(r)
@@ -863,6 +889,35 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         for nome, imagem in self.etapas.outras(visto):
             menu.addAction(nome, lambda n=nome, i=imagem: self._mostrar_etapa(n, i))
         self.btn_mais_etapas.setEnabled(not menu.isEmpty())
+
+    def _mostrar_comparacao(self, visto: Visto) -> None:
+        """O título da imagem e, com uma pré-visualização do saco do ecrã, o [Antes|Depois] e o que mudou."""
+        a_comparar = self._depois is not None and self._comparacao is not None
+        depois = visto.previsao
+        if depois:
+            titulo = f"<b style='color:{AZUL}'>DEPOIS · PRÉ-VISUALIZAÇÃO (não aplicada)</b>"
+        elif a_comparar:
+            titulo = "<b>ANTES</b> · os valores com que o saco foi analisado"
+        else:
+            titulo = ""
+        self.titulo_imagem.setText(titulo + (" · F7 alterna" if a_comparar else ""))
+        self.antes_depois.setVisible(a_comparar)
+        self.comparacao.setVisible(a_comparar)
+        if a_comparar:
+            self.btn_antes.setChecked(not depois)
+            self.btn_depois.setChecked(depois)
+            self.comparacao.setText(self._comparacao.texto)
+            self.comparacao.setToolTip(self._comparacao.detalhe)
+
+    def _ver_antes_depois(self, depois: bool) -> None:
+        """Mostra o Antes (o saco tal como foi analisado) ou o Depois (a pré-visualização)."""
+        if self._depois is None or self._base is None:
+            return
+        self._mostrar(self._depois if depois else self._base, original=False)
+
+    def _alternar_antes_depois(self) -> None:
+        """F7: troca entre o Antes e o Depois (piscar ajuda a ver o que mudou)."""
+        self._ver_antes_depois(not self.btn_depois.isChecked())
 
     def _mostrar_caixas(self, r) -> None:
         """Uma caixa por módulo com defeitos neste saco (refeitas só se os módulos mudarem)."""
@@ -891,10 +946,12 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         (self._esconder.discard if ligado else self._esconder.add)(modulo)
         if self.ciclo is not None:
             self.ciclo.esconder = frozenset(self._esconder)
-        visto = self._base
-        if visto is not None and visto.resultado.imagem is not None:
-            visto.anotada = anotada_sem(visto, frozenset(self._esconder))
-            self._mostrar(visto, original=False)
+        no_ecra = self._depois if self._depois is not None and self.btn_depois.isChecked() else self._base
+        for visto in (self._base, self._depois):  # a comparar, o Antes e o Depois ficam iguais
+            if visto is not None and visto.resultado.imagem is not None:
+                visto.anotada = anotada_sem(visto, frozenset(self._esconder))
+        if no_ecra is not None and no_ecra.resultado.imagem is not None:
+            self._mostrar(no_ecra, original=False)
 
     def _rever_saco(self, numero: int) -> None:
         """Clicar num quadrado dos últimos sacos: mostra esse saco (até chegar o seguinte)."""

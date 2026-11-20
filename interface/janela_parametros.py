@@ -1,7 +1,7 @@
 """Interface, janela principal: os parâmetros e o dataset.
 
 Métodos da Janela (janela.py), separados por assunto: as janelas ⚙ Definições e
-📷 Câmara, o perfil, a pré-visualização, Aplicar, Repor, Guardar no perfil
+📷 Câmara, o perfil, a pré-visualização (o Depois do saco do ecrã), Aplicar, Repor, Guardar no perfil
 e Guardar no dataset (com as zonas do defeito desenhadas na imagem).
 """
 
@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QFormLayout, QHBoxLayout, QLabel, QMessageBox, QTabWidget, QVBoxLayout, QWidget
 
 from interface.ciclo import Previsao, Visto
+from interface.comparacao import comparar
 from interface.editor import SECOES_CAMARA, SECOES_DEFINICOES, EditorParametros, diferencas
 from interface.estilo import icone
 from interface.janelas import JanelaAuxiliar
@@ -171,13 +172,19 @@ class Parametros:
         if self._previsao is not None and self._previsao.isRunning():
             self._previsao_pendente = (base, cfg)  # só conta a mais recente
             return
-        self._previsao = Previsao(base, cfg)
+        self._previsao = Previsao(base, cfg, frozenset(self._esconder))
         self._previsao.visto.connect(self._previsto)
         self._previsao.mensagem.connect(self._mensagem)
         self._previsao.finished.connect(self._previsao_terminou)
         self._previsao.start()
 
     def _previsto(self, visto: Visto) -> None:
+        """A pré-visualização pronta: é o Depois do saco do ecrã (o Antes), com o que mudou entre os dois."""
+        base = self._base
+        if base is None or visto.resultado.captura is not base.resultado.captura:
+            return  # chegou depois de outro saco ir para o ecrã: já não é deste
+        self._depois = visto
+        self._comparacao = comparar(base.resultado, visto.resultado, base.cfg, visto.cfg)
         self._mostrar(visto, original=False)
 
     def _previsao_terminou(self) -> None:

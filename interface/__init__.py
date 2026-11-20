@@ -7,6 +7,8 @@ Um ficheiro por assunto:
     janela_parametros.py    + as definições (⚙), a câmara (📷), o perfil e o dataset
     janelas.py            as janelas à parte: histórico e revisão de um saco
     paineis.py            as peças que mostram: imagem, estado, contadores, tabelas, etapas, log
+    avisos.py             o que se diz ao operador: porque parou, semáforos, motivo do NOK, alarme
+    comparacao.py         o mesmo saco antes e depois de mudar parâmetros (o que mudou)
     editor.py             o editor de parâmetros (um campo por parâmetro da configuração)
     estilo.py             a marca, as cores, o aspeto (ESTILO) e os ícones
     login.py              a janela de entrada e as contas
