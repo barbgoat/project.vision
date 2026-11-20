@@ -921,6 +921,71 @@ def test_verificar_rugas_so_o_administrador_ensina(app, janela):
     janela._abrir_janela_rugas()
     assert not janela.janela_rugas.btn_ensinar.isVisibleTo(janela.janela_rugas)
     assert not janela.janela_rugas.btn_rugas.isVisibleTo(janela.janela_rugas)
+    assert not janela.janela_rugas.btn_nao_ruga.isVisibleTo(janela.janela_rugas)
+
+
+def test_verificar_rugas_nao_e_ruga(app, janela, tmp_path):
+    """Não é ruga…: das rugas achadas (com o número da imagem), as escolhidas vão para a referência do M5
+    (nao_rugas/, não como saco OK) e a imagem verifica-se de novo, já sem elas."""
+    from testes.test_m5_relevo import TRACO_IMPRESSO_GRAUS, VINCO, cena, mesmo_angulo
+    caminho = tmp_path / "saco impresso.png"
+    guardar_imagem(caminho, cena(np.random.default_rng(34), impressao=True, vincos=[VINCO]))
+    janela._abrir_janela_rugas()
+    rugas = janela.janela_rugas
+    assert rugas.btn_nao_ruga.isVisibleTo(rugas) and not rugas.btn_nao_ruga.isEnabled()
+    janela._verificar_rugas_em(str(caminho))
+    _esperar_verificacao(app, janela)
+    assert rugas.lbl_veredito.text() == "RUGA DETETADA (2)", rugas.lbl_info.text()
+    assert rugas.btn_nao_ruga.isEnabled()
+
+    oferecidas = []
+
+    def escolher(lista):
+        oferecidas.extend(lista)
+        return [d for _, d in lista if mesmo_angulo(d.angulo_graus, TRACO_IMPRESSO_GRAUS)]
+
+    rugas.escolher_nao_rugas = escolher
+    rugas.btn_nao_ruga.click()
+    assert [n for n, _ in oferecidas] == [1, 2], "com o número que têm na imagem"
+    pasta = janela._dataset / "relevo_referencia"
+    assert len(list((pasta / "nao_rugas").glob("*.json"))) == 1
+    assert not list(pasta.glob("*.png")) and not list((janela._dataset / "ok").glob("*.png")), "não é um saco OK"
+    assert janela._cfg_edicao.relevo.referencia_pasta == str(pasta), "fica na edição: Guardar no perfil para manter"
+    _esperar_verificacao(app, janela)
+    assert rugas.lbl_veredito.text() == "RUGA DETETADA", "fica o vinco"
+    assert "«não é ruga» de 1 imagem(ns) reconhecidas neste saco: 1 reta(s) não contaram" in rugas.lbl_info.text(), \
+        rugas.lbl_info.text()
+
+
+def test_escolher_nao_rugas_so_as_marcadas(app):
+    from interface.janela_rugas import EscolherNaoRugas
+    d1, d2 = Defeito(TipoDefeito.RUGAS, descricao="ruga de 82 mm"), Defeito(TipoDefeito.RUGAS, descricao="ruga de 50 mm")
+    dialogo = EscolherNaoRugas(None, [(1, d1), (3, d2)])
+    assert [caixa.text() for caixa, _ in dialogo.caixas] == ["1. ruga de 82 mm", "3. ruga de 50 mm"], "o número da imagem"
+    assert not dialogo.btn_ok.isEnabled(), "nenhuma marcada"
+    dialogo.caixas[1][0].setChecked(True)
+    assert dialogo.escolhidas() == [d2] and dialogo.btn_ok.isEnabled()
+
+
+def test_verificar_rugas_nao_e_ruga_numa_zona(app, janela, tmp_path):
+    """Numa zona escolhida também: verifica-se de novo a mesma zona."""
+    from testes.test_m5_relevo import cena
+    caminho = tmp_path / "saco.png"
+    # Saco a direito, centrado (canto em (250, 275) px): o traço impresso vai de (670, 355) a (940, 695) px
+    guardar_imagem(caminho, cena(np.random.default_rng(35), angulo=0.0, impressao=True))
+    janela._abrir_janela_rugas()
+    rugas = janela.janela_rugas
+    janela._verificar_rugas_em(str(caminho))
+    _esperar_verificacao(app, janela)
+    rugas.btn_zona.click()
+    rugas.imagem.roi_desenhada.emit(640, 300, 340, 410)
+    assert rugas.lbl_veredito.text().startswith("RUGA DETETADA"), rugas.lbl_info.text()
+    assert rugas.btn_nao_ruga.isEnabled(), "também numa zona"
+    rugas.escolher_nao_rugas = lambda lista: [d for _, d in lista]
+    rugas.btn_nao_ruga.click()
+    assert rugas.lbl_veredito.text() == "SEM RUGAS", rugas.lbl_info.text()
+    assert "zona escolhida" in rugas.lbl_info.text(), "verificou de novo a mesma zona"
+    assert janela._verificacao is None, "sem verificar a imagem toda"
 
 
 def test_verificar_rugas_sem_o_m2_do_perfil(tmp_path):
@@ -957,6 +1022,37 @@ def test_verificar_rugas_saco_maior_do_que_o_campo(tmp_path):
     assert not cortado_pela_borda(saco, inteiro.shape)
 
 
+def test_verificar_rugas_ensinar_saco_maior_do_que_o_campo(app, janela, tmp_path):
+    """Saco maior do que o campo: o M5 vê a imagem toda e o «É OK: ensinar» ensina-a; outra foto do mesmo
+    produto noutra posição (deslocada e rodada) desconta a impressão na parte que tem em comum com ela."""
+    from interface.janela_rugas import ensinavel
+    from nucleo.imagens import ler_imagem
+    from testes.test_m5_relevo import foto_do_campo, impresso_grande
+    rng = np.random.default_rng(27)
+    lona = impresso_grande(rng)
+    caminho = tmp_path / "campo.png"
+    guardar_imagem(caminho, foto_do_campo(lona, (160, 115), 0.0, rng))
+    janela._abrir_janela_rugas()
+    rugas = janela.janela_rugas
+    janela._verificar_rugas_em(str(caminho))
+    _esperar_verificacao(app, janela)
+    assert "imagem toda" in rugas.lbl_info.text(), rugas.lbl_info.text()
+    assert rugas.lbl_veredito.text().startswith("RUGA DETETADA"), "os traços claros impressos passam por ruga"
+    assert ensinavel(rugas.visto.resultado) and rugas.btn_ensinar.isEnabled(), "a imagem toda ensina-se"
+
+    rugas.btn_ensinar.click()
+    _esperar_verificacao(app, janela)
+    assert rugas.lbl_veredito.text() == "SEM RUGAS", rugas.lbl_info.text()
+    [recorte] = [f for f in (janela._dataset / "relevo_referencia").glob("*.png") if not f.stem.endswith("_util")]
+    assert ler_imagem(recorte).shape[:2] == (680, 900), "foi a imagem toda"
+
+    outra = tmp_path / "outra posição.png"
+    guardar_imagem(outra, foto_do_campo(lona, (145, 105), 30.0, rng))
+    janela._verificar_rugas_em(str(outra))
+    _esperar_verificacao(app, janela)
+    assert "Impressão descontada com 1 saco(s) OK" in rugas.lbl_info.text(), rugas.lbl_info.text()
+
+
 @pytest.mark.parametrize("angulo", [0, 30, 90, -60])
 def test_etapas_com_o_saco_ao_alto(angulo):
     """Venha o saco como vier, nas etapas dos módulos fica na vertical; a original e a anotada não mudam."""
@@ -991,3 +1087,35 @@ def test_etapas_com_o_saco_direito_pelo_easy_open(angulo, distancia):
     forma = dict(preparar(Visto(1, r, cfg)).etapas)["dimensoes_forma"]
     ys, _ = np.nonzero(np.all(forma == COR_ENTALHE, axis=2))
     assert len(ys) and ys.mean() < forma.shape[0] * 0.3, "os entalhes em cima"
+
+
+def test_verificar_rugas_so_numa_zona(app, janela, tmp_path):
+    """Zona: arrastar um retângulo na imagem e o M5 procura só aí, na mesma imagem."""
+    from interface.janela_rugas import verificar_zona
+    from testes.test_m5_relevo import cena
+    # Saco de 150 × 90 mm a direito, centrado (canto em (250, 275) px); vinco de (20, 10) a (110, 80) mm
+    img = cena(np.random.default_rng(26), angulo=0.0, vincos=[(20, 10, 110, 80, 0.15)])
+    cfg = config_teste()
+    com = verificar_zona(cfg, img, (330, 305, 490, 390))
+    assert com.estado is Estado.NOK and len(com.relatorio("relevo").defeitos) == 1
+    assert "zona escolhida" in com.relatorios[0].mensagem
+    sem = verificar_zona(cfg, img, (850, 300, 140, 400))  # à direita do vinco: só saco liso
+    assert sem.estado is Estado.OK, sem.relatorio("relevo").defeitos
+    with pytest.raises(ValueError, match="pequena"):
+        verificar_zona(cfg, img, (400, 400, 10, 10))
+
+    caminho = tmp_path / "saco.png"
+    guardar_imagem(caminho, img)
+    janela._abrir_janela_rugas()
+    rugas = janela.janela_rugas
+    assert not rugas.btn_zona.isEnabled(), "sem verificação, não há imagem para escolher a zona"
+    janela._verificar_rugas_em(str(caminho))
+    _esperar_verificacao(app, janela)
+    rugas.btn_zona.click()
+    assert rugas.imagem.desenhar_roi
+    rugas.imagem.roi_desenhada.emit(850, 300, 140, 400)
+    assert rugas.lbl_veredito.text() == "SEM RUGAS" and "zona escolhida" in rugas.lbl_info.text()
+    rugas.imagem.roi_desenhada.emit(330, 305, 490, 390)  # outra zona, na mesma imagem
+    assert rugas.lbl_veredito.text().startswith("RUGA DETETADA"), rugas.lbl_info.text()
+    assert not rugas.btn_ensinar.isEnabled(), "uma zona não se ensina como saco OK"
+    assert rugas.btn_rugas.isEnabled(), "mas a imagem pode ir para o dataset"

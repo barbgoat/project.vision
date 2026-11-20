@@ -322,9 +322,16 @@ class ConfigRelevo:
     ruga_min_mm: float = D.RELEVO_RUGA_MIN_MM
     prova_min_mm: float = D.RELEVO_PROVA_MIN_MM
     queimado_max_pct: float = D.RELEVO_QUEIMADO_MAX_PCT
+    prova_min_mm_familia: float = D.RELEVO_PROVA_MIN_MM_FAMILIA
+    ruga_min_mm_familia: float = D.RELEVO_RUGA_MIN_MM_FAMILIA
+    desvio_min_familia: float = D.RELEVO_DESVIO_MIN_FAMILIA
 
     def erros(self) -> list[str]:
         erros = []
+        if not 0 < self.prova_min_mm_familia <= self.ruga_min_mm_familia:
+            erros.append("relevo.prova_min_mm_familia tem de ser > 0 e <= relevo.ruga_min_mm_familia")
+        if self.desvio_min_familia <= 0:
+            erros.append("relevo.desvio_min_familia tem de ser > 0")
         if self.margem_mm < 0:
             erros.append("relevo.margem_mm tem de ser >= 0")
         if self.limiar <= 0:

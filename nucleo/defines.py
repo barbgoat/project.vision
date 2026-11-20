@@ -314,6 +314,10 @@ RELEVO_LIMIAR: Final = 0.10  # [MEDIR] força mínima de um ponto de linha, rela
 RELEVO_RUGA_MIN_MM: Final = 40.0  # [MEDIR] comprimento mínimo de uma ruga
 RELEVO_PROVA_MIN_MM: Final = 20.0  # [MEDIR] traço visível mínimo ao longo dela (o resto pode estar queimado ou falhado)
 RELEVO_QUEIMADO_MAX_PCT: Final = 50.0  # acima desta parte do saco saturada (branco puro) não se veem rugas: ERRO
+# Famílias de rugas paralelas: à volta de uma ruga forte procuram-se paralelas (±3°) com limites mais baixos.
+RELEVO_PROVA_MIN_MM_FAMILIA: Final = 12.0  # [MEDIR] traço visível mínimo de uma ruga da família
+RELEVO_RUGA_MIN_MM_FAMILIA: Final = 25.0  # [MEDIR] comprimento mínimo de uma ruga da família
+RELEVO_DESVIO_MIN_FAMILIA: Final = 1.5  # [MEDIR] quanto uma ruga da família se tem de destacar do resto do saco (dispersões)
 
 # =============================================================================
 # REFERÊNCIA DOS SACOS OK (nucleo/referencia.py)
