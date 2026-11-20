@@ -158,6 +158,7 @@ class Ciclo(QThread):
     visto = Signal(object)  # Visto preparado para o ecrã (só o mais recente)
     mensagem = Signal(str)  # para a barra de estado (incluindo porque parou)
     quadro = Signal(object)  # a imagem da câmara tal como chega (BGR), umas 10 por segundo, para a ver ao vivo
+    parou = Signal(str)  # parou sem lhe pedirem: o erro tal como veio (a janela explica-o ao operador)
 
     def __init__(self, pedido: Pedido) -> None:
         super().__init__()
@@ -165,6 +166,7 @@ class Ciclo(QThread):
         self.etapas = True  # pedir as imagens das etapas (só a vista de Engenharia as mostra)
         self.rever = True  # parar em cada saco não OK até a janela decidir (prosseguir())
         self.descartadas = 0  # passagens que a análise não acompanhou
+        self.falhas_bd = 0  # sacos que não foram para a base de dados (a janela lê-o de tempos a tempos)
         self.pasta_resultados: Path | None = None  # a pasta desta execução
         self._continuar = threading.Event()
         self._trinco = threading.Lock()
@@ -204,6 +206,7 @@ class Ciclo(QThread):
         except Exception as erro:  # a janela mostra-o; o traceback fica no log
             log.exception("O ciclo parou.")
             self.mensagem.emit(f"Parou: {erro}")
+            self.parou.emit(str(erro))
         finally:
             self._fim.set()
             self._ha_para_preparar.set()
@@ -266,6 +269,7 @@ class Ciclo(QThread):
                     try:
                         p.repositorio.registar(resultado, saida.pasta.name, numero, cfg)
                     except ErroRepositorio as erro:  # sem base de dados a linha continua: o registo.csv tem tudo
+                        self.falhas_bd += 1
                         log.warning("%s", erro)
                 ciclo_ms = _ms_desde(inicio)
                 self.descartadas = aquisicao.descartadas
@@ -279,6 +283,7 @@ class Ciclo(QThread):
                     break
         if not self._parar.is_set():
             self.mensagem.emit("A câmara deixou de enviar imagens.")
+            self.parou.emit("A câmara deixou de enviar imagens.")
 
     def _trocar(self, cfg: Config, mestre: Mestre, nova: Config, ordem: tuple[str, str],
                 ordem_nova: tuple[str, str]) -> tuple[Config, Mestre, tuple[str, str]]:

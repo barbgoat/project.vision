@@ -24,6 +24,10 @@
                       📷 Câmara    exposição, ganho, trigger (disparo), lente
                       ⚙ Definições perfil, fonte, parâmetros de inspeção e saída
     Atalhos: F5 inicia, Shift+F5 para. O operador só vê a vista Operador e indica a OF a cada início.
+    Avisos (interface/avisos.py), sem custo para a inspeção: faixas por cima da imagem (porque parou e o que
+    fazer, disco quase cheio, demasiados NOK nos últimos sacos), o motivo de cada saco não OK na vista
+    Operador, a % de NOK nos contadores e, na barra de estado, os semáforos da câmara, do disco e da base
+    de dados (o disco lê-se de VERIFICAR_S em VERIFICAR_S segundos; com menos de DISCO_MINIMO_GB não se inicia).
 
 Modos (os dois inspecionam e registam cada saco, como o main.py):
     Ao vivo   a câmara capta em contínuo e a barreira virtual separa os sacos
@@ -40,18 +44,23 @@ import argparse
 import dataclasses
 import html
 import logging
+import shutil
 from collections import Counter
 from pathlib import Path
 from time import monotonic
 
 import numpy as np
-from PySide6.QtCore import QSettings, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QIcon, QKeySequence, QShortcut
+from PySide6.QtCore import QSettings, QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDesktopServices, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QSizePolicy,
     QSplitter, QStackedWidget, QStyle, QTabWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
+from interface.avisos import (
+    AMARELO, CINZENTO, DISCO_AVISO_GB, DISCO_MINIMO_GB, VERDE, VERIFICAR_S, VERMELHO, AlarmeNOK, Avisos, Semaforo,
+    explicar, motivo, taxa_nok,
+)
 from interface.ciclo import Afinacao, Ciclo, MedicaoContorno, Pedido, Previsao, Visto, preparar
 from interface.estilo import AZUL, CORES_ESTADO, NOME_APP, icone
 from interface.janela_conta import Conta
@@ -123,6 +132,11 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self._em_revisao: JanelaRevisao | None = None  # o saco à espera de decisão
         self._tempos: list[float] = []
         self._reiniciar = False
+        self._alarme = AlarmeNOK()  # demasiados NOK nos últimos sacos decididos
+        self._erro_ciclo = ""  # porque é que a inspeção parou sozinha (vazio se parou a pedido)
+        self._erro_camara = ""  # o mesmo, se a culpa foi da câmara (o semáforo fica vermelho)
+        self._erro_bd = ""  # a base de dados não abriu ao Iniciar
+        self._falhas_bd = 0  # sacos que não foram para a base de dados na última execução
 
         self.janela_historico = JanelaHistorico(self, self._icone_qt("SP_FileDialogDetailedView"))
         self.historico = self.janela_historico.tabela
@@ -137,10 +151,20 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         layout = QVBoxLayout(centro)
         layout.addWidget(self._criar_barra())
         layout.addWidget(self._criar_barra_afinacao())
+        self.avisos = Avisos()  # porque parou, disco quase cheio, demasiados NOK
+        layout.addWidget(self.avisos)
         layout.addWidget(self.vistas, 1)
         self.setCentralWidget(centro)
-        self.lbl_resumo = QLabel()  # perfil e modo em uso, sempre à vista
+        # Na barra de estado: os semáforos e o perfil e modo em uso, sempre à vista.
+        self.sem_camara, self.sem_disco, self.sem_bd = Semaforo("Câmara"), Semaforo("Disco"), Semaforo("Base de dados")
+        for semaforo in (self.sem_camara, self.sem_disco, self.sem_bd):
+            self.statusBar().addPermanentWidget(semaforo)
+        self.lbl_resumo = QLabel()
         self.statusBar().addPermanentWidget(self.lbl_resumo)
+        # O disco e a base de dados de poucos em poucos segundos, na janela: a inspeção não espera por isto.
+        self._relogio = QTimer(self)
+        self._relogio.timeout.connect(self._verificar)
+        self._relogio.start(int(VERIFICAR_S * 1000))
         for tecla, funcao in (("F5", self.iniciar), ("Shift+F5", self.parar), ("F6", self._verificar_rugas)):
             QShortcut(QKeySequence(tecla), self).activated.connect(funcao)
 
@@ -153,6 +177,7 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         (self.btn_trigger if modo == "trigger" else self.btn_ao_vivo).setChecked(True)
         (self.acao_operador if args.vista == "operador" else self.acao_engenharia).setChecked(True)
         self._definir_utilizador(utilizador)
+        self._verificar()
 
     # --- Construção -------------------------------------------------------------------
     def _icone_qt(self, nome: str) -> QIcon:
@@ -319,12 +344,18 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
 
     def _criar_operador(self) -> QWidget:
         self.faixa_op = Faixa(40)
+        self.motivo_op = QLabel()  # porque é que o saco não ficou OK, em palavras (vazio num OK)
+        self.motivo_op.setWordWrap(True)
+        self.motivo_op.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.motivo_op.setStyleSheet(f"color: {CORES_ESTADO[Estado.NOK]}; font-size: 18pt; font-weight: bold;")
+        self.motivo_op.hide()
         self.imagem_op = VistaImagem(SEM_IMAGEM)
         self.imagem_op.roi_desenhada.connect(self._roi_desenhada)
         self.contadores_op = Contadores(26)
         vista = QWidget()
         layout = QVBoxLayout(vista)
         layout.addWidget(self.faixa_op)
+        layout.addWidget(self.motivo_op)
         layout.addWidget(self.imagem_op, 1)
         layout.addWidget(self.contadores_op)
         return vista
@@ -464,6 +495,7 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self.indicador.setStyleSheet(f"background: {cor}; color: white; font-size: 14pt; font-weight: bold; "
                                      "border-radius: 6px; padding: 4px 12px;")
         self._atualizar_resumo()
+        self._semaforos()
 
     def _atualizar_resumo(self) -> None:
         """Na barra de estado: o perfil e o modo que vão ser usados."""
@@ -482,6 +514,14 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         modo = self._modo()
         # Sem OF as medidas são as do perfil (e dos defines), não as do produto na base de dados:
         # quem não pode produzir sem OF indica-a a cada início; os outros, enquanto não houver uma.
+        livres = self._disco_livre_gb()
+        if livres is not None and livres < DISCO_MINIMO_GB:  # o 1.º saco ia parar a inspeção ao gravar
+            self._verificar()
+            QMessageBox.critical(self, "Disco cheio",
+                                 f"Só há {livres:.1f} GB livres no disco dos resultados: não dá para gravar os "
+                                 "sacos.\nLibertar espaço (sessões antigas em resultados, Reciclagem) e voltar "
+                                 "a Iniciar.")
+            return
         perguntar = not self._pode("producao_sem_of") or (self._ordem is None and not self._ensaio_sem_of)
         if perguntar and not self._escolher_ordem():
             return
@@ -489,6 +529,11 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self._esperar_verificacao()
         self._contagem.clear()
         self._tempos.clear()
+        self._alarme.limpar()
+        self.avisos.limpar("nok")
+        self.avisos.limpar("parou")
+        self._erro_ciclo = self._erro_camara = self._erro_bd = ""
+        self._falhas_bd = 0
         self.historico.limpar()
         self._atualizar_contadores()
         self._lembrar()
@@ -496,6 +541,7 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         try:
             repositorio = self._repositorio()
         except ErroRepositorio as erro:  # produz-se na mesma; o registo.csv tem tudo
+            self._erro_bd = str(erro)
             log.warning("%s", erro)
         of, produto = self._identidade()
         self.ciclo = Ciclo(Pedido(modo, self._cfg_edicao, Path(self.args.saida), of, produto, repositorio))
@@ -504,6 +550,7 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self.ciclo.visto.connect(self._recebido)
         self.ciclo.quadro.connect(self._ver_quadro)
         self.ciclo.mensagem.connect(self._mensagem)
+        self.ciclo.parou.connect(self._parou)
         self.ciclo.finished.connect(self._terminou)
         self.ciclo.start()
         log.info("%s com a câmara (perfil %s, %s%s)", modo, self._perfil.name, self.utilizador,
@@ -662,9 +709,17 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self.info.setText("<br>".join(t for t in (self._texto_imagem.replace("   ·   ", "<br>"),
                                                   self._texto_contorno) if t))
 
+    def _parou(self, erro: str) -> None:
+        """A inspeção parou sozinha: diz porquê e o que fazer, numa faixa que fica até ao próximo Iniciar."""
+        texto, da_camara = explicar(erro)
+        self._erro_ciclo = texto
+        self._erro_camara = texto if da_camara else ""
+        self.avisos.mostrar("parou", texto, VERMELHO)
+
     def _terminou(self) -> None:
         ciclo, self.ciclo = self.ciclo, None
         if ciclo is not None:
+            self._falhas_bd = ciclo.falhas_bd
             ciclo.deleteLater()
         if self._em_revisao is not None:  # parou a meio de uma revisão: o saco fica por decidir
             self._em_revisao.deleteLater()
@@ -700,6 +755,7 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         self.historico.acrescentar(visto)
         if visto.resultado.estado is Estado.OK:
             self._contagem["OK"] += 1
+            self._contar_decisao(False)
             self._atualizar_contadores()
             return
         self.historico.marcar_decisao(visto.numero, "em revisão")
@@ -712,6 +768,7 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         """A decisão da revisão: "NOK" conta como NOK; "falso NOK" e "descartado" não contam. Com uma
         classe, a imagem vai para o dataset. A inspeção continua sempre, mesmo que guardar falhe."""
         self._contagem["NOK" if decisao == "NOK" else "DESCARTADOS"] += 1
+        self._contar_decisao(decisao == "NOK")
         self.historico.marcar_decisao(visto.numero, decisao)
         if self.ciclo is not None and self.ciclo.pasta_resultados is not None:
             registar_revisao(visto.resultado, visto.numero, decisao, self.ciclo.pasta_resultados)
@@ -770,6 +827,11 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         r = visto.resultado
         for faixa in (self.faixa_op, self.faixa_eng):
             faixa.mostrar(r.estado, f"saco {visto.numero}{_ressalva(r)}")
+        porque = motivo(r)
+        self.motivo_op.setText(porque)
+        self.motivo_op.setStyleSheet(f"color: {CORES_ESTADO.get(r.estado, '#424242')}; font-size: 18pt; "
+                                     "font-weight: bold;")
+        self.motivo_op.setVisible(bool(porque))
         self.imagem_op.mostrar(visto.anotada)
         self.imagem_eng.mostrar(visto.anotada)
         self.titulo_imagem.setText(
@@ -806,10 +868,75 @@ class Janela(Conta, Parametros, Ordens, Rugas, QMainWindow):
         nao_analisadas = self.ciclo.descartadas if self.ciclo is not None else 0
         for contadores in (self.contadores_op, self.janela_historico.contadores):
             contadores.mostrar(self._contagem, self._tempos, orcamento, nao_analisadas)
+            contadores.taxa(taxa_nok(self._contagem["OK"], self._contagem["NOK"]), self._alarme.ativo)
+        self._semaforos()
 
     def _mensagem(self, texto: str) -> None:
         self.statusBar().showMessage(texto, 15000)
         log.info("%s", texto)
+
+    # --- Semáforos e avisos (na janela, de poucos em poucos segundos: a inspeção não espera) ---
+    def _disco_livre_gb(self) -> float | None:
+        """O espaço livre no disco onde ficam os resultados (None se não se conseguir ler)."""
+        pasta = Path(self.args.saida).resolve()
+        while not pasta.exists() and pasta != pasta.parent:  # a pasta ainda não existe: o disco é o mesmo
+            pasta = pasta.parent
+        try:
+            return shutil.disk_usage(pasta).free / 1e9
+        except OSError:
+            return None
+
+    def _verificar(self) -> None:
+        """O disco (com aviso abaixo de DISCO_AVISO_GB) e os outros semáforos."""
+        livres = self._disco_livre_gb()
+        if livres is None:
+            self.sem_disco.mostrar(CINZENTO, "?", "Não foi possível ler o espaço livre do disco.")
+        elif livres < DISCO_AVISO_GB:
+            cor = VERMELHO if livres < DISCO_MINIMO_GB else AMARELO
+            self.sem_disco.mostrar(cor, f"{livres:.1f} GB livres")
+            self.avisos.mostrar("disco", f"Disco quase cheio: {livres:.1f} GB livres. Com menos de "
+                                         f"{DISCO_MINIMO_GB:g} GB a inspeção não começa. Libertar espaço (sessões "
+                                         "antigas em resultados, Reciclagem).", cor,
+                                "Abrir resultados", self._abrir_resultados)
+        else:
+            self.sem_disco.mostrar(VERDE, f"{livres:.0f} GB livres")
+            self.avisos.limpar("disco")
+        self._semaforos()
+
+    def _semaforos(self) -> None:
+        """A câmara e a base de dados, pelo que a janela já sabe (sem perguntar nada a ninguém)."""
+        if not hasattr(self, "sem_camara"):  # ainda a construir a janela
+            return
+        if self._erro_camara:
+            self.sem_camara.mostrar(VERMELHO, "erro", self._erro_camara)
+        elif self.ciclo is not None or self.afinacao is not None:
+            trigger = self._modo() == "trigger"
+            self.sem_camara.mostrar(VERDE, "à espera do sinal" if trigger and self.afinacao is None and
+                                    not self._contagem.total() else "ligada")
+        else:
+            self.sem_camara.mostrar(CINZENTO, "parada")
+        falhas = self.ciclo.falhas_bd if self.ciclo is not None else self._falhas_bd
+        if self._erro_bd:
+            self.sem_bd.mostrar(VERMELHO, "sem ligação", f"{self._erro_bd}\nOs sacos ficam no registo.csv.")
+        elif falhas:
+            self.sem_bd.mostrar(AMARELO, f"{falhas} saco(s) por gravar",
+                                "Esses sacos não foram para a base de dados (ver o Log); estão no registo.csv.")
+        elif self.ciclo is not None:
+            self.sem_bd.mostrar(VERDE, "a gravar")
+        else:
+            self.sem_bd.mostrar(CINZENTO, "—")
+
+    def _abrir_resultados(self) -> None:
+        """Abre a pasta dos resultados no Explorador (para apagar sessões antigas à mão)."""
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(self.args.saida).resolve())))
+
+    def _contar_decisao(self, nok: bool) -> None:
+        """Um saco decidido (depois da revisão) para o alarme de NOK."""
+        self._alarme.contar(nok)
+        if self._alarme.ativo:
+            self.avisos.mostrar("nok", self._alarme.texto(), AMARELO)
+        else:
+            self.avisos.limpar("nok")
 
 
 # --- Auxiliares ---------------------------------------------------------------------------

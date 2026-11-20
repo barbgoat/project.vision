@@ -306,8 +306,15 @@ class Contadores(QWidget):
             linhas.append(f"{sum(tempos) / len(tempos):.0f} ms por saco")
         if nao_analisadas:
             linhas.append(f"<span style='color: #c62828;'>{nao_analisadas} não analisadas</span>")
+        self._linhas = linhas
         self.tempos.setText("<br>".join(linhas))
         self._texto = resumo(contagem, tempos, orcamento_ms, nao_analisadas)
+
+    def taxa(self, texto: str, alarme: bool = False) -> None:
+        """A percentagem de NOK por baixo do resto (a vermelho com o alarme de NOK ligado)."""
+        cor = "#c62828" if alarme else "inherit"
+        extra = [f"<span style='color: {cor}; font-weight: bold;'>{texto}</span>"] if texto else []
+        self.tempos.setText("<br>".join(self._linhas + extra))
 
     def texto(self) -> str:
         """O mesmo, numa linha de texto."""

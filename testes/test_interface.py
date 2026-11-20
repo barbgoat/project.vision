@@ -22,6 +22,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QMessageBox  # noqa: E402
 
 import biapp_dashboard  # noqa: E402
 import gui  # noqa: E402
+from interface.avisos import AMARELO, VERDE, VERMELHO, AlarmeNOK, explicar, motivo, taxa_nok  # noqa: E402
 from interface.editor import SECOES_CAMARA, SECOES_DEFINICOES, EditorParametros, ajudas  # noqa: E402
 from interface.estilo import ICONE, LOGO, icone  # noqa: E402
 from interface.janela import Janela  # noqa: E402
@@ -408,6 +409,69 @@ def test_parar_durante_uma_revisao(app, janela):
     assert "EM REVISÃO" in janela.indicador.text()
     janela.parar()
     esperar(app, lambda: janela.ciclo is None and janela._em_revisao is None)
+
+
+def test_explicar_porque_a_inspecao_parou():
+    assert explicar("404057 requested and 0 written")[0].startswith("Disco cheio")
+    texto, camara = explicar("Câmara Basler 1: não abriu; ... The device is controlled by another application.")
+    assert "noutro programa" in texto and camara
+    assert explicar("A câmara deixou de enviar imagens.")[1]
+    texto, camara = explicar("ValueError: algo novo\nlinha 2")
+    assert "algo novo" in texto and "linha 2" not in texto and not camara
+
+
+def test_motivo_do_saco_e_alarme_de_nok():
+    def resultado(estado, defeitos=(), mensagem=""):
+        return Resultado(IMG, estado, None, [Relatorio("dimensoes", estado, tuple(defeitos))], 1.0, mensagem)
+    largo = Defeito(TipoDefeito.DIMENSAO, descricao="largura 58.0 mm (55 +/- 1)")
+    consequencia = Defeito(TipoDefeito.DIMENSAO, descricao="comprimento", causa="rugas")
+    assert motivo(resultado(Estado.OK)) == ""
+    assert motivo(resultado(Estado.NOK, [largo, consequencia])) == "largura 58.0 mm (55 +/- 1)"
+    assert motivo(resultado(Estado.NOK, [largo] * 5)).endswith("; e mais 2")
+    assert motivo(resultado(Estado.ERRO, mensagem="medição não fiável\ndetalhe")) == "medição não fiável"
+    assert taxa_nok(0, 0) == "" and taxa_nok(7, 1) == "12,5 % NOK"
+    alarme = AlarmeNOK(sacos=4, maximo=2)
+    for nok in (True, False, True):
+        alarme.contar(nok)
+    assert alarme.ativo and alarme.texto().startswith("2 NOK nos últimos 3 sacos")
+    alarme.contar(False)
+    alarme.contar(False)  # o 1.º NOK sai da janela dos 4
+    assert not alarme.ativo
+
+
+def test_operador_ve_o_motivo_porque_parou_e_os_semaforos(app, janela, monkeypatch):
+    janela._alarme = AlarmeNOK(sacos=20, maximo=2)
+    assert janela.sem_camara.text().endswith("parada") and "GB livres" in janela.sem_disco.text()
+    _producao_ate_ao_fim(app, janela, ("NOK", "NOK"))
+    esperar(app, lambda: janela.avisos.texto("parou"))
+    assert not janela.motivo_op.isHidden(), "o último saco é NOK: diz porquê"
+    assert "comprimento" in janela.motivo_op.text()
+    assert "% NOK" in janela.contadores_op.tempos.text()
+    assert janela.avisos.texto("nok").startswith("2 NOK"), "dois NOK em três sacos com o máximo a 2"
+    # A câmara simulada acaba depois dos três sacos: a faixa diz o que fazer e o semáforo fica vermelho.
+    assert "deixou de enviar imagens" in janela.avisos.texto("parou")
+    assert janela.sem_camara.cor == VERMELHO
+    janela.iniciar()  # o Iniciar seguinte limpa o aviso de antes
+    assert janela.avisos.texto("parou") == "" and janela.avisos.texto("nok") == ""
+    esperar(app, lambda: janela._em_revisao is not None)
+    janela.parar()
+    esperar(app, lambda: janela.ciclo is None and janela._em_revisao is None)
+
+
+def test_disco_quase_cheio_avisa_e_nao_deixa_iniciar(app, janela, monkeypatch):
+    livres = {"gb": 1.0}
+    monkeypatch.setattr("interface.janela.shutil.disk_usage", lambda _: type("U", (), {"free": livres["gb"] * 1e9}))
+    janela._verificar()
+    assert janela.sem_disco.cor == AMARELO and janela.avisos.texto("disco").startswith("Disco quase cheio")
+    livres["gb"] = 0.1
+    criticas = []
+    monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: criticas.append(a[1]))
+    janela.iniciar()
+    assert criticas == ["Disco cheio"] and janela.ciclo is None, "não começa: o 1.º saco ia falhar ao gravar"
+    assert janela.sem_disco.cor == VERMELHO
+    livres["gb"] = 50.0
+    janela._verificar()
+    assert janela.sem_disco.cor == VERDE and janela.avisos.texto("disco") == ""
 
 
 def test_ao_vivo_espera_pelos_sacos_e_para(app, janela):
