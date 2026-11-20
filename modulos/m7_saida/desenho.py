@@ -51,12 +51,13 @@ def resolucao_localizacao(resultado: Resultado) -> str:
     return f"loc. {f'{valor:.1f}'.rstrip('0').rstrip('.')} px/mm" if valor else ""
 
 
-def desenhar(resultado: Resultado, px_por_mm: float) -> np.ndarray:
+def desenhar(resultado: Resultado, px_por_mm: float, esconder: frozenset[str] = frozenset()) -> np.ndarray:
     """Produz a imagem anotada de um saco.
 
     Recebe:
         resultado: a decisão do Mestre (com a imagem analisada).
         px_por_mm: para desenhar o eixo maior do saco com o comprimento medido.
+        esconder: módulos cujos defeitos não se desenham (nem na legenda); os outros mantêm o número.
     Devolve:
         Cópia BGR uint8 da imagem analisada, com as anotações (a original é só de leitura).
     """
@@ -80,7 +81,7 @@ def desenhar(resultado: Resultado, px_por_mm: float) -> np.ndarray:
 
         # Defeitos com contorno: de mm no referencial do saco para a imagem, pela matriz do Saco
         for numero, defeito in enumerate(resultado.defeitos, start=1):
-            if defeito.contorno is None:
+            if defeito.contorno is None or defeito.modulo in esconder:
                 continue
             cor = CORES_TIPO.get(defeito.tipo, (255, 255, 255))
             pontos = np.round(saco.mm_para_imagem(defeito.contorno, px_por_mm)).astype(np.int32).reshape(-1, 1, 2)
@@ -101,7 +102,8 @@ def desenhar(resultado: Resultado, px_por_mm: float) -> np.ndarray:
     _faixa(imagem, [" | ".join(partes)], topo=True, escala=escala)
 
     # Legenda: um defeito por linha; e as mensagens dos módulos com problemas
-    linhas = [f"{n} {d.tipo}: {d.descricao}" for n, d in enumerate(resultado.defeitos, start=1)]
+    linhas = [f"{n} {d.tipo}: {d.descricao}" for n, d in enumerate(resultado.defeitos, start=1)
+              if d.modulo not in esconder]
     linhas += [f"{r.modulo}: {r.mensagem}" for r in resultado.relatorios
                if r.estado in (Estado.ERRO, Estado.SEM_SACO) and r.mensagem]
     if resultado.estado is Estado.OK and resultado.aviso:  # o que este OK não garante

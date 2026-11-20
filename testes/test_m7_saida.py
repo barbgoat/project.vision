@@ -87,6 +87,15 @@ def test_desenhar_devolve_uma_copia_anotada(resultado):
     assert np.array_equal(resultado.imagem, antes), "a imagem original fica intacta"
 
 
+def test_desenhar_sem_os_defeitos_de_um_modulo(resultado):
+    """Para a vista de Engenharia: esconder os defeitos de um módulo (os outros ficam como estavam)."""
+    tudo = desenhar(resultado, PPM)
+    assert np.array_equal(desenhar(resultado, PPM, frozenset({"cor"})), tudo), "a cor não tem defeitos"
+    sem_relevo = desenhar(resultado, PPM, frozenset({"relevo"}))
+    sem_nada = desenhar(resultado, PPM, frozenset({"relevo", "dimensoes"}))
+    assert not np.array_equal(sem_relevo, tudo) and not np.array_equal(sem_nada, sem_relevo)
+
+
 def test_faixa_diz_a_resolucao_da_localizacao(resultado, tmp_path):
     """Junto aos ms: a resolução do mapa em que o M2 segmentou (a efetiva; sem redução é a da câmara)."""
     assert resolucao_localizacao(resultado) == "loc. 4 px/mm", "o mapa a 4 px/mm (a imagem tem 5)"
